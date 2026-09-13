@@ -110,6 +110,35 @@ if _REMAT == "recompute_moe":
     _moe_call = _grug_model.MoEMLP.__call__
     _grug_model.MoEMLP.__call__ = lambda self, x: equinox.filter_checkpoint(_moe_call)(self, x)
 
+if _REMAT == "chunk_moe":
+    # Same problem as above, stronger cure: after routing (which stays whole, so the per-device QB statistics are
+    # unchanged), run the routed experts over the two halves of every sequence, each under its own checkpoint.
+    # Expert rows are independent and the combine is a scatter-add into zeros, so the result is the same; only
+    # half of the dispatch tensors are live at once. Splitting along the sequence keeps every device's shard.
+    import equinox
+    import jax.numpy as jnp
+
+    import levanter.grug.grug_moe as _grug_moe
+    from experiments.grug.moe.moe_may_july_baseline import _SEQ_LEN
+
+    _expert_call = _grug_moe.MoEExpertMlp.__call__
+
+    def _chunked_expert_call(self, x, selected_experts, combine_weights, **kwargs):
+        half = _SEQ_LEN // 2
+        seqs = x.shape[0] // _SEQ_LEN
+        per_seq = [a.reshape(seqs, _SEQ_LEN, a.shape[-1]) for a in (x, selected_experts, combine_weights)]
+        outs, dropped = [], []
+        for i in range(2):
+            chunk = [a[:, i * half : (i + 1) * half].reshape(seqs * half, a.shape[-1]) for a in per_seq]
+            result = equinox.filter_checkpoint(_expert_call)(self, *chunk, **kwargs)
+            out, drop = result if isinstance(result, tuple) else (result, None)
+            outs.append(out.reshape(seqs, half, x.shape[-1]))
+            dropped.append(drop)
+        out = jnp.concatenate(outs, axis=1).reshape(x.shape)
+        return out if dropped[0] is None else (out, dropped[0] + dropped[1])
+
+    _grug_moe.MoEExpertMlp.__call__ = _chunked_expert_call
+
 
 def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     step = _build_step(hidden_dim, batch_size, num_steps)
