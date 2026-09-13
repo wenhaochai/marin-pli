@@ -18,7 +18,7 @@ set -euo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin-july
 
 module load proxy/default  # wandb only
-export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store
+export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/KARTHIKN/wc9403/marin_store}
 export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
