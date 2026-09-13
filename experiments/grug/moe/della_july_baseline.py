@@ -28,6 +28,27 @@ if os.environ.get("ZEPHYR_SUBPROCESS") == "1":
 
     zephyr.execution._default_stage_runner_factory_for = lambda client: lambda n: SubprocessRunner(num_workers=n)
 
+_NO_WANDB_ARTIFACTS = os.environ.get("WANDB_NO_ARTIFACTS") == "1" or "della-proxy" in os.environ.get("HTTPS_PROXY", "")
+if _NO_WANDB_ARTIFACTS:
+    # Della's proxy allows api.wandb.ai (metrics) but not storage.googleapis.com, so any file or
+    # artifact upload (levanter's requirements.txt, save_code) hangs run.finish(). Metrics still stream.
+    for _k, _v in {
+        "WANDB_IGNORE_GLOBS": "*",
+        "WANDB_DISABLE_CODE": "true",
+        "WANDB_CONSOLE": "off",
+        "WANDB_X_DISABLE_META": "true",
+    }.items():
+        os.environ.setdefault(_k, _v)
+
+    import logging
+
+    import wandb.sdk.wandb_run
+
+    def _skip_log_artifact(self, artifact_or_path, name=None, type=None, **kwargs):
+        logging.getLogger(__name__).info("Skipping wandb artifact upload %s (proxy blocks storage)", name)
+
+    wandb.sdk.wandb_run.Run.log_artifact = _skip_log_artifact
+
 _NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 _ATTN = os.environ.get("ATTN", "gpu_fa4_cute")
 _DIMS = [int(d) for d in os.environ.get("DIM", "512").split(",")]

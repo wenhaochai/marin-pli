@@ -22,6 +22,8 @@ export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store
 export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
+# The proxy passes wandb metrics but blocks file/artifact storage uploads, which hang run.finish().
+export WANDB_IGNORE_GLOBS='*' WANDB_DISABLE_CODE=true WANDB_CONSOLE=off WANDB_X_DISABLE_META=true WANDB_NO_ARTIFACTS=1
 export DIM=${DIM:-512} ATTN=${ATTN:-gpu_fa4_cute} NUM_GPUS=4
 # If a tokenize dependency is not finished yet, this job takes it over offline; keep it multi-core.
 export ZEPHYR_SUBPROCESS=1
