@@ -20,6 +20,14 @@ from marin.execution.types import versioned
 
 from experiments.grug.moe.moe_may_july_baseline import _POINTS, _build_step
 
+if os.environ.get("ZEPHYR_SUBPROCESS") == "1":
+    # LocalClient runs zephyr workers as threads in one process, so tokenization is GIL-bound
+    # (~1.4 cores). Per-shard subprocesses give real multi-core tokenize on a login node.
+    import zephyr.execution
+    from zephyr.runners import SubprocessRunner
+
+    zephyr.execution._default_stage_runner_factory_for = lambda client: lambda n: SubprocessRunner(num_workers=n)
+
 _NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 _ATTN = os.environ.get("ATTN", "gpu_fa4_cute")
 _DIMS = [int(d) for d in os.environ.get("DIM", "512").split(",")]
