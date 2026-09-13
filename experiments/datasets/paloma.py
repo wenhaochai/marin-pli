@@ -41,9 +41,10 @@ _PALOMA_SUBSETS = {
 
 
 def paloma_dataset(subset: str, *, tokenizer: str = llama3_tokenizer) -> ArtifactStep[TokenizedCache]:
-    """One Paloma subset as a validation handle."""
+    """One Paloma subset as a validation handle, named by tokenizer so each tokenization gets its own cache."""
+    tokenizer_tag = "llama3" if tokenizer == llama3_tokenizer else tokenizer.rsplit("/", 1)[-1]
     return tokenized(
-        f"paloma/{subset}-llama3",
+        f"paloma/{subset}-{tokenizer_tag}",
         tokenizer=tokenizer,
         version="2026.06.28",
         paths=[f"{_PALOMA_RAW}/{_PALOMA_SUBSETS[subset]}/val/val*.jsonl.gz"],
