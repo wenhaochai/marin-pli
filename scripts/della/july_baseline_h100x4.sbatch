@@ -8,11 +8,11 @@
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=16
 #SBATCH --mem-per-gpu=24G
-#SBATCH --time=03:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=logs/slurm/%x_%j.out
 
 # July Baseline (#6882) reproduction on 4xH100: single JAX process, Fray LocalClient.
-# Data must already be tokenized on a login node (--run_only tokenized/).
+# Data must already be tokenized on a login node (scripts/della/prep_data.sh).
 # DIM selects the cell (512/768/1024); ATTN selects the GPU attention kernel.
 set -euo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin-july
@@ -22,11 +22,7 @@ export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/KARTHIKN/wc9403/marin_store}
 export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
-# The proxy passes wandb metrics but blocks file/artifact storage uploads, which hang run.finish().
-export WANDB_IGNORE_GLOBS='*' WANDB_DISABLE_CODE=true WANDB_CONSOLE=off WANDB_X_DISABLE_META=true WANDB_NO_ARTIFACTS=1
-export DIM=${DIM:-512} ATTN=${ATTN:-gpu_fa4_cute} NUM_GPUS=4
-# If a tokenize dependency is not finished yet, this job takes it over offline; keep it multi-core.
-export ZEPHYR_SUBPROCESS=1
+export DIM=${DIM:-512} ATTN=${ATTN:-gpu_fa4_cute}
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 
 nvidia-smi -L

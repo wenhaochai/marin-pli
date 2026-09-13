@@ -12,24 +12,24 @@
 #SBATCH --output=logs/slurm/%x_%j.out
 
 # MFU probes for the July rungs on 4xH100, run back to back in one <=2h job (one queue slot).
-# Each case is a short run (no eval) of one exact-math execution lever; a SUMMARY line per case gives
+# Each case is a short run of one exact-math execution lever, ending in one eval pass to check eval memory; a SUMMARY line per case gives
 # the W&B p50 MFU and tokens/s. CASES env (space-separated indices) selects a subset.
 set -uo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin-july
 
 # index: DIM PROBE_STEPS REMAT REPLICATE LHS CASE_TIMEOUT_MIN
 ALL_CASES=(
-  "512 300 recompute_all 0 0 12"
-  "512 300 none 0 0 12"
-  "512 300 recompute_all 1 0 12"
-  "512 300 none 1 0 12"
-  "512 300 none 1 1 12"
-  "512 300 save_moe 1 0 12"
-  "768 150 recompute_all 0 0 14"
-  "768 150 none 1 0 14"
-  "1024 60 recompute_all 0 0 16"
-  "1024 60 save_moe 0 0 16"
-  "1024 60 none 0 0 16"
+  "512 300 recompute_all 0 0 16"
+  "512 300 none 0 0 16"
+  "512 300 recompute_all 1 0 16"
+  "512 300 none 1 0 16"
+  "512 300 none 1 1 16"
+  "512 300 save_moe 1 0 16"
+  "768 150 recompute_all 0 0 18"
+  "768 150 none 1 0 18"
+  "1024 60 recompute_all 0 0 20"
+  "1024 60 save_moe 0 0 20"
+  "1024 60 none 0 0 20"
 )
 SELECT=${CASES:-$(seq -s ' ' 0 $((${#ALL_CASES[@]} - 1)))}
 
@@ -37,7 +37,7 @@ module load proxy/default  # wandb only
 export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
-export ATTN=gpu_fa4_cute NUM_GPUS=4
+export ATTN=gpu_fa4_cute
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 BASE_XLA_FLAGS="${XLA_FLAGS:-}"
 nvidia-smi -L
@@ -61,7 +61,7 @@ from experiments.grug.moe.moe_may_july_baseline import _POINTS
 d = int(os.environ["DIM"]); bs, n = next((b, s) for (dd, b, s) in _POINTS if dd == d)
 run_id = L._della_step(d, bs, n).config.run_id
 try:
-    r = wandb.Api(timeout=60).run(f"{os.environ.get('WANDB_ENTITY', 'reself')}/marin-della/{run_id}")
+    r = wandb.Api(timeout=60).run(f"marin-della/{run_id}")
     s = r.summary
     print(f"SUMMARY case={i} rc={rc} dim={d} remat={os.environ['REMAT']} rep={os.environ['REPLICATE']} "
           f"xla='{os.environ.get('XLA_FLAGS', '').strip()}' steps={r.lastHistoryStep} "
