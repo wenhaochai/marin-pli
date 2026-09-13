@@ -53,6 +53,23 @@ if _NO_WANDB_ARTIFACTS:
 
 _NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 _ATTN = os.environ.get("ATTN", "gpu_fa4_cute")
+
+if _ATTN == "gpu_fa4_cute":
+    # The grug evaluator runs the model on fp32 params (no cast_to_compute), but the FA4 CuTe kernel only
+    # accepts bf16/fp16. Run fp32 calls through the kernel in bf16 and cast the output back; bf16 training
+    # calls are unchanged.
+    import jax.numpy as jnp
+    import levanter.grug.attention._fa4_cute as _fa4
+
+    _fa4_impl = _fa4.gpu_fa4_cute_attention
+
+    def _fa4_bf16(q, k, v, mask):
+        if q.dtype in (jnp.bfloat16, jnp.float16):
+            return _fa4_impl(q, k, v, mask)
+        out = _fa4_impl(q.astype(jnp.bfloat16), k.astype(jnp.bfloat16), v.astype(jnp.bfloat16), mask)
+        return out.astype(q.dtype)
+
+    _fa4.gpu_fa4_cute_attention = _fa4_bf16
 _DIMS = [int(d) for d in os.environ.get("DIM", "512").split(",")]
 _TAG = os.environ.get("RUN_TAG", "della4xh100")
 
