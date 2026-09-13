@@ -18,7 +18,14 @@ from levanter.tracker.wandb import WandbConfig
 from marin.execution.executor import executor_main
 from marin.execution.types import versioned
 
+import experiments.grug.moe.launch as _grug_launch
 from experiments.grug.moe.moe_may_july_baseline import _POINTS, _build_step
+
+# With a local MARIN_PREFIX the temporary checkpoint base comes back as a file:// URL, which the tensorstore
+# writer treats as a relative path: arrays land in <cwd>/file:/... while metadata.json goes to the real
+# path, so resume silently finds nothing. Hand the checkpointer a plain local path instead.
+_temp_ckpt_base = _grug_launch.temporary_checkpoint_base_path
+_grug_launch.temporary_checkpoint_base_path = lambda output_path: _temp_ckpt_base(output_path).removeprefix("file://")
 
 if os.environ.get("ZEPHYR_SUBPROCESS") == "1":
     # LocalClient runs zephyr workers as threads in one process, so tokenization is GIL-bound
