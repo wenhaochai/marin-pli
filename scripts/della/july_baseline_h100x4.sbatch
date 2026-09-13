@@ -23,6 +23,8 @@ export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
 export DIM=${DIM:-512} ATTN=${ATTN:-gpu_fa4_cute} NUM_GPUS=4
+# If a tokenize dependency is not finished yet, this job takes it over offline; keep it multi-core.
+export ZEPHYR_SUBPROCESS=1
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 
 nvidia-smi -L
