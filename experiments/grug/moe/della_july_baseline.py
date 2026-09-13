@@ -86,25 +86,104 @@ if _ATTN == "gpu_fa4_cute":
 _DIMS = [int(d) for d in os.environ.get("DIM", "512").split(",")]
 _TAG = os.environ.get("RUN_TAG", "della4xh100")
 
+# Throughput levers. Each keeps the training math (same model, optimizer, data, batch, steps); only how the
+# step is executed changes.
+#   REMAT=recompute_all (July default) | save_moe (keep MoE tensors, recompute the rest) | none (no recompute)
+#   REPLICATE=1: replicate params across the GPUs instead of FSDP-sharding them over the data axis
+#   PROBE_STEPS=N: throughput probe -- N steps, no eval, disposable checkpoints, separate run id
+# Per-rung defaults (overridable by env). A resume chain reads this table when each segment starts, so
+# update it only between runs. Current values are the July defaults until the MFU probes pick better ones.
+_LEVER_DEFAULTS = {
+    512: {"REMAT": "recompute_all", "REPLICATE": "0"},
+    768: {"REMAT": "recompute_all", "REPLICATE": "0"},
+    1024: {"REMAT": "recompute_all", "REPLICATE": "0"},
+}
+_DIM0 = int(os.environ.get("DIM", "512").split(",")[0])
+_REMAT = os.environ.get("REMAT", _LEVER_DEFAULTS.get(_DIM0, {}).get("REMAT", "recompute_all"))
+_REPLICATE = os.environ.get("REPLICATE", _LEVER_DEFAULTS.get(_DIM0, {}).get("REPLICATE", "0")) == "1"
+_PROBE_STEPS = int(os.environ.get("PROBE_STEPS", "0"))
+if _REMAT not in ("recompute_all", "save_moe", "none"):
+    raise ValueError(f"REMAT must be recompute_all, save_moe or none, got {_REMAT!r}")
+
+if _REMAT == "none":
+    # The grug model wraps every block in eqx.filter_checkpoint. Give that module an equinox view whose
+    # filter_checkpoint is the identity, so backward keeps forward activations instead of recomputing them.
+    import equinox
+
+    import experiments.grug.moe.model as _grug_model
+
+    class _EqxWithoutRemat:
+        def __getattr__(self, name):
+            return getattr(equinox, name)
+
+        @staticmethod
+        def filter_checkpoint(fun, *args, **kwargs):
+            return fun
+
+    _grug_model.eqx = _EqxWithoutRemat()
+
+
+def _lever_tag() -> str:
+    parts = []
+    if _REMAT != "recompute_all":
+        parts.append(f"remat-{_REMAT}")
+    if _REPLICATE:
+        parts.append("rep")
+    if "latency_hiding_scheduler=true" in os.environ.get("XLA_FLAGS", ""):
+        parts.append("lhs")
+    return "_".join(parts)
+
 
 def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     step = _build_step(hidden_dim, batch_size, num_steps)
     cfg = step.config
     model = dataclasses.replace(cfg.model.value, attention_implementation=None if _ATTN == "none" else _ATTN)
+    if _REMAT == "save_moe":
+        model = dataclasses.replace(model, remat_mode="save_moe")
+    grug_trainer = cfg.grug_trainer.value
+    if _REPLICATE:
+        grug_trainer = dataclasses.replace(grug_trainer, replica_axis_size=_NUM_GPUS)
+
+    lever = _lever_tag()
+    # A real run keeps one id across resume segments whatever levers each segment uses (the math is the same),
+    # so its checkpoints are found again. Probes get the lever in their id so variants don't collide.
     run_id = f"{cfg.run_id}_{_TAG}_{_ATTN}"
+    group = "july-baseline-della"
+    overrides = {}
+    if _PROBE_STEPS > 0:
+        from datetime import timedelta
+
+        from levanter.checkpoint import CheckpointerConfig
+
+        run_id = f"{run_id}" + (f"_{lever}" if lever else "") + f"_probe{_PROBE_STEPS}"
+        group = "mfu-probe"
+        probe_root = os.path.join(os.environ["MARIN_PREFIX"], "mfu_probe", run_id)
+        overrides = dict(
+            steps=versioned(_PROBE_STEPS),
+            eval=None,
+            checkpointer=CheckpointerConfig(
+                base_path=os.path.join(probe_root, "checkpoints"),
+                temporary_base_path=os.path.join(probe_root, "checkpoints-temp"),
+                append_run_id_to_base_path=False,
+                save_interval=timedelta(days=7),
+                keep=None,
+            ),
+        )
     tracker = dataclasses.replace(
         cfg.tracker,
         entity=os.environ.get("WANDB_ENTITY"),
         project=os.environ.get("WANDB_PROJECT", "marin-della"),
-        group="july-baseline-della",
-        tags=[*cfg.tracker.tags, _TAG, _ATTN],
+        group=group,
+        tags=[*cfg.tracker.tags, _TAG, _ATTN, *([lever] if lever else []), *(["probe"] if _PROBE_STEPS else [])],
     )
     config = dataclasses.replace(
         cfg,
         model=versioned(model),
+        grug_trainer=versioned(grug_trainer),
         run_id=run_id,
         resources=versioned(ResourceConfig.with_gpu("H100", count=_NUM_GPUS)),
         tracker=tracker,
+        **overrides,
     )
     return dataclasses.replace(step, name=f"grug/{run_id}", config=config)
 
