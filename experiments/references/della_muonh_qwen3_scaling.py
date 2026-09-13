@@ -136,9 +136,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             optimizer=optimizer,
             z_loss_weight=0.0,
             data_seed=42,
-            # The periodic export resolves the reference checkpoint from the Hub, which compute nodes cannot reach;
-            # keep only the end-of-run export.
-            hf_save_steps=10**9,
+            # No HF export: compute nodes cannot reach the Hub, and loading the tokenizer-only marin-tokenizer repo through
+            # AutoTokenizer needs a config.json lookup that fails offline. The levanter checkpoint is the artifact.
+            hf_save_steps=None,
         )
         return TrainLmOnPodConfig(
             train_config=inner,
