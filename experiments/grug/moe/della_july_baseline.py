@@ -13,6 +13,12 @@ Model, optimizer, data mixture, batch, steps, eval and seed are imported unchang
 import dataclasses
 import os
 
+# Persist JAX's compilation cache (and, under it, XLA's autotune/kernel sub-caches) on GPFS so a
+# resubmitted or resumed run skips the multi-minute compile + autotune. Set before JAX is imported.
+_JAX_CACHE_ROOT = os.environ.get("JAX_CACHE_ROOT", "/scratch/gpfs/KARTHIKN/wc9403/.cache/jax")
+os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", os.path.join(_JAX_CACHE_ROOT, "compilation"))
+os.environ.setdefault("JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES", "all")
+
 from fray.cluster import ResourceConfig
 from levanter.tracker.wandb import WandbConfig
 from marin.execution.executor import executor_main
