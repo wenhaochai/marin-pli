@@ -72,3 +72,26 @@ EOF
   rm -rf "$MARIN_PREFIX/mfu_probe"
 done
 echo "PROBES DONE $(date +%H:%M:%S)"
+
+# Pick the fastest successful case per rung and publish it for the real runs (launcher reads this at start).
+grep "^SUMMARY" logs/slurm/mfu-probe_${SLURM_JOB_ID}.out > logs/slurm/mfu-probe_${SLURM_JOB_ID}_summary.txt || true
+python3 - logs/slurm/mfu-probe_${SLURM_JOB_ID}_summary.txt logs/lever_defaults.json <<'EOF'
+import json, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+best = {}
+for line in open(src):
+    kv = dict(re.findall(r"(\w+)=('[^']*'|\S+)", line))
+    if kv.get("rc") != "0" or kv.get("p50_mfu") in (None, "None"):
+        continue
+    dim, mfu = kv["dim"], float(kv["p50_mfu"])
+    lhs = "1" if "latency_hiding_scheduler=true" in kv.get("xla", "") else "0"
+    if dim not in best or mfu > best[dim]["p50_mfu"]:
+        best[dim] = {"REMAT": kv["remat"], "REPLICATE": kv["rep"], "LHS": lhs, "p50_mfu": mfu, "tok_s": float(kv["tok_s"])}
+try:
+    merged = json.load(open(dst))
+except FileNotFoundError:
+    merged = {}
+merged.update(best)
+json.dump(merged, open(dst, "w"), indent=1)
+print("LEVER DEFAULTS WRITTEN:", json.dumps(merged))
+EOF

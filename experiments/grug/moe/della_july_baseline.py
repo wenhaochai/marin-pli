@@ -19,6 +19,23 @@ _JAX_CACHE_ROOT = os.environ.get("JAX_CACHE_ROOT", "/scratch/gpfs/KARTHIKN/wc940
 os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", os.path.join(_JAX_CACHE_ROOT, "compilation"))
 os.environ.setdefault("JAX_PERSISTENT_CACHE_ENABLE_XLA_CACHES", "all")
 
+# Execution levers chosen by the MFU probe (scripts/della/mfu_probe.sbatch writes this file). Read at start so
+# a pending run or resume segment uses the latest choice; explicit REMAT/REPLICATE/LHS env vars still win.
+import json
+
+_LEVER_FILE = os.environ.get(
+    "LEVER_DEFAULTS_FILE", os.path.join(os.path.dirname(__file__), "..", "..", "..", "logs", "lever_defaults.json")
+)
+_PROBED_LEVERS: dict = {}
+if os.path.exists(_LEVER_FILE) and not os.environ.get("PROBE_STEPS"):
+    with open(_LEVER_FILE) as _f:
+        _PROBED_LEVERS = json.load(_f)
+_PROBED_FOR_DIM = _PROBED_LEVERS.get(os.environ.get("DIM", "512").split(",")[0], {})
+if os.environ.get("LHS", _PROBED_FOR_DIM.get("LHS", "0")) == "1":
+    _flag = "--xla_gpu_enable_latency_hiding_scheduler=true"
+    if _flag not in os.environ.get("XLA_FLAGS", ""):
+        os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} {_flag}".strip()
+
 from fray.cluster import ResourceConfig
 from levanter.tracker.wandb import WandbConfig
 from marin.execution.executor import executor_main
@@ -99,8 +116,9 @@ _LEVER_DEFAULTS = {
     1024: {"REMAT": "recompute_all", "REPLICATE": "0"},
 }
 _DIM0 = int(os.environ.get("DIM", "512").split(",")[0])
-_REMAT = os.environ.get("REMAT", _LEVER_DEFAULTS.get(_DIM0, {}).get("REMAT", "recompute_all"))
-_REPLICATE = os.environ.get("REPLICATE", _LEVER_DEFAULTS.get(_DIM0, {}).get("REPLICATE", "0")) == "1"
+_DIM_DEFAULTS = {**_LEVER_DEFAULTS.get(_DIM0, {}), **{k: v for k, v in _PROBED_FOR_DIM.items() if k in ("REMAT", "REPLICATE")}}
+_REMAT = os.environ.get("REMAT", _DIM_DEFAULTS.get("REMAT", "recompute_all"))
+_REPLICATE = os.environ.get("REPLICATE", _DIM_DEFAULTS.get("REPLICATE", "0")) == "1"
 _PROBE_STEPS = int(os.environ.get("PROBE_STEPS", "0"))
 if _REMAT not in ("recompute_all", "save_moe", "none"):
     raise ValueError(f"REMAT must be recompute_all, save_moe or none, got {_REMAT!r}")
