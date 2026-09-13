@@ -33,6 +33,8 @@ _REPLICATE = os.environ.get("REPLICATE", _probed.get("REPLICATE", "0")) == "1"
 if _probed.get("LHS") == "1":
     # Must be in the environment before JAX creates its GPU client.
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_enable_latency_hiding_scheduler=true".strip()
+if "MEM_FRACTION" in _probed:
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = _probed["MEM_FRACTION"]
 
 from fray.cluster import ResourceConfig
 from levanter.callbacks.profiler import ProfilerConfig
@@ -96,6 +98,17 @@ if _REMAT == "none":
             return fun
 
     _grug_model.eqx = _EqxWithoutRemat()
+
+if _REMAT == "recompute_moe":
+    # d1024 on 4 GPUs runs 16 sequences per device (v5p-8 ran 8), and one rematted block's backward then keeps
+    # ~14 GiB of MoE dispatch tensors live next to the attention backward, overflowing 80 GB. A second checkpoint
+    # around the routed experts recomputes them separately in backward: same math, smaller peak.
+    import equinox
+
+    import experiments.grug.moe.model as _grug_model
+
+    _moe_call = _grug_model.MoEMLP.__call__
+    _grug_model.MoEMLP.__call__ = lambda self, x: equinox.filter_checkpoint(_moe_call)(self, x)
 
 
 def _della_step(hidden_dim: int, batch_size: int, num_steps: int):

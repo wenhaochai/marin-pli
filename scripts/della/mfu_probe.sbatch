@@ -30,6 +30,7 @@ ALL_CASES=(
   "1024 60 recompute_all 0 0 20"
   "1024 60 save_moe 0 0 20"
   "1024 60 none 0 0 20"
+  "1024 60 recompute_moe 0 0 25"
 )
 SELECT=${CASES:-$(seq -s ' ' 0 $((${#ALL_CASES[@]} - 1)))}
 
@@ -38,7 +39,7 @@ export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
 export ATTN=gpu_fa4_cute
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+export XLA_PYTHON_CLIENT_MEM_FRACTION=${MEM_FRACTION:-0.9}
 BASE_XLA_FLAGS="${XLA_FLAGS:-}"
 nvidia-smi -L
 
