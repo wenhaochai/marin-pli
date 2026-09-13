@@ -35,6 +35,7 @@ if _probed.get("LHS") == "1":
     os.environ["XLA_FLAGS"] = f"{os.environ.get('XLA_FLAGS', '')} --xla_gpu_enable_latency_hiding_scheduler=true".strip()
 
 from fray.cluster import ResourceConfig
+from levanter.callbacks.profiler import ProfilerConfig
 from marin.execution.executor import executor_main
 from marin.execution.types import versioned
 
@@ -150,6 +151,9 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         run_id=run_id,
         resources=versioned(ResourceConfig.with_gpu("H100", count=_NUM_GPUS)),
         tracker=tracker,
+        # A 5-step trace well after compile (logs/<run_id>/profiler) shows where step time goes that the
+        # matmul-only MFU does not count (128k-vocab softmax, expert dispatch, optimizer, collectives).
+        profiler=ProfilerConfig(enabled=not _PROBE_STEPS, start_step=500, num_steps=5),
         **overrides,
     )
     return dataclasses.replace(step, name=f"grug/{run_id}", config=config)
