@@ -1,0 +1,48 @@
+#!/bin/bash
+#SBATCH --job-name=muonh-qwen3-smoke
+#SBATCH --account=pli
+#SBATCH --partition=pli-c
+#SBATCH --qos=pli-cp
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=16
+#SBATCH --mem-per-gpu=24G
+#SBATCH --time=01:01:00
+#SBATCH --output=logs/slurm/%x_%j.out
+
+# H100 smoke test of the muonh_qwen3_scaling sizes back to back (SIZES env selects a subset): SMOKE_STEPS steps
+# at the real batch, one eval batch and a final checkpoint each. A SUMMARY line per size gives the exit code, the
+# first OOM/traceback line and the W&B MFU and tokens/s; each smoke output is deleted afterwards.
+set -uo pipefail
+cd /scratch/gpfs/KARTHIKN/wc9403/project/marin
+
+module load proxy/default  # wandb only
+export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store_big
+export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
+export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export WANDB_PROJECT=marin-della
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+export SMOKE_STEPS=${SMOKE_STEPS:-40}
+nvidia-smi -L
+
+for SIZE in ${SIZES:-130m 300m 520m 1_2b}; do
+  export SIZE
+  log=logs/slurm/muonh-qwen3-smoke_${SLURM_JOB_ID}_$SIZE.log
+  echo "SMOKE $SIZE START $(date +%H:%M:%S)"
+  timeout --signal=TERM 14m .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
+  rc=$?
+  err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160)
+  .venv/bin/python - "$SIZE" "$rc" "$err" <<'EOF'
+import os, sys, wandb
+size, rc, err = sys.argv[1:4]
+run_id = f"muonh-qwen3-{size}-della4xh100-smoke{os.environ['SMOKE_STEPS']}"
+try:
+    s = wandb.Api(timeout=60).run(f"marin-della/{run_id}").summary
+    print(f"SUMMARY size={size} rc={rc} mfu={s.get('throughput/mfu')} tok_s={s.get('throughput/tokens_per_second')} err='{err}'", flush=True)
+except Exception as e:
+    print(f"SUMMARY size={size} rc={rc} wandb_error={str(e)[:100]} err='{err}'", flush=True)
+EOF
+  rm -rf "$MARIN_PREFIX/speedrun/muonh-qwen3-${SIZE}-della4xh100-smoke${SMOKE_STEPS}"
+done
+echo "SMOKE DONE $(date +%H:%M:%S)"

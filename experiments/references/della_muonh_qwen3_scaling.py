@@ -9,6 +9,7 @@ optimizer values are transcribed from those runs' logged configs. Current main m
 for two defaults set explicitly here: the Newton-Schulz coefficients (main switched to per-iteration quintic
 coefficients in 2026-01) and the data order (the originals used a full linear permutation with data seed 42; main
 defaults to a Feistel block shuffle). Paloma is tokenized with the training tokenizer, as in the originals.
+SMOKE_STEPS turns a run into a short smoke test with its own run id and output, evaluating one batch at the end.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -54,6 +55,7 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 VERSION = "2026.09.13"
 NUM_GPUS = 4
 SEQ_LEN = 4096
+SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
     "130m": dict(hidden=512, inter=1792, layers=6, heads=8, kv=8, batch=128, steps=4959, lr=0.02, adam_lr=0.008, eps=1e-20, momentum=0.95, schedule="linear", decay=0.8, warmup=0, max_grad_norm=1.0, ref_c4_en_bpb=1.16354),
@@ -70,7 +72,7 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
-    run_id = f"muonh-qwen3-{size}-della4xh100"
+    run_id = f"muonh-qwen3-{size}-della4xh100" + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     model = Qwen3Config(
@@ -112,14 +114,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-della",
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else "muonh-qwen3-della",
                     tags=["speedrun", "muonh", "qwen3", size, "della4xh100", "jax_flash"],
                 ),
                 mp=jmp.get_policy("p=f32,c=bfloat16"),
                 train_batch_size=s["batch"],
                 per_device_parallelism=-1,
-                num_train_steps=s["steps"],
-                steps_per_eval=1000,
+                num_train_steps=SMOKE_STEPS or s["steps"],
+                steps_per_eval=SMOKE_STEPS or 1000,
+                max_eval_batches=1 if SMOKE_STEPS else None,
                 checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
