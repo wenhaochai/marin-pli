@@ -65,11 +65,12 @@ run_id = L._della_step(d, bs, n).config.run_id
 try:
     r = wandb.Api(timeout=60).run(f"marin-della/{run_id}")
     s = r.summary
-    print(f"SUMMARY case={i} rc={rc} dim={d} remat={os.environ['REMAT']} rep={os.environ['REPLICATE']} "
+    label = f"{d}-e{os.environ['EXPERTS']}" if os.environ.get("EXPERTS", "256") != "256" else d
+    print(f"SUMMARY case={i} rc={rc} dim={label} remat={os.environ['REMAT']} rep={os.environ['REPLICATE']} "
           f"xla='{os.environ.get('XLA_FLAGS', '').strip()}' steps={r.lastHistoryStep} "
           f"p50_mfu={s.get('throughput/p50_mfu')} tok_s={s.get('throughput/tokens_per_second')} err='{err}'", flush=True)
 except Exception as e:
-    print(f"SUMMARY case={i} rc={rc} dim={d} wandb_error={str(e)[:120]} err='{err}'", flush=True)
+    print(f"SUMMARY case={i} rc={rc} dim={d} experts={os.environ.get('EXPERTS', '256')} wandb_error={str(e)[:120]} err='{err}'", flush=True)
 EOF
   rm -rf "$MARIN_PREFIX/mfu_probe"
 done

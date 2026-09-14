@@ -24,10 +24,14 @@ _PROBE_STEPS = int(os.environ.get("PROBE_STEPS", "0"))
 
 # Levers picked by the MFU probe for this rung; probes set their own through env instead.
 _LEVER_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "logs", "lever_defaults.json")
+# EXPERTS != 256 departs from the July recipe (same expert width, top-k and hyperparameters, fewer experts) to test
+# how much of the GPU MFU gap is expert count; such runs get their own run ids and lever keys.
+_EXPERTS = int(os.environ.get("EXPERTS", "256"))
+_LEVER_KEY = str(_DIM) if _EXPERTS == 256 else f"{_DIM}-e{_EXPERTS}"
 _probed = {}
 if not _PROBE_STEPS and os.path.exists(_LEVER_FILE):
     with open(_LEVER_FILE) as f:
-        _probed = json.load(f).get(str(_DIM), {})
+        _probed = json.load(f).get(_LEVER_KEY, {})
 _REMAT = os.environ.get("REMAT", _probed.get("REMAT", "recompute_all"))
 _REPLICATE = os.environ.get("REPLICATE", _probed.get("REPLICATE", "0")) == "1"
 if _probed.get("LHS") == "1":
@@ -146,6 +150,8 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     model = dataclasses.replace(cfg.model.value, attention_implementation=None if _ATTN == "none" else _ATTN)
     if _REMAT == "save_moe":
         model = dataclasses.replace(model, remat_mode="save_moe")
+    if _EXPERTS != 256:
+        model = dataclasses.replace(model, num_experts=_EXPERTS)
     grug_trainer = cfg.grug_trainer.value
     if _REPLICATE:
         grug_trainer = dataclasses.replace(grug_trainer, replica_axis_size=_NUM_GPUS)
@@ -157,7 +163,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     )
     # A real run keeps one id across resume segments whatever levers a segment uses (the math is the same),
     # so its checkpoints are found again. Probes carry the lever in their id so variants don't collide.
-    run_id = f"{cfg.run_id}_della4xh100_{_ATTN}"
+    run_id = f"{cfg.run_id}_della4xh100_{_ATTN}" + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "")
     group = "july-baseline-della"
     overrides = {}
     if _PROBE_STEPS:
@@ -184,7 +190,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         entity=os.environ.get("WANDB_ENTITY"),
         project=os.environ.get("WANDB_PROJECT", "marin-della"),
         group=group,
-        tags=[*cfg.tracker.tags, "della4xh100", _ATTN, *filter(None, [lever]), *(["probe"] if _PROBE_STEPS else [])],
+        tags=[*cfg.tracker.tags, "della4xh100", _ATTN, f"e{_EXPERTS}", *filter(None, [lever]), *(["probe"] if _PROBE_STEPS else [])],
     )
     config = dataclasses.replace(
         cfg,
