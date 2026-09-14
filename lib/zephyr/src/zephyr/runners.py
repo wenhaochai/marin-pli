@@ -345,6 +345,12 @@ def _execute_shard_subprocess(task_file: str, result_file: str, num_workers: int
     # pools just compete with the parent's shard-level parallelism.
     pa.set_io_thread_count(1)
     pa.set_cpu_count(1)
+    if os.environ.get("ZEPHYR_WORKER_CPU_PIN") == "1":
+        # Shared login nodes may kill any process that averages more than one core (Della sweeps every 6 min).
+        # Pinning the child to one core of its allowed set keeps a shard's decompression, tokenizer and writer
+        # threads on that core; the parent's shard-level parallelism is unchanged.
+        cores = sorted(os.sched_getaffinity(0))
+        os.sched_setaffinity(0, {cores[os.getpid() % len(cores)]})
 
     # configure_logging installs faulthandler so SIGSEGV / SIGABRT / SIGBUS
     # / SIGFPE / SIGILL in a C extension produces a Python traceback on
