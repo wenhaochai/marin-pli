@@ -22,6 +22,11 @@ _ATTN = os.environ.get("ATTN", "gpu_fa4_cute")
 # d1024 does not fit 16 sequences per 80 GB device (XLA temp arena >70 GiB); NUM_GPUS=8 gives 8 per device, as on v5p-8.
 _NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 _PROBE_STEPS = int(os.environ.get("PROBE_STEPS", "0"))
+# OPT=adamh swaps MuonH for the grug AdamH optimizer to measure what Newton-Schulz costs per step. It changes the
+# training math, so only probes may set it.
+_OPT = os.environ.get("OPT", "muonh")
+if _OPT != "muonh" and not _PROBE_STEPS:
+    raise ValueError(f"OPT={_OPT} is a throughput diagnostic and needs PROBE_STEPS")
 
 # Levers picked by the MFU probe for this rung; probes set their own through env instead.
 _LEVER_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "logs", "lever_defaults.json")
@@ -153,6 +158,12 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         model = dataclasses.replace(model, remat_mode="save_moe")
     if _EXPERTS != 256:
         model = dataclasses.replace(model, num_experts=_EXPERTS)
+    optimizer = cfg.optimizer.value
+    if _OPT == "adamh":
+        from experiments.grug.moe.optimizer import GrugMoeAdamHConfig
+
+        shared = {f.name: getattr(optimizer, f.name) for f in dataclasses.fields(GrugMoeAdamHConfig) if hasattr(optimizer, f.name)}
+        optimizer = GrugMoeAdamHConfig(**shared)
     grug_trainer = cfg.grug_trainer.value
     if _REPLICATE:
         grug_trainer = dataclasses.replace(grug_trainer, replica_axis_size=_NUM_GPUS)
@@ -161,6 +172,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         [f"remat-{_REMAT}"] * (_REMAT != "recompute_all")
         + ["rep"] * _REPLICATE
         + ["lhs"] * ("latency_hiding_scheduler=true" in os.environ.get("XLA_FLAGS", ""))
+        + [f"opt-{_OPT}"] * (_OPT != "muonh")
     )
     # A real run keeps one id across resume segments whatever levers a segment uses (the math is the same),
     # so its checkpoints are found again. Probes carry the lever in their id so variants don't collide.
@@ -196,6 +208,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     config = dataclasses.replace(
         cfg,
         model=versioned(model),
+        optimizer=versioned(optimizer),
         grug_trainer=versioned(grug_trainer),
         run_id=run_id,
         resources=versioned(ResourceConfig.with_gpu("H100", count=_NUM_GPUS)),

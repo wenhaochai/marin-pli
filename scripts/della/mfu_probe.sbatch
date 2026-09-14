@@ -17,7 +17,8 @@
 set -uo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin-july
 
-# index: DIM PROBE_STEPS REMAT REPLICATE LHS CASE_TIMEOUT_MIN
+# index: DIM PROBE_STEPS REMAT REPLICATE LHS CASE_TIMEOUT_MIN [OPT]
+# OPT=adamh cases (13, 14) swap MuonH for AdamH to measure the Newton-Schulz share of the step; the lever pick skips them.
 ALL_CASES=(
   "512 300 recompute_all 0 0 16"
   "512 300 none 0 0 16"
@@ -32,6 +33,8 @@ ALL_CASES=(
   "1024 60 none 0 0 20"
   "1024 60 recompute_moe 0 0 25"
   "1024 60 chunk_moe 0 0 25"
+  "512 300 none 1 1 16 adamh"
+  "768 150 recompute_all 0 0 18 adamh"
 )
 SELECT=${CASES:-$(seq -s ' ' 0 $((${#ALL_CASES[@]} - 1)))}
 
@@ -45,13 +48,14 @@ BASE_XLA_FLAGS="${XLA_FLAGS:-}"
 nvidia-smi -L
 
 for i in $SELECT; do
-  read -r DIM PROBE_STEPS REMAT REPLICATE LHS TMIN <<< "${ALL_CASES[$i]}"
-  export DIM PROBE_STEPS REMAT REPLICATE
+  read -r DIM PROBE_STEPS REMAT REPLICATE LHS TMIN OPT <<< "${ALL_CASES[$i]}"
+  OPT=${OPT:-muonh}
+  export DIM PROBE_STEPS REMAT REPLICATE OPT
   export XLA_FLAGS="$BASE_XLA_FLAGS"
   [ "$LHS" = "1" ] && export XLA_FLAGS="$BASE_XLA_FLAGS --xla_gpu_enable_latency_hiding_scheduler=true"
   if [ "$DIM" = "512" ]; then export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store
   else export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store_big; fi
-  echo "CASE $i START $(date +%H:%M:%S): DIM=$DIM STEPS=$PROBE_STEPS REMAT=$REMAT REPLICATE=$REPLICATE LHS=$LHS"
+  echo "CASE $i START $(date +%H:%M:%S): DIM=$DIM STEPS=$PROBE_STEPS REMAT=$REMAT REPLICATE=$REPLICATE LHS=$LHS OPT=$OPT"
   timeout --signal=TERM $((TMIN * 60)) .venv/bin/python -m experiments.grug.moe.della_july_baseline > logs/slurm/mfu-probe_${SLURM_JOB_ID}_case$i.log 2>&1
   rc=$?
   err=$(grep -m1 -E "RESOURCE_EXHAUSTED|ran out of memory|TypeError|Traceback" logs/slurm/mfu-probe_${SLURM_JOB_ID}_case$i.log | cut -c1-160)
@@ -66,7 +70,7 @@ try:
     r = wandb.Api(timeout=60).run(f"marin-della/{run_id}")
     s = r.summary
     label = f"{d}-e{os.environ['EXPERTS']}" if os.environ.get("EXPERTS", "256") != "256" else d
-    print(f"SUMMARY case={i} rc={rc} dim={label} remat={os.environ['REMAT']} rep={os.environ['REPLICATE']} "
+    print(f"SUMMARY case={i} rc={rc} dim={label} remat={os.environ['REMAT']} rep={os.environ['REPLICATE']} opt={os.environ['OPT']} "
           f"xla='{os.environ.get('XLA_FLAGS', '').strip()}' steps={r.lastHistoryStep} "
           f"p50_mfu={s.get('throughput/p50_mfu')} tok_s={s.get('throughput/tokens_per_second')} err='{err}'", flush=True)
 except Exception as e:
@@ -84,7 +88,7 @@ src, dst = sys.argv[1], sys.argv[2]
 best = {}
 for line in open(src):
     kv = dict(re.findall(r"(\w+)=('[^']*'|\S+)", line))
-    if kv.get("rc") != "0" or kv.get("p50_mfu") in (None, "None"):
+    if kv.get("rc") != "0" or kv.get("p50_mfu") in (None, "None") or kv.get("opt", "muonh") != "muonh":
         continue
     dim, mfu = kv["dim"], float(kv["p50_mfu"])
     lhs = "1" if "latency_hiding_scheduler=true" in kv.get("xla", "") else "0"
