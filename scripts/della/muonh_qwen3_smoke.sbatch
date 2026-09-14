@@ -24,25 +24,27 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 export SMOKE_STEPS=${SMOKE_STEPS:-40}
+export VARIANT=${VARIANT:-baseline}
+SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")
 nvidia-smi -L
 
 for SIZE in ${SIZES:-130m 300m 520m 1_2b}; do
   export SIZE
-  log=logs/slurm/muonh-qwen3-smoke_${SLURM_JOB_ID}_$SIZE.log
+  log=logs/slurm/muonh-qwen3-smoke_${SLURM_JOB_ID}_${SIZE}${SUFFIX}.log
   echo "SMOKE $SIZE START $(date +%H:%M:%S)"
   timeout --signal=TERM 14m .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
   rc=$?
   err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160)
-  .venv/bin/python - "$SIZE" "$rc" "$err" <<'EOF'
+  .venv/bin/python - "$SIZE" "$rc" "$err" "$SUFFIX" <<'EOF'
 import os, sys, wandb
-size, rc, err = sys.argv[1:4]
-run_id = f"muonh-qwen3-{size}-della4xh100-smoke{os.environ['SMOKE_STEPS']}"
+size, rc, err, suffix = sys.argv[1:5]
+run_id = f"muonh-qwen3-{size}-della4xh100{suffix}-smoke{os.environ['SMOKE_STEPS']}"
 try:
     s = wandb.Api(timeout=60).run(f"marin-della/{run_id}").summary
-    print(f"SUMMARY size={size} rc={rc} mfu={s.get('throughput/mfu')} tok_s={s.get('throughput/tokens_per_second')} err='{err}'", flush=True)
+    print(f"SUMMARY size={size}{suffix} rc={rc} mfu={s.get('throughput/mfu')} tok_s={s.get('throughput/tokens_per_second')} err='{err}'", flush=True)
 except Exception as e:
-    print(f"SUMMARY size={size} rc={rc} wandb_error={str(e)[:100]} err='{err}'", flush=True)
+    print(f"SUMMARY size={size}{suffix} rc={rc} wandb_error={str(e)[:100]} err='{err}'", flush=True)
 EOF
-  rm -rf "$MARIN_PREFIX/speedrun/muonh-qwen3-${SIZE}-della4xh100-smoke${SMOKE_STEPS}"
+  rm -rf "$MARIN_PREFIX/speedrun/muonh-qwen3-${SIZE}-della4xh100${SUFFIX}-smoke${SMOKE_STEPS}"
 done
 echo "SMOKE DONE $(date +%H:%M:%S)"
