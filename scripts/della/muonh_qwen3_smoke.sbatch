@@ -25,7 +25,8 @@ export WANDB_PROJECT=marin-della
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 export SMOKE_STEPS=${SMOKE_STEPS:-40}
 export VARIANT=${VARIANT:-baseline}
-SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")
+export PRECISION=${PRECISION:-bf16}
+SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")$([ "$PRECISION" = fp8 ] && echo "-fp8")
 nvidia-smi -L
 
 for SIZE in ${SIZES:-130m 300m 520m 1_2b}; do
