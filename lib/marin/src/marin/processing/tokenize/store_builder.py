@@ -165,6 +165,11 @@ def build_from_datasets(
                 return
         result = write_levanter_cache(records, shard_path, **write_kwargs)
         exemplar = result["exemplar"]
+        if exemplar is None and not url_to_fs(shard_path)[0].exists(f"{shard_path}/shard_ledger.json"):
+            # An input group with no records (e.g. an empty upstream file) writes no cache at all; handing its
+            # path to the consolidation step would fail on the missing ledger.
+            logger.info("Empty shard, nothing written: %s", shard_path)
+            return
         yield (shard_path, _structural_exemplar(exemplar) if exemplar is not None else None)
 
     temp_shards = dataset.map(_strip_id).map_shard(_write_shard)
