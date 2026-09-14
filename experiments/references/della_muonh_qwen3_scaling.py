@@ -65,6 +65,7 @@ NUM_GPUS = 4
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt
+DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 FEEDBACK_PASSES = 2
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
@@ -85,7 +86,7 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
-    run_id = f"muonh-qwen3-{size}-della4xh100" + (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     model_cls, model_extra = (FullBandwidthQwen3Config, dict(feedback_passes=FEEDBACK_PASSES)) if VARIANT == "fbt" else (Qwen3Config, {})
@@ -130,7 +131,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, "della4xh100", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else [])],
                 ),
                 mp=jmp.get_policy("p=f32,c=bfloat16"),
                 train_batch_size=s["batch"],
@@ -160,7 +161,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         )
         return TrainLmOnPodConfig(
             train_config=inner,
-            resources=ResourceConfig.with_gpu("H100", count=NUM_GPUS),
+            resources=ResourceConfig.with_gpu(DEVICE_TAG.upper(), count=NUM_GPUS),
             output_path=ctx.output_path,
             env_vars={"RUN_ID": run_id},
         )
