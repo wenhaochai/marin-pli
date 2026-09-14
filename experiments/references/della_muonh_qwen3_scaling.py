@@ -74,9 +74,10 @@ SIZES = {
     "520m": dict(hidden=1024, inter=3584, layers=24, heads=16, kv=8, batch=256, steps=9918, lr=0.01, adam_lr=0.002, eps=1e-15, momentum=0.98, schedule="cosine", decay=None, warmup=1000, max_grad_norm=1.0, ref_c4_en_bpb=0.98824),
     "1_2b": dict(hidden=2048, inter=7168, layers=16, heads=16, kv=8, batch=256, steps=22888, lr=0.01, adam_lr=0.0015, eps=1e-15, momentum=0.98, schedule="cosine", decay=None, warmup=1000, max_grad_norm=2.0, ref_c4_en_bpb=0.92731),
 }
-# 1_2b at 64 sequences per 80 GB GPU trains for a few steps and then fails a 44.6 GiB allocation (A100 smoke
-# 13851002); two microbatches per step keep the batch math and fit. The others run one microbatch as the originals did.
-PER_DEVICE_PARALLELISM = {"1_2b": 32}
+# At 64 sequences per 80 GB GPU, 1_2b fails a 44.6 GiB allocation after a few steps (A100 smoke 13851002) and 520m a
+# 35.5 GiB one at step ~115 (H100 13852139, after a 40-step smoke had passed); two microbatches per step keep the batch
+# math and fit. 130m/300m run one microbatch as the originals did.
+PER_DEVICE_PARALLELISM = {"520m": 32, "1_2b": 32}
 
 
 def _run_size(config: TrainLmOnPodConfig) -> None:
