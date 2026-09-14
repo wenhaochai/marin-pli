@@ -176,7 +176,9 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     )
     # A real run keeps one id across resume segments whatever levers a segment uses (the math is the same),
     # so its checkpoints are found again. Probes carry the lever in their id so variants don't collide.
-    run_id = f"{cfg.run_id}_della{_NUM_GPUS}xh100_{_ATTN}" + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "")
+    # "codestrat": the local starcoderdata sample is language-stratified (the first 9-file random sample had no
+    # python/cpp and put d512 +0.03 above July in Paloma), so these runs get fresh ids and output paths.
+    run_id = f"{cfg.run_id}_della{_NUM_GPUS}xh100_{_ATTN}" + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "") + "_codestrat"
     group = "july-baseline-della"
     overrides = {}
     if _PROBE_STEPS:
