@@ -52,6 +52,11 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 
     wandb.sdk.wandb_run.Run.log_artifact = lambda self, *args, **kwargs: None
 
+# On GPU the fused cross-entropy sweeps 7 block-size candidates on a cache miss, and here the result cannot be cached
+# (its kernel jaxpr is unavailable), so every run and resume segment re-sweeps: ~10 min at 1_2b before the first step.
+# Block sizes only change tiling, not the loss, so use the inferred sizes.
+os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
+
 VERSION = "2026.09.13"
 NUM_GPUS = 4
 SEQ_LEN = 4096
