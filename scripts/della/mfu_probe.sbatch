@@ -35,6 +35,10 @@ ALL_CASES=(
   "1024 60 chunk_moe 0 0 25"
   "512 300 none 1 1 16 adamh"
   "768 150 recompute_all 0 0 18 adamh"
+  "768 150 none 1 1 18"
+  "1024 60 none 1 0 25"
+  "1024 60 none 1 1 25"
+  "1024 60 recompute_all 1 1 25"
 )
 SELECT=${CASES:-$(seq -s ' ' 0 $((${#ALL_CASES[@]} - 1)))}
 
