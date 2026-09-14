@@ -183,6 +183,10 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         [f"remat-{_REMAT}"] * (_REMAT != "recompute_all")
         + ["rep"] * _REPLICATE
         + ["lhs"] * ("latency_hiding_scheduler=true" in os.environ.get("XLA_FLAGS", ""))
+        # XLA's default GPU lowering of ragged_dot (the expert GEMMs of both MoE backends) is a per-expert loop of
+        # tiny dots; these experimental flags lower it to a grouped GEMM / fusion instead. Exact math, so a lever.
+        + ["rdgg"] * ("use_ragged_dot_grouped_gemm=true" in os.environ.get("XLA_FLAGS", ""))
+        + ["rdf"] * ("use_ragged_dot_fusion=true" in os.environ.get("XLA_FLAGS", ""))
         + [f"opt-{_OPT}"] * (_OPT != "muonh")
     )
     # A real run keeps one id across resume segments whatever levers a segment uses (the math is the same),
