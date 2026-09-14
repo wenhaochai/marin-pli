@@ -10,6 +10,8 @@ for two defaults set explicitly here: the Newton-Schulz coefficients (main switc
 coefficients in 2026-01) and the data order (the originals used a full linear permutation with data seed 42; main
 defaults to a Feistel block shuffle). Paloma is tokenized with the training tokenizer, as in the originals.
 SMOKE_STEPS turns a run into a short smoke test with its own run id and output, evaluating one batch at the end.
+VARIANT=fbt swaps the model for the full-bandwidth transformer (experiments.references.full_bandwidth_qwen3, two
+fixed passes) with everything else unchanged; its run ids end in ``-fbt2``.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -38,6 +40,7 @@ from marin.training.training import LevanterCheckpoint, TrainLmOnPodConfig, reso
 from experiments.datasets.paloma import paloma_datasets
 from experiments.datasets.prebuilt_caches import fineweb_edu_10B_dataset
 from experiments.marin_tokenizer import marin_tokenizer
+from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 
 # With a local MARIN_PREFIX the temporary checkpoint base comes back as a file:// URL, which the tensorstore
 # writer treats as a relative path (arrays land in <cwd>/file:/...), so resume finds only metadata.json.
@@ -61,6 +64,8 @@ VERSION = "2026.09.13"
 NUM_GPUS = 4
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
+VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt
+FEEDBACK_PASSES = 2
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
     "130m": dict(hidden=512, inter=1792, layers=6, heads=8, kv=8, batch=128, steps=4959, lr=0.02, adam_lr=0.008, eps=1e-20, momentum=0.95, schedule="linear", decay=0.8, warmup=0, max_grad_norm=1.0, ref_c4_en_bpb=1.16354),
@@ -68,6 +73,9 @@ SIZES = {
     "520m": dict(hidden=1024, inter=3584, layers=24, heads=16, kv=8, batch=256, steps=9918, lr=0.01, adam_lr=0.002, eps=1e-15, momentum=0.98, schedule="cosine", decay=None, warmup=1000, max_grad_norm=1.0, ref_c4_en_bpb=0.98824),
     "1_2b": dict(hidden=2048, inter=7168, layers=16, heads=16, kv=8, batch=256, steps=22888, lr=0.01, adam_lr=0.0015, eps=1e-15, momentum=0.98, schedule="cosine", decay=None, warmup=1000, max_grad_norm=2.0, ref_c4_en_bpb=0.92731),
 }
+# 1_2b at 64 sequences per 80 GB GPU trains for a few steps and then fails a 44.6 GiB allocation (A100 smoke
+# 13851002); two microbatches per step keep the batch math and fit. The others run one microbatch as the originals did.
+PER_DEVICE_PARALLELISM = {"1_2b": 32}
 
 
 def _run_size(config: TrainLmOnPodConfig) -> None:
@@ -77,10 +85,11 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
-    run_id = f"muonh-qwen3-{size}-della4xh100" + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    run_id = f"muonh-qwen3-{size}-della4xh100" + (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
-    model = Qwen3Config(
+    model_cls, model_extra = (FullBandwidthQwen3Config, dict(feedback_passes=FEEDBACK_PASSES)) if VARIANT == "fbt" else (Qwen3Config, {})
+    model = model_cls(
         max_seq_len=SEQ_LEN,
         hidden_dim=s["hidden"],
         intermediate_dim=s["inter"],
@@ -90,6 +99,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         hybrid_norm=True,
         # No Transformer Engine on Della, so the GPU default (NVTE) would fall back to unfused O(S^2) attention.
         attn_backend=AttentionBackend.JAX_FLASH,
+        **model_extra,
     )
     optimizer = MuonHConfig(
         learning_rate=s["lr"],
@@ -119,12 +129,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else "muonh-qwen3-della",
-                    tags=["speedrun", "muonh", "qwen3", size, "della4xh100", "jax_flash"],
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-della"),
+                    tags=["speedrun", "muonh", "qwen3", size, "della4xh100", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else [])],
                 ),
                 mp=jmp.get_policy("p=f32,c=bfloat16"),
                 train_batch_size=s["batch"],
-                per_device_parallelism=-1,
+                per_device_parallelism=PER_DEVICE_PARALLELISM.get(size, -1),
                 num_train_steps=SMOKE_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
