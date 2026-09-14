@@ -188,7 +188,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         + ["rdgg"] * ("use_ragged_dot_grouped_gemm=true" in os.environ.get("XLA_FLAGS", ""))
         + ["rdf"] * ("use_ragged_dot_fusion=true" in os.environ.get("XLA_FLAGS", ""))
         # haliax picks its Pallas-Triton grouped matmul on GPU and falls back to XLA; RAGGED_DOT_IMPL forces one.
-        + [f"rd{os.environ['RAGGED_DOT_IMPL']}"] * ("RAGGED_DOT_IMPL" in os.environ)
+        + [f"rd{os.environ.get('RAGGED_DOT_IMPL', '')}"] * ("RAGGED_DOT_IMPL" in os.environ)
         + [f"opt-{_OPT}"] * (_OPT != "muonh")
     )
     # A real run keeps one id across resume segments whatever levers a segment uses (the math is the same),
