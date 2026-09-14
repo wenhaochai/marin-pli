@@ -66,10 +66,18 @@ if os.environ.get("ZEPHYR_SUBPROCESS") == "1":
     import zephyr.execution
     from zephyr.runners import SubprocessRunner
 
-    # Tokenize steps ask for max_workers=4096; uncapped, a large dataset spawns hundreds of processes on one host,
-    # and workers time out registering. ZEPHYR_MAX_WORKERS caps each stage at the cores actually allotted.
+    # Tokenize steps ask for max_workers=4096 and ZephyrContext spawns one worker process per file group up to that
+    # (LocalClient ignores ZEPHYR_MAX_WORKERS), so a large dataset means hundreds of ~1 GB processes on one host and
+    # workers time out registering. Cap the context at ZEPHYR_MAX_WORKERS (default: CPU count); shards queue behind it.
     _max_workers = int(os.environ.get("ZEPHYR_MAX_WORKERS", str(os.cpu_count())))
     zephyr.execution._default_stage_runner_factory_for = lambda client: lambda n: SubprocessRunner(num_workers=min(n, _max_workers))
+    _ctx_post_init = zephyr.execution.ZephyrContext.__post_init__
+
+    def _capped_post_init(self):
+        _ctx_post_init(self)
+        self.max_workers = min(self.max_workers, _max_workers)
+
+    zephyr.execution.ZephyrContext.__post_init__ = _capped_post_init
 
 if "della-proxy" in os.environ.get("https_proxy", ""):
     # Della's compute-node proxy passes api.wandb.ai (metrics) but not storage.googleapis.com, so any file or
