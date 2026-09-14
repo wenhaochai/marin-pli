@@ -85,7 +85,7 @@ done
 echo "PROBES DONE $(date +%H:%M:%S)"
 
 # Pick the fastest successful case per rung and publish it for the real runs (launcher reads this at start).
-grep "^SUMMARY" logs/slurm/mfu-probe_${SLURM_JOB_ID}.out > logs/slurm/mfu-probe_${SLURM_JOB_ID}_summary.txt || true
+grep "^SUMMARY" logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out >logs/slurm/mfu-probe_${SLURM_JOB_ID}_summary.txt || true
 python3 - logs/slurm/mfu-probe_${SLURM_JOB_ID}_summary.txt logs/lever_defaults.json <<'EOF'
 import json, re, sys
 src, dst = sys.argv[1], sys.argv[2]
