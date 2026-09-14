@@ -23,6 +23,7 @@ from datetime import timedelta
 import jmp
 from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
+from haliax.quantization import QuantizationConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
@@ -66,6 +67,8 @@ SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
+# PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
+PRECISION = os.environ.get("PRECISION", "bf16")  # bf16 | fp8
 FEEDBACK_PASSES = 2
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
@@ -87,7 +90,7 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
-    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     model_cls, model_extra = (FullBandwidthQwen3Config, dict(feedback_passes=FEEDBACK_PASSES)) if VARIANT == "fbt" else (Qwen3Config, {})
@@ -131,10 +134,13 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else [])],
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
+                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION],
                 ),
                 mp=jmp.get_policy("p=f32,c=bfloat16"),
+                # FP8 replaces every Linear's dot_general with the delayed-scaling FP8 op (fwd e4m3, grads e5m2, f32 accumulate);
+                # embeddings, norms, attention softmax and the loss stay in the bf16/f32 policy above.
+                quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
                 per_device_parallelism=PER_DEVICE_PARALLELISM.get(size, -1),
                 num_train_steps=SMOKE_STEPS or s["steps"],
