@@ -31,6 +31,7 @@ Downloader: `scripts/della/nemotron_sample.py`. Its input `nemotron_paths.txt` i
 | `nemotron_cc_subset17_used_by_d512_run1.txt` | 17 | first d512 run (Paloma 3.596, discarded); subset of the 53 |
 | `nemotron_cc_subset53_used_by_failed_d768seg1.txt` | 53 | first d768 segment (5011 steps, discarded); raw kept at `raw/nemotro-cc-eeb783-subset-20260914` in both stores |
 | `nemotron_cc_reserve172_downloaded_unused.txt` | 172 | downloaded 2026-09-13 to `raw/nemotro-cc-eeb783-reserve`, never tokenized; 36 overlap the 53, 2 overlap the 1% sample |
+| `nemotron_cc_expansion36pct_20260915.txt` | 11,240 | 36.5% per-group draw, seed 20260915, disjoint from all rows above (93-99 snapshots per group); downloaded 2026-09-14 to `marin_store_big/raw/nemotro-cc-eeb783-expansion`, tokenized together with the 1% sample into `marin_store_big/tokenized/nemotron_cc/*` (~2.3T tokens, ~4.5 TiB cache) for d768/d1024; raw deleted after tokenizing |
 
 The three sets overlap as noted; a disjoint expansion passes all four manifests to `--exclude`. The discarded runs
 saw 17/53 files for at most 11k/5k steps, so reusing those files is a purity question, not a contamination one: keep
