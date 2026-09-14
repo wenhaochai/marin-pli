@@ -19,7 +19,8 @@ import os
 
 _DIM = int(os.environ.get("DIM", "512"))
 _ATTN = os.environ.get("ATTN", "gpu_fa4_cute")
-_NUM_GPUS = 4
+# d1024 does not fit 16 sequences per 80 GB device (XLA temp arena >70 GiB); NUM_GPUS=8 gives 8 per device, as on v5p-8.
+_NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 _PROBE_STEPS = int(os.environ.get("PROBE_STEPS", "0"))
 
 # Levers picked by the MFU probe for this rung; probes set their own through env instead.
@@ -163,7 +164,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     )
     # A real run keeps one id across resume segments whatever levers a segment uses (the math is the same),
     # so its checkpoints are found again. Probes carry the lever in their id so variants don't collide.
-    run_id = f"{cfg.run_id}_della4xh100_{_ATTN}" + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "")
+    run_id = f"{cfg.run_id}_della{_NUM_GPUS}xh100_{_ATTN}" + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "")
     group = "july-baseline-della"
     overrides = {}
     if _PROBE_STEPS:
@@ -190,7 +191,7 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
         entity=os.environ.get("WANDB_ENTITY"),
         project=os.environ.get("WANDB_PROJECT", "marin-della"),
         group=group,
-        tags=[*cfg.tracker.tags, "della4xh100", _ATTN, f"e{_EXPERTS}", *filter(None, [lever]), *(["probe"] if _PROBE_STEPS else [])],
+        tags=[*cfg.tracker.tags, f"della{_NUM_GPUS}xh100", _ATTN, f"e{_EXPERTS}", *filter(None, [lever]), *(["probe"] if _PROBE_STEPS else [])],
     )
     config = dataclasses.replace(
         cfg,
