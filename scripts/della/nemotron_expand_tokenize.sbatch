@@ -29,10 +29,13 @@ declare -A CACHE=([hq_actual]=hq_actual-5af4cc [hq_synth]=hq_synth-3525e2 [mediu
                   [medium_low]=medium_low-0fdb07 [low_actual]=low_actual-cb3f2c [low_synth]=low_synth-3c57b3)
 declare -A PAT=([hq_actual]="quality=high/kind=actual" [hq_synth]="quality=high/kind=synthetic" [medium_high]="quality=medium-high"
                 [medium]="quality=medium" [medium_low]="quality=medium-low" [low_actual]="quality=low/kind=actual" [low_synth]="quality=low/kind=synthetic")
-for split in hq_actual hq_synth medium_high medium medium_low low_actual low_synth; do
+# TIERS selects a subset so several jobs/hosts can split the work; a tier another host is tokenizing right now
+# (status RUNNING with a lock touched in the last 15 min) is skipped instead of waited on.
+for split in ${TIERS:-hq_actual hq_synth medium_high medium medium_low low_actual low_synth}; do
   d=$EXPP/tokenized/nemotron_cc/${CACHE[$split]}
   if [ "$(cat $d/.executor_status 2>/dev/null)" = "SUCCESS" ]; then echo "SKIP $split"; continue; fi
-  echo "TOKENIZE $split START $(date +%F' '%H:%M:%S)"
+  if [ "$(cat $d/.executor_status 2>/dev/null)" = "RUNNING" ] && [ -n "$(find $d -maxdepth 1 -name .executor_status.lock -mmin -15)" ]; then echo "SKIP $split (running elsewhere: $(cat $d/.executor_status.lock))"; continue; fi
+  echo "TOKENIZE $split START $(date +%F' '%H:%M:%S) on $(hostname) workers=$ZEPHYR_MAX_WORKERS"
   .venv/bin/python -m experiments.grug.moe.della_july_baseline --run_only "[\"^tokenized/nemotron_cc/$split\$\"]" --max_concurrent 1 > $EXPP/tmp/tokenize_${split}_slurm.log 2>&1
   status=$(cat $d/.executor_status 2>/dev/null)
   tokens=$(python3 -c "import json; print(json.load(open('$d/train/.stats.json'))['total_tokens'])" 2>/dev/null)
@@ -43,6 +46,9 @@ for split in hq_actual hq_synth medium_high medium medium_low low_actual low_syn
 done
 
 BT=$B/marin_store_big/tokenized
+for split in hq_actual hq_synth medium_high medium medium_low low_actual low_synth; do
+  [ "$(cat $EXPP/tokenized/nemotron_cc/${CACHE[$split]}/.executor_status 2>/dev/null)" = "SUCCESS" ] || { echo "NOT ALL TIERS DONE ($split); no swap. $(date)"; exit 0; }
+done
 if [ ! -L $EXPP/tokenized/nemotron_cc ]; then
   mv $BT/nemotron_cc $BT/nemotron_cc-1pct
   mv $EXPP/tokenized/nemotron_cc $BT/nemotron_cc   # same GPFS fileset: a rename
