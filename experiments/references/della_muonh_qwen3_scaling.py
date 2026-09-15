@@ -70,6 +70,17 @@ DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type 
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
 PRECISION = os.environ.get("PRECISION", "bf16")  # bf16 | fp8
 FEEDBACK_PASSES = 2
+# FBT ablations (each is one change from the fixed-two-pass FBT run): FBT_NOISE=0 drops the jitter noise, TIE=1 ties
+# the embedding and LM head (paper recipe; also applies to a baseline run), FBT_RESIDUAL=1 uses the residual form with
+# a zero-initialised scalar gate. INIT_FROM=<levanter checkpoint dir> continues pretraining from another run's
+# checkpoint (full-state restore: step, optimizer state, data position; leaves the checkpoint lacks, such as the FBT
+# parameters, keep their fresh init) with TOTAL_STEPS as the new schedule length; CPT_TAG names the run.
+FBT_NOISE = float(os.environ.get("FBT_NOISE", "0.02"))
+TIE = os.environ.get("TIE", "0") == "1"
+FBT_RESIDUAL = os.environ.get("FBT_RESIDUAL", "0") == "1"
+INIT_FROM = os.environ.get("INIT_FROM") or None
+TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
+CPT_TAG = os.environ.get("CPT_TAG", "-cpt") if INIT_FROM else ""
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
     "130m": dict(hidden=512, inter=1792, layers=6, heads=8, kv=8, batch=128, steps=4959, lr=0.02, adam_lr=0.008, eps=1e-20, momentum=0.95, schedule="linear", decay=0.8, warmup=0, max_grad_norm=1.0, ref_c4_en_bpb=1.16354),
@@ -90,10 +101,19 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
-    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    variant_tags = (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + ("-tied" if TIE else "")
+    if VARIANT == "fbt":
+        variant_tags += ("-nonoise" if FBT_NOISE == 0 else "") + ("-res" if FBT_RESIDUAL else "")
+    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
-    model_cls, model_extra = (FullBandwidthQwen3Config, dict(feedback_passes=FEEDBACK_PASSES)) if VARIANT == "fbt" else (Qwen3Config, {})
+    model_cls, model_extra = (
+        (FullBandwidthQwen3Config, dict(feedback_passes=FEEDBACK_PASSES, feedback_noise=FBT_NOISE, feedback_residual=FBT_RESIDUAL))
+        if VARIANT == "fbt"
+        else (Qwen3Config, {})
+    )
+    if TIE:
+        model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
         max_seq_len=SEQ_LEN,
         hidden_dim=s["hidden"],
@@ -135,15 +155,17 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
+                initialize_from=INIT_FROM,
+                allow_partial_checkpoint=INIT_FROM is not None,
                 mp=jmp.get_policy("p=f32,c=bfloat16"),
                 # FP8 replaces every Linear's dot_general with the delayed-scaling FP8 op (fwd e4m3, grads e5m2, f32 accumulate);
                 # embeddings, norms, attention softmax and the loss stay in the bf16/f32 policy above.
                 quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
                 per_device_parallelism=PER_DEVICE_PARALLELISM.get(size, -1),
-                num_train_steps=SMOKE_STEPS or s["steps"],
+                num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
                 checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),

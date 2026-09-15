@@ -26,7 +26,9 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 export SMOKE_STEPS=${SMOKE_STEPS:-40}
 export VARIANT=${VARIANT:-baseline}
 export PRECISION=${PRECISION:-bf16}
-SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")$([ "$PRECISION" = fp8 ] && echo "-fp8")
+SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")$([ "$PRECISION" = fp8 ] && echo "-fp8")$([ "${TIE:-0}" = 1 ] && echo "-tied")
+[ "$VARIANT" = fbt ] && SUFFIX="$SUFFIX$([ "${FBT_NOISE:-0.02}" = 0 ] && echo "-nonoise")$([ "${FBT_RESIDUAL:-0}" = 1 ] && echo "-res")"
+[ -n "${INIT_FROM:-}" ] && SUFFIX="$SUFFIX${CPT_TAG:--cpt}"
 nvidia-smi -L
 
 for SIZE in ${SIZES:-130m 300m 520m 1_2b}; do
