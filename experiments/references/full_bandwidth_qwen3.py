@@ -41,6 +41,13 @@ from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 class FullBandwidthQwen3Config(Qwen3Config):
     feedback_passes: int = 2
     feedback_noise: float = 0.02  # jitter on the fed-back state during training, Uniform[-noise, noise]
+    # Residual form for continued pretraining from a plain checkpoint: the feedback pass takes
+    # ``e_t + alpha * (W_u h_{t-1} * sigmoid(W_g rmsnorm(e_t)))`` with no RMSNorm on the sum and a learnable scalar
+    # ``alpha`` starting at ``feedback_alpha_init`` (0 makes pass 2 identical to pass 1 at the start, so the loss
+    # begins at the checkpoint's level and the feedback path is switched on gradually). The paper's GLU-only form has
+    # no identity point, so it cannot be initialised from a plain transformer without a loss jump.
+    feedback_residual: bool = False
+    feedback_alpha_init: float = 0.0
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -55,6 +62,7 @@ class FullBandwidthQwen3LMHeadModel(Qwen3LMHeadModel):
     w_u: hnn.Linear
     w_g: hnn.Linear
     input_norm: hnn.RmsNorm
+    alpha: Optional[NamedArray]  # residual-form gate scalar; None in the paper's GLU-only form
 
     @classmethod
     def init(cls, Vocab, config: FullBandwidthQwen3Config, *, key):  # type: ignore[override]
@@ -63,7 +71,8 @@ class FullBandwidthQwen3LMHeadModel(Qwen3LMHeadModel):
         Fused = config.Embed.alias("fused_embed")
         w_u = hnn.Linear.init(In=config.Embed, Out=Fused, key=k_u, use_bias=False)
         w_g = hnn.Linear.init(In=config.Embed, Out=Fused, key=k_g, use_bias=False)
-        return cls(base.transformer, base.embeddings, base.lm_head, w_u, w_g, config.mk_LayerNorm(config.Embed))
+        alpha = hax.named(jnp.asarray(config.feedback_alpha_init, dtype=jnp.float32), ()) if config.feedback_residual else None
+        return cls(base.transformer, base.embeddings, base.lm_head, w_u, w_g, config.mk_LayerNorm(config.Embed), alpha)
 
     @named_call
     def _passes(self, input_ids: NamedArray, attn_mask, *, key, pos_ids, train: bool) -> list[NamedArray]:
@@ -85,8 +94,13 @@ class FullBandwidthQwen3LMHeadModel(Qwen3LMHeadModel):
             # Position t receives h_{t-1}; position 0 (which roll fills with h_{T-1}) is plain below.
             fused = self.w_u(hax.roll(fed_back, 1, Pos)).rename({"fused_embed": "embed"}) * gate
             plain_upto = hax.random.randint(jrandom.fold_in(k_prefix, i), batch_axes, 0, Pos.size) if train else 0
-            x = hax.where(position <= plain_upto, e, fused)
-            h = self.transformer(self.input_norm(x), attn_mask=attn_mask, key=k_model, pos_ids=pos_ids)
+            if cfg.feedback_residual:
+                # Plain prefix = branch masked to zero, so those positions see exactly the pass-1 input.
+                x = e + self.alpha.astype(e.dtype) * hax.where(position <= plain_upto, 0.0, fused)
+                h = self.transformer(x, attn_mask=attn_mask, key=k_model, pos_ids=pos_ids)
+            else:
+                x = hax.where(position <= plain_upto, e, fused)
+                h = self.transformer(self.input_norm(x), attn_mask=attn_mask, key=k_model, pos_ids=pos_ids)
             states.append(h)
         return states
 
