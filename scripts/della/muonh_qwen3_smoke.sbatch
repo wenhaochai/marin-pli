@@ -27,7 +27,7 @@ export SMOKE_STEPS=${SMOKE_STEPS:-40}
 export VARIANT=${VARIANT:-baseline}
 export PRECISION=${PRECISION:-bf16}
 SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")$([ "$PRECISION" = fp8 ] && echo "-fp8")$([ "${TIE:-0}" = 1 ] && echo "-tied")
-[ "$VARIANT" = fbt ] && SUFFIX="$SUFFIX$([ "${FBT_NOISE:-0.02}" = 0 ] && echo "-nonoise")$([ "${FBT_RESIDUAL:-0}" = 1 ] && echo "-res")"
+[ "$VARIANT" = fbt ] && SUFFIX="$SUFFIX$([ "${FBT_NOISE:-0.02}" = 0 ] && echo "-nonoise")$([ "${FBT_RESIDUAL:-0}" = 1 ] && echo "-res")$([ "${FBT_LAYERWISE:-0}" = 1 ] && echo "-lw")$([ "${FBT_INPUT:-1}" = 0 ] && echo "-noin")$([ "${FBT_INPUT_LAYERS:-1}" -gt 1 ] && echo "-ml${FBT_INPUT_LAYERS}")"
 [ -n "${INIT_FROM:-}" ] && SUFFIX="$SUFFIX${CPT_TAG:--cpt}"
 nvidia-smi -L
 
