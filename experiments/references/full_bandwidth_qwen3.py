@@ -61,6 +61,10 @@ class FullBandwidthQwen3Config(Qwen3Config):
     feedback_noise: float = 0.02  # jitter on the fed-back states during training, Uniform[-noise, noise]
     feedback_residual: bool = False  # input-level residual form with a scalar gate (identity at alpha=0)
     feedback_alpha_init: float = 0.0
+    # Effective LR multiplier for the scalar gates: the stored parameter is alpha / M and the branch uses alpha_raw * M.
+    # Adam's update is invariant to gradient scale, so this moves alpha M times faster per step while keeping the exact
+    # identity at alpha_raw = 0. Needed when continuing at the tail of a cosine schedule, where adam_lr is ~1e-4.
+    feedback_alpha_lr_mult: float = 1.0
     feedback_input: bool = True  # keep the input-level term (paper form or residual form)
     feedback_input_layers: int = 1  # >1: the input-level term reads a softmax mix of the last k layers (residual form only)
     feedback_layerwise: bool = False  # per-layer aligned injection with per-layer scalar gates (identity at alpha=0)
@@ -89,7 +93,8 @@ class FeedbackAdapter(eqx.Module):
     proj: hnn.Linear
     gate: hnn.Linear
     norm: hnn.RmsNorm
-    alpha: NamedArray
+    alpha: NamedArray  # stored as alpha / alpha_mult
+    alpha_mult: float = eqx.field(static=True)
 
     @staticmethod
     def init(config: FullBandwidthQwen3Config, *, key) -> "FeedbackAdapter":
@@ -97,12 +102,13 @@ class FeedbackAdapter(eqx.Module):
         Fused = config.Embed.alias("fused_embed")
         proj = hnn.Linear.init(In=config.Embed, Out=Fused, key=k_p, use_bias=False)
         gate = hnn.Linear.init(In=config.Embed, Out=Fused, key=k_g, use_bias=False)
-        alpha = hax.named(jnp.asarray(config.feedback_alpha_init, dtype=jnp.float32), ())
-        return FeedbackAdapter(proj, gate, config.mk_LayerNorm(config.Embed), alpha)
+        m = config.feedback_alpha_lr_mult
+        alpha = hax.named(jnp.asarray(config.feedback_alpha_init / m, dtype=jnp.float32), ())
+        return FeedbackAdapter(proj, gate, config.mk_LayerNorm(config.Embed), alpha, m)
 
     def branch(self, x: NamedArray, fb: NamedArray) -> NamedArray:
         g = hnn.sigmoid(self.gate(self.norm(x)).rename({"fused_embed": "embed"}))
-        return self.alpha.astype(x.dtype) * (self.proj(fb).rename({"fused_embed": "embed"}) * g)
+        return (self.alpha * self.alpha_mult).astype(x.dtype) * (self.proj(fb).rename({"fused_embed": "embed"}) * g)
 
 
 class FullBandwidthQwen3LMHeadModel(Qwen3LMHeadModel):
@@ -120,7 +126,7 @@ class FullBandwidthQwen3LMHeadModel(Qwen3LMHeadModel):
         Fused = config.Embed.alias("fused_embed")
         w_u = hnn.Linear.init(In=config.Embed, Out=Fused, key=k_u, use_bias=False)
         w_g = hnn.Linear.init(In=config.Embed, Out=Fused, key=k_g, use_bias=False)
-        alpha = hax.named(jnp.asarray(config.feedback_alpha_init, dtype=jnp.float32), ()) if config.feedback_residual else None
+        alpha = hax.named(jnp.asarray(config.feedback_alpha_init / config.feedback_alpha_lr_mult, dtype=jnp.float32), ()) if config.feedback_residual else None
         fb_adapters = None
         if config.feedback_layerwise:
             fb_adapters = Stacked.init(config.Layers, FeedbackAdapter, gradient_checkpointing=config.gradient_checkpointing)(
@@ -199,7 +205,7 @@ class FullBandwidthQwen3LMHeadModel(Qwen3LMHeadModel):
             if cfg.feedback_residual:
                 x = e
                 if cfg.feedback_input:
-                    x = x + cast(NamedArray, self.alpha).astype(e.dtype) * hax.where(plain, 0.0, fused)
+                    x = x + (cast(NamedArray, self.alpha) * cfg.feedback_alpha_lr_mult).astype(e.dtype) * hax.where(plain, 0.0, fused)
                 if cfg.feedback_layerwise:
                     fb_layers = hax.roll(jitter(cast(NamedArray, per_layer), i, 1), 1, Pos)
                     h, per_layer = self._stack(x, attn_mask, key=k_model, pos_ids=pos_ids, fb_layers=fb_layers, plain=plain)

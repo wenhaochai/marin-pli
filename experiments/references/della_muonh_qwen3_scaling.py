@@ -83,6 +83,7 @@ FBT_RESIDUAL = os.environ.get("FBT_RESIDUAL", "0") == "1"
 FBT_LAYERWISE = os.environ.get("FBT_LAYERWISE", "0") == "1"
 FBT_INPUT = os.environ.get("FBT_INPUT", "1") == "1"
 FBT_INPUT_LAYERS = int(os.environ.get("FBT_INPUT_LAYERS", "1"))
+FBT_ALPHA_MULT = float(os.environ.get("FBT_ALPHA_MULT", "1"))  # Adam-invariant LR multiplier for the scalar gates
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
 CPT_TAG = os.environ.get("CPT_TAG", "-cpt") if INIT_FROM else ""
@@ -110,6 +111,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "fbt":
         variant_tags += ("-nonoise" if FBT_NOISE == 0 else "") + ("-res" if FBT_RESIDUAL else "")
         variant_tags += ("-lw" if FBT_LAYERWISE else "") + ("-noin" if not FBT_INPUT else "") + (f"-ml{FBT_INPUT_LAYERS}" if FBT_INPUT_LAYERS > 1 else "")
+        variant_tags += f"-am{FBT_ALPHA_MULT:g}" if FBT_ALPHA_MULT != 1 else ""
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
@@ -123,6 +125,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 feedback_layerwise=FBT_LAYERWISE,
                 feedback_input=FBT_INPUT,
                 feedback_input_layers=FBT_INPUT_LAYERS,
+                feedback_alpha_lr_mult=FBT_ALPHA_MULT,
             ),
         )
         if VARIANT == "fbt"
