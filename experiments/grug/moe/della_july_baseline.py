@@ -27,6 +27,11 @@ _PROBE_STEPS = int(os.environ.get("PROBE_STEPS", "0"))
 _OPT = os.environ.get("OPT", "muonh")
 if _OPT != "muonh" and not _PROBE_STEPS:
     raise ValueError(f"OPT={_OPT} is a throughput diagnostic and needs PROBE_STEPS")
+# MAX_GRAD_NORM overrides the recipe's max_grad_norm=None (the "1pct-noclip" set in heuristic.py) to test whether
+# d768's late-training divergence is a positive feedback that clipping damps. It CHANGES THE TRAINING MATH and so
+# departs from the July recipe: such a run is a diagnostic, never a reproduction, and it carries its own run id
+# suffix so it cannot collide with -- or resume from -- the unclipped run. Unset leaves the recipe untouched.
+_CLIP = os.environ.get("MAX_GRAD_NORM", "")
 
 # Levers picked by the MFU probe for this rung; probes set their own through env instead.
 _LEVER_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "logs", "lever_defaults.json")
@@ -170,6 +175,9 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     if _EXPERTS != 256:
         model = dataclasses.replace(model, num_experts=_EXPERTS)
     optimizer = cfg.optimizer.value
+    if _CLIP:
+        # dataclasses.replace raises on an unknown field, so this fails loudly if the optimizer config ever drops it.
+        optimizer = dataclasses.replace(optimizer, max_grad_norm=float(_CLIP))
     if _OPT == "adamh":
         from experiments.grug.moe.optimizer import GrugMoeAdamHConfig
 
@@ -195,7 +203,12 @@ def _della_step(hidden_dim: int, batch_size: int, num_steps: int):
     # so its checkpoints are found again. Probes carry the lever in their id so variants don't collide.
     # "codestrat": the local starcoderdata sample is language-stratified (the first 9-file random sample had no
     # python/cpp and put d512 +0.03 above July in Paloma), so these runs get fresh ids and output paths.
-    run_id = f"{cfg.run_id}_della{_NUM_GPUS}xh100_{_ATTN}" + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "") + "_codestrat"
+    run_id = (
+        f"{cfg.run_id}_della{_NUM_GPUS}xh100_{_ATTN}"
+        + (f"_e{_EXPERTS}" if _EXPERTS != 256 else "")
+        + (f"_clip{_CLIP}" if _CLIP else "")
+        + "_codestrat"
+    )
     group = "july-baseline-della"
     overrides = {}
     if _PROBE_STEPS:
