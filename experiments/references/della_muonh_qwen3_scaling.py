@@ -90,11 +90,16 @@ FBT_ALPHA_MULT = float(os.environ.get("FBT_ALPHA_MULT", "1"))  # Adam-invariant 
 # Objective hill-climb (experiments.references.objective_qwen3): VARIANT=twin adds the Twin-Networks backward model and
 # state-matching penalty (TWIN_W weight, TWIN_OFF offset), VARIANT=sr the successor-representation TD head (SR_W weight,
 # SR_GAMMA discount), VARIANT=twinsr both. The forward model, data, batch, schedule and optimizer stay the baseline's.
-OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr")
+OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr", "pi")
 TWIN_W = float(os.environ.get("TWIN_W", "0.1"))
 TWIN_OFF = int(os.environ.get("TWIN_OFF", "2"))
 SR_W = float(os.environ.get("SR_W", "0.1"))
 SR_GAMMA = float(os.environ.get("SR_GAMMA", "0.9"))
+# VARIANT=pi: predictive-information InfoNCE between h_t and h_{t+PI_K} (PI_W weight, PI_TAU temperature, PI_NEG negatives).
+PI_W = float(os.environ.get("PI_W", "0.1"))
+PI_K = int(os.environ.get("PI_K", "4"))
+PI_TAU = float(os.environ.get("PI_TAU", "0.1"))
+PI_NEG = int(os.environ.get("PI_NEG", "512"))
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -130,6 +135,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-twin{TWIN_W:g}" + (f"o{TWIN_OFF}" if TWIN_OFF != 2 else "")
     if VARIANT in ("sr", "twinsr"):
         variant_tags += f"-sr{SR_GAMMA:g}w{SR_W:g}"
+    if VARIANT == "pi":
+        variant_tags += f"-pik{PI_K}w{PI_W:g}" + (f"t{PI_TAU:g}" if PI_TAU != 0.1 else "") + (f"n{PI_NEG}" if PI_NEG != 512 else "")
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
@@ -151,6 +158,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             sr=VARIANT in ("sr", "twinsr"),
             sr_weight=SR_W,
             sr_gamma=SR_GAMMA,
+            pi=VARIANT == "pi",
+            pi_weight=PI_W,
+            pi_k=PI_K,
+            pi_tau=PI_TAU,
+            pi_negatives=PI_NEG,
         )
     else:
         model_cls, model_extra = Qwen3Config, {}

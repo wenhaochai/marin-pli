@@ -20,8 +20,15 @@ directly comparable with the baseline. Two objectives, switchable independently:
   are RMS-normalised per position before use as targets, otherwise their 0.02 scale makes the term vanish next to
   the cross-entropy. The target is stop-gradiented in full, including the embeddings.
 
-Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr]. The logged train loss is that sum;
-eval reports the forward NTP alone.
+* ``pi`` (predictive information: Becker & Hinton 1992 IMAX, Bialek-Nemenman-Tishby 1999; InfoNCE form of van den
+  Oord et al. 2018): the forward state ``h_t``, through a linear map, must identify its own future state ``h_{t+k}``
+  among ``pi_negatives`` states drawn at random from the whole batch. Both sides are L2-normalised and both receive
+  gradient (IMAX's two modules co-adapting to maximise their mutual information). Anchors whose ``t+k`` lies in
+  another document or past the end are masked out; a random negative can coincide with the positive or sit in the
+  same document, which InfoNCE tolerates.
+
+Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi]. The logged train
+loss is that sum; eval reports the forward NTP alone.
 """
 
 from dataclasses import dataclass
@@ -52,12 +59,19 @@ class ObjectiveQwen3Config(Qwen3Config):
     sr: bool = False
     sr_weight: float = 0.1
     sr_gamma: float = 0.9
+    pi: bool = False
+    pi_weight: float = 0.1
+    pi_k: int = 4  # anchor h_t identifies h_{t+k}
+    pi_tau: float = 0.1  # InfoNCE temperature on cosine logits
+    pi_negatives: int = 512  # states sampled from the whole batch as shared negatives
 
     def __post_init__(self):
         if self.twin_offset < 1:
             raise ValueError("twin_offset must be >= 1 (1 lets the backward state see the target token)")
         if not (0.0 <= self.sr_gamma < 1.0):
             raise ValueError("sr_gamma must be in [0, 1)")
+        if self.pi_k < 1 or self.pi_tau <= 0 or self.pi_negatives < 1:
+            raise ValueError("pi_k >= 1, pi_tau > 0 and pi_negatives >= 1 are required")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -100,15 +114,17 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     backward: Optional[Qwen3LMHeadModel]  # twin: same shape, reads the sequence reversed
     twin_proj: Optional[hnn.Linear]  # Embed -> Embed affine map from forward states to backward states
     sr_head: Optional[hnn.Linear]  # Embed -> Embed successor-representation head
+    pi_proj: Optional[hnn.Linear]  # Embed -> Embed map from h_t to its prediction of h_{t+k}
 
     @classmethod
     def init(cls, Vocab, config: ObjectiveQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # same forward initialisation as the baseline for this key
-        k_b, k_t, k_s = jrandom.split(jrandom.fold_in(key, 2), 3)
+        k_b, k_t, k_s, k_p = jrandom.split(jrandom.fold_in(key, 2), 4)
         backward = Qwen3LMHeadModel.init(Vocab, config, key=k_b) if config.twin else None
         twin_proj = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("twin_embed"), key=k_t, use_bias=True) if config.twin else None
         sr_head = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("sr_embed"), key=k_s, use_bias=False) if config.sr else None
-        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head)
+        pi_proj = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("pi_embed"), key=k_p, use_bias=False) if config.pi else None
+        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj)
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
         return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, model.get_lm_head(), tokens, loss_weight=loss_weight, **kw)
@@ -155,6 +171,35 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         sq = hax.mean((psi - target) ** 2, axis="embed")
         return _masked_mean(sq, valid)
 
+    @named_call
+    def _pi_loss(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        Pos = example.tokens.resolve_axis("position")
+        k = cfg.pi_k
+        batch_axes = tuple(ax for ax in example.tokens.axes if ax.name != Pos.name)
+
+        def unit(x):
+            return x / (hax.sqrt(hax.sum(x * x, axis="embed")) + 1e-6)
+
+        pred = unit(cast(hnn.Linear, self.pi_proj)(h).rename({"pi_embed": "embed"}).astype(jnp.float32))
+        tgt = unit(h.astype(jnp.float32))
+        pos = hax.roll(tgt, -k, Pos)  # the positive for anchor t is the state at t+k
+        # Shared negatives: pi_negatives states drawn without replacement from every (batch, position) of this step.
+        flat = hax.flatten_axes(tgt, (*batch_axes, Pos), "cand")
+        n = min(cfg.pi_negatives, flat.resolve_axis("cand").size)
+        idx = jrandom.choice(key, flat.resolve_axis("cand").size, (n,), replace=False)
+        neg = hax.take(flat, "cand", hax.named(idx, "neg"))
+        pos_logit = hax.sum(pred * pos, axis="embed") / cfg.pi_tau
+        neg_logits = hax.dot(pred, neg, axis="embed") / cfg.pi_tau
+        m = hax.maximum(pos_logit, hax.max(neg_logits, axis="neg"))
+        lse = m + hax.log(hax.exp(pos_logit - m) + hax.sum(hax.exp(neg_logits - m), axis="neg"))
+        nce = lse - pos_logit
+        position = hax.arange(Pos).broadcast_axis(batch_axes)
+        valid = (position + k <= Pos.size - 1).astype(jnp.float32) * (example.loss_weight > 0).astype(jnp.float32)
+        if seg is not None:
+            valid = valid * (seg == hax.roll(seg, -k, Pos)).astype(jnp.float32)
+        return _masked_mean(nce, valid)
+
     def compute_next_token_loss(  # type: ignore[override]
         self,
         example: LmExample,
@@ -168,7 +213,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     ):
         cfg = cast(ObjectiveQwen3Config, self.config)
         train = key is not None  # the trainer passes a key; evaluation does not
-        k_f, k_b = maybe_rng_split(key, 2) if key is not None else (None, None)
+        k_f, k_b, k_p = maybe_rng_split(key, 3) if key is not None else (None, None, None)
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
         h = self.activations(example.tokens, example.attn_mask, key=k_f)
         loss = self._ntp(self, h, example.tokens, example.loss_weight, **kw)
@@ -181,4 +226,6 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             loss = loss + ntp_b + cfg.twin_weight * twin
         if cfg.sr:
             loss = loss + cfg.sr_weight * self._sr_loss(h, example, seg)
+        if cfg.pi:
+            loss = loss + cfg.pi_weight * self._pi_loss(h, example, seg, key=k_p)
         return loss
