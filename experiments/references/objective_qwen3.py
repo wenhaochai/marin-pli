@@ -27,8 +27,15 @@ directly comparable with the baseline. Two objectives, switchable independently:
   another document or past the end are masked out; a random negative can coincide with the positive or sit in the
   same document, which InfoNCE tolerates.
 
-Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi]. The logged train
-loss is that sum; eval reports the forward NTP alone.
+* ``eos`` (distance to document end; user proposal 2026-09-18): at each position ``h_t`` predicts how far the current
+  document is from ending, ``d_t`` = index of the first EOS strictly after ``t`` minus ``t`` (>= 1), as a 13-way
+  cross-entropy over log2-spaced bins {1}, {2}, {3-4}, {5-8}, ..., {2049-4096}. This is discourse-position
+  information that NTP never asks for explicitly (``d_t = 1`` coincides with the NTP EOS logit; ``d_t >= 2`` is
+  new). Masked: positions with no EOS later in the window (the truncated last document -- unknowable) and positions
+  that are themselves EOS (the next EOS belongs to the following document, which cross-document masking hides).
+
+Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi] [+ eos_weight * eos].
+The logged train loss is that sum; eval reports the forward NTP alone.
 """
 
 from dataclasses import dataclass
@@ -64,6 +71,10 @@ class ObjectiveQwen3Config(Qwen3Config):
     pi_k: int = 4  # anchor h_t identifies h_{t+k}
     pi_tau: float = 0.1  # InfoNCE temperature on cosine logits
     pi_negatives: int = 512  # states sampled from the whole batch as shared negatives
+    eos: bool = False
+    eos_weight: float = 0.1
+    eos_id: int = 128001  # marin tokenizer (same ids as llama3); checked against the tokenizer in the CPU smoke
+    eos_bins: int = 13  # bin b holds d in (2^(b-1), 2^b]; 13 bins cover 1..4096
 
     def __post_init__(self):
         if self.twin_offset < 1:
@@ -72,6 +83,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("sr_gamma must be in [0, 1)")
         if self.pi_k < 1 or self.pi_tau <= 0 or self.pi_negatives < 1:
             raise ValueError("pi_k >= 1, pi_tau > 0 and pi_negatives >= 1 are required")
+        if self.eos_bins < 2:
+            raise ValueError("eos_bins must be >= 2")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -115,16 +128,18 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     twin_proj: Optional[hnn.Linear]  # Embed -> Embed affine map from forward states to backward states
     sr_head: Optional[hnn.Linear]  # Embed -> Embed successor-representation head
     pi_proj: Optional[hnn.Linear]  # Embed -> Embed map from h_t to its prediction of h_{t+k}
+    eos_head: Optional[hnn.Linear]  # Embed -> eos_bins logits over log2 distance-to-EOS bins
 
     @classmethod
     def init(cls, Vocab, config: ObjectiveQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # same forward initialisation as the baseline for this key
-        k_b, k_t, k_s, k_p = jrandom.split(jrandom.fold_in(key, 2), 4)
+        k_b, k_t, k_s, k_p, k_e = jrandom.split(jrandom.fold_in(key, 2), 5)
         backward = Qwen3LMHeadModel.init(Vocab, config, key=k_b) if config.twin else None
         twin_proj = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("twin_embed"), key=k_t, use_bias=True) if config.twin else None
         sr_head = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("sr_embed"), key=k_s, use_bias=False) if config.sr else None
         pi_proj = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("pi_embed"), key=k_p, use_bias=False) if config.pi else None
-        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj)
+        eos_head = hnn.Linear.init(In=config.Embed, Out=hax.Axis("eos_bin", config.eos_bins), key=k_e, use_bias=True) if config.eos else None
+        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head)
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
         return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, model.get_lm_head(), tokens, loss_weight=loss_weight, **kw)
@@ -200,6 +215,37 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             valid = valid * (seg == hax.roll(seg, -k, Pos)).astype(jnp.float32)
         return _masked_mean(nce, valid)
 
+    @staticmethod
+    def eos_targets(tokens: NamedArray, loss_weight: NamedArray, eos_id: int, nbins: int):
+        """Per-position (bin, valid) for the distance-to-EOS objective; exposed for the CPU smoke's exact checks.
+
+        ``d_t`` = index of the first EOS strictly after ``t`` minus ``t``; bin = ceil(log2 d) clipped to nbins-1.
+        valid = an EOS exists later in the window AND ``t`` is not itself EOS AND the position carries loss.
+        """
+        Pos = tokens.resolve_axis("position")
+        ax = tokens.axes.index(Pos)
+        big = 2 * Pos.size
+        idx = hax.arange(Pos).broadcast_axis(tuple(a for a in tokens.axes if a.name != Pos.name))
+        is_eos = tokens == eos_id
+        eos_idx = hax.where(is_eos, idx, big)
+        at_or_after = hax.named(jax.lax.cummin(eos_idx.array, axis=ax, reverse=True), eos_idx.axes)
+        strictly_after = hax.where(idx == Pos.size - 1, big, hax.roll(at_or_after, -1, Pos))
+        d = hax.maximum(strictly_after - idx, 1)
+        bins = hax.clip(hax.ceil(hax.log2(d.astype(jnp.float32))).astype(jnp.int32), 0, nbins - 1)
+        valid = (strictly_after < big) & (~is_eos) & (loss_weight > 0)
+        return bins, valid.astype(jnp.float32)
+
+    @named_call
+    def _eos_loss(self, h: NamedArray, example: LmExample):
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        bins, valid = self.eos_targets(example.tokens, example.loss_weight, cfg.eos_id, cfg.eos_bins)
+        logits = cast(hnn.Linear, self.eos_head)(h).astype(jnp.float32)
+        EosBin = logits.resolve_axis("eos_bin")
+        onehot = (bins.broadcast_axis(EosBin) == hax.arange(EosBin)).astype(jnp.float32)
+        picked = hax.sum(logits * onehot, axis="eos_bin")
+        ce = hnn.logsumexp(logits, axis="eos_bin") - picked
+        return _masked_mean(ce, valid)
+
     def compute_next_token_loss(  # type: ignore[override]
         self,
         example: LmExample,
@@ -228,4 +274,6 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             loss = loss + cfg.sr_weight * self._sr_loss(h, example, seg)
         if cfg.pi:
             loss = loss + cfg.pi_weight * self._pi_loss(h, example, seg, key=k_p)
+        if cfg.eos:
+            loss = loss + cfg.eos_weight * self._eos_loss(h, example)
         return loss

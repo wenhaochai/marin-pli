@@ -34,6 +34,7 @@ case "$VARIANT" in  # must mirror variant_tags in della_muonh_qwen3_scaling.py (
   sr)     SUFFIX="$SUFFIX-sr${SR_GAMMA:-0.9}w${SR_W:-0.1}" ;;
   twinsr) SUFFIX="$SUFFIX-twin${TWIN_W:-0.1}$([ "${TWIN_OFF:-2}" != 2 ] && echo "o${TWIN_OFF}")-sr${SR_GAMMA:-0.9}w${SR_W:-0.1}" ;;
   pi)     SUFFIX="$SUFFIX-pik${PI_K:-4}w${PI_W:-0.1}$([ "${PI_TAU:-0.1}" != 0.1 ] && echo "t${PI_TAU}")$([ "${PI_NEG:-512}" != 512 ] && echo "n${PI_NEG}")" ;;
+  eos)    SUFFIX="$SUFFIX-eosw${EOS_W:-0.1}" ;;
 esac
 [ -n "${INIT_FROM:-}" ] && SUFFIX="$SUFFIX${CPT_TAG:--cpt}"
 nvidia-smi -L
