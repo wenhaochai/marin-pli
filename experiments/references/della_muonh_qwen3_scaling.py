@@ -102,6 +102,9 @@ PI_TAU = float(os.environ.get("PI_TAU", "0.1"))
 PI_NEG = int(os.environ.get("PI_NEG", "512"))
 # VARIANT=eos: 13-way log2-binned cross-entropy on the distance to the current document's EOS (EOS_W weight).
 EOS_W = float(os.environ.get("EOS_W", "0.1"))
+# FREE_HEADS=1 (default): auxiliary heads are plain arrays in MuonH's adam group (norm free). FREE_HEADS=0 reproduces the
+# 2026-09-18 pinned-head runs (hnn.Linear heads that MuonH keeps at their init norm). Run ids carry -fh when free.
+FREE_HEADS = os.environ.get("FREE_HEADS", "1") == "1"
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -141,6 +144,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-pik{PI_K}w{PI_W:g}" + (f"t{PI_TAU:g}" if PI_TAU != 0.1 else "") + (f"n{PI_NEG}" if PI_NEG != 512 else "")
     if VARIANT == "eos":
         variant_tags += f"-eosw{EOS_W:g}"
+    if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
+        variant_tags += "-fh"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
@@ -169,6 +174,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             pi_negatives=PI_NEG,
             eos=VARIANT == "eos",
             eos_weight=EOS_W,
+            free_heads=FREE_HEADS,
         )
     else:
         model_cls, model_extra = Qwen3Config, {}
