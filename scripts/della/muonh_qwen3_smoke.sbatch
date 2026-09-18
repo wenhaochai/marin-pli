@@ -28,6 +28,11 @@ export VARIANT=${VARIANT:-baseline}
 export PRECISION=${PRECISION:-bf16}
 SUFFIX=$([ "$VARIANT" = fbt ] && echo "-fbt2")$([ "$PRECISION" = fp8 ] && echo "-fp8")$([ "${TIE:-0}" = 1 ] && echo "-tied")
 [ "$VARIANT" = fbt ] && SUFFIX="$SUFFIX$([ "${FBT_NOISE:-0.02}" = 0 ] && echo "-nonoise")$([ "${FBT_RESIDUAL:-0}" = 1 ] && echo "-res")$([ "${FBT_LAYERWISE:-0}" = 1 ] && echo "-lw")$([ "${FBT_INPUT:-1}" = 0 ] && echo "-noin")$([ "${FBT_INPUT_LAYERS:-1}" -gt 1 ] && echo "-ml${FBT_INPUT_LAYERS}")$([ "${FBT_ALPHA_MULT:-1}" != 1 ] && echo "-am${FBT_ALPHA_MULT}")"
+case "$VARIANT" in  # must mirror variant_tags in della_muonh_qwen3_scaling.py (weights in shortest form: 0.1, not 0.10)
+  twin)   SUFFIX="$SUFFIX-twin${TWIN_W:-0.1}$([ "${TWIN_OFF:-2}" != 2 ] && echo "o${TWIN_OFF}")" ;;
+  sr)     SUFFIX="$SUFFIX-sr${SR_GAMMA:-0.9}w${SR_W:-0.1}" ;;
+  twinsr) SUFFIX="$SUFFIX-twin${TWIN_W:-0.1}$([ "${TWIN_OFF:-2}" != 2 ] && echo "o${TWIN_OFF}")-sr${SR_GAMMA:-0.9}w${SR_W:-0.1}" ;;
+esac
 [ -n "${INIT_FROM:-}" ] && SUFFIX="$SUFFIX${CPT_TAG:--cpt}"
 nvidia-smi -L
 
