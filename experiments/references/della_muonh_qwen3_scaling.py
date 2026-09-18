@@ -11,7 +11,9 @@ coefficients in 2026-01) and the data order (the originals used a full linear pe
 defaults to a Feistel block shuffle). Paloma is tokenized with the training tokenizer, as in the originals.
 SMOKE_STEPS turns a run into a short smoke test with its own run id and output, evaluating one batch at the end.
 VARIANT=fbt swaps the model for the full-bandwidth transformer (experiments.references.full_bandwidth_qwen3, two
-fixed passes) with everything else unchanged; its run ids end in ``-fbt2``.
+fixed passes) with everything else unchanged; its run ids end in ``-fbt2``. VARIANT=twin | sr | twinsr add the non-NTP
+auxiliary objectives of experiments.references.objective_qwen3 (Twin-Networks state matching, successor-representation
+TD head); run ids end in ``-twin<w>`` / ``-sr<gamma>w<w>``.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -42,6 +44,7 @@ from experiments.datasets.paloma import paloma_datasets
 from experiments.datasets.prebuilt_caches import fineweb_edu_10B_dataset
 from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
+from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 
 # With a local MARIN_PREFIX the temporary checkpoint base comes back as a file:// URL, which the tensorstore
 # writer treats as a relative path (arrays land in <cwd>/file:/...), so resume finds only metadata.json.
@@ -65,7 +68,7 @@ VERSION = "2026.09.13"
 NUM_GPUS = 4
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
-VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt
+VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
 PRECISION = os.environ.get("PRECISION", "bf16")  # bf16 | fp8
@@ -84,6 +87,16 @@ FBT_LAYERWISE = os.environ.get("FBT_LAYERWISE", "0") == "1"
 FBT_INPUT = os.environ.get("FBT_INPUT", "1") == "1"
 FBT_INPUT_LAYERS = int(os.environ.get("FBT_INPUT_LAYERS", "1"))
 FBT_ALPHA_MULT = float(os.environ.get("FBT_ALPHA_MULT", "1"))  # Adam-invariant LR multiplier for the scalar gates
+# Objective hill-climb (experiments.references.objective_qwen3): VARIANT=twin adds the Twin-Networks backward model and
+# state-matching penalty (TWIN_W weight, TWIN_OFF offset), VARIANT=sr the successor-representation TD head (SR_W weight,
+# SR_GAMMA discount), VARIANT=twinsr both. The forward model, data, batch, schedule and optimizer stay the baseline's.
+OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr")
+TWIN_W = float(os.environ.get("TWIN_W", "0.1"))
+TWIN_OFF = int(os.environ.get("TWIN_OFF", "2"))
+SR_W = float(os.environ.get("SR_W", "0.1"))
+SR_GAMMA = float(os.environ.get("SR_GAMMA", "0.9"))
+if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
+    raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
 CPT_TAG = os.environ.get("CPT_TAG", "-cpt") if INIT_FROM else ""
@@ -112,25 +125,35 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += ("-nonoise" if FBT_NOISE == 0 else "") + ("-res" if FBT_RESIDUAL else "")
         variant_tags += ("-lw" if FBT_LAYERWISE else "") + ("-noin" if not FBT_INPUT else "") + (f"-ml{FBT_INPUT_LAYERS}" if FBT_INPUT_LAYERS > 1 else "")
         variant_tags += f"-am{FBT_ALPHA_MULT:g}" if FBT_ALPHA_MULT != 1 else ""
+    # Mirrored by the SUFFIX case in scripts/della/muonh_qwen3_smoke.sbatch; pass weights in their shortest form (0.1, not 0.10).
+    if VARIANT in ("twin", "twinsr"):
+        variant_tags += f"-twin{TWIN_W:g}" + (f"o{TWIN_OFF}" if TWIN_OFF != 2 else "")
+    if VARIANT in ("sr", "twinsr"):
+        variant_tags += f"-sr{SR_GAMMA:g}w{SR_W:g}"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
-    model_cls, model_extra = (
-        (
-            FullBandwidthQwen3Config,
-            dict(
-                feedback_passes=FEEDBACK_PASSES,
-                feedback_noise=FBT_NOISE,
-                feedback_residual=FBT_RESIDUAL,
-                feedback_layerwise=FBT_LAYERWISE,
-                feedback_input=FBT_INPUT,
-                feedback_input_layers=FBT_INPUT_LAYERS,
-                feedback_alpha_lr_mult=FBT_ALPHA_MULT,
-            ),
+    if VARIANT == "fbt":
+        model_cls, model_extra = FullBandwidthQwen3Config, dict(
+            feedback_passes=FEEDBACK_PASSES,
+            feedback_noise=FBT_NOISE,
+            feedback_residual=FBT_RESIDUAL,
+            feedback_layerwise=FBT_LAYERWISE,
+            feedback_input=FBT_INPUT,
+            feedback_input_layers=FBT_INPUT_LAYERS,
+            feedback_alpha_lr_mult=FBT_ALPHA_MULT,
         )
-        if VARIANT == "fbt"
-        else (Qwen3Config, {})
-    )
+    elif VARIANT in OBJECTIVE_VARIANTS:
+        model_cls, model_extra = ObjectiveQwen3Config, dict(
+            twin=VARIANT in ("twin", "twinsr"),
+            twin_weight=TWIN_W,
+            twin_offset=TWIN_OFF,
+            sr=VARIANT in ("sr", "twinsr"),
+            sr_weight=SR_W,
+            sr_gamma=SR_GAMMA,
+        )
+    else:
+        model_cls, model_extra = Qwen3Config, {}
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
@@ -173,7 +196,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
                     tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
