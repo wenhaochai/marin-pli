@@ -36,10 +36,21 @@ directly comparable with the baseline. Two objectives, switchable independently:
 
 Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi] [+ eos_weight * eos].
 The logged train loss is that sum; eval reports the forward NTP alone.
+
+HEAD PARAMETRISATION (``free_heads``, default True). MuonH keeps every ``hnn.Linear`` weight at exactly its
+initialisation Frobenius norm (levanter/optim/muonh.py: ``p_new = p_int / norm(p_int) * norm(p)``) and updates it
+with orthogonalised steps, and its ``create_mask`` routes ANY ``hnn.Linear`` there. Auxiliary heads built as
+``hnn.Linear`` therefore cannot change scale at all: in the 2026-09-18 130m runs ``sr_head.weight`` sat at 22.387
++/- 0.002 for the whole run, ``pi_proj`` and ``twin_proj`` likewise, the SR MSE plateaued at 0.88, and the trunk
+compensated by growing the final-norm gain 5-11% over the baseline -- the lm_head's input scale -- which is a
+plausible route to the NTP losses those runs showed. With ``free_heads`` the heads are plain NamedArray weights
+(same init as ``hnn.Linear``), which the mask labels ``adam``: free norm, Adam updates at ``adam_lr``. The
+optimizer itself is untouched; only parameters the baseline does not have are labelled differently. Run ids carry
+``-fh`` so these runs never collide with or resume from the pinned-head ones.
 """
 
 from dataclasses import dataclass
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
 import equinox as eqx
 import jax
@@ -75,6 +86,7 @@ class ObjectiveQwen3Config(Qwen3Config):
     eos_weight: float = 0.1
     eos_id: int = 128001  # marin tokenizer (same ids as llama3); checked against the tokenizer in the CPU smoke
     eos_bins: int = 13  # bin b holds d in (2^(b-1), 2^b]; 13 bins cover 1..4096
+    free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
 
     def __post_init__(self):
         if self.twin_offset < 1:
@@ -123,22 +135,49 @@ def _masked_mean(per_position: NamedArray, valid: NamedArray) -> NamedArray:
     return hax.sum(per_position * valid) / hax.maximum(hax.sum(valid), 1.0)
 
 
+class FreeLinear(eqx.Module):
+    """A linear map stored as plain NamedArrays so MuonH's mask puts it in the adam group (no norm pinning).
+
+    Initialised exactly like ``hnn.Linear.init`` (the arrays are taken from one), so a pinned-head run and a
+    free-head run start from identical heads and differ only in how the optimizer treats them.
+    """
+
+    weight: NamedArray
+    bias: Optional[NamedArray]
+    In: hax.Axis = eqx.field(static=True)
+    Out: hax.Axis = eqx.field(static=True)
+
+    @staticmethod
+    def init(In: hax.Axis, Out: hax.Axis, *, key, use_bias: bool) -> "FreeLinear":
+        lin = hnn.Linear.init(In=In, Out=Out, key=key, use_bias=use_bias)
+        return FreeLinear(lin.weight, lin.bias, In, Out)
+
+    def __call__(self, x: NamedArray) -> NamedArray:
+        y = hax.dot(x, self.weight, axis=self.In.name)
+        return y + self.bias if self.bias is not None else y
+
+
+def _head(In: hax.Axis, Out: hax.Axis, *, key, use_bias: bool, free: bool):
+    return FreeLinear.init(In, Out, key=key, use_bias=use_bias) if free else hnn.Linear.init(In=In, Out=Out, key=key, use_bias=use_bias)
+
+
 class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     backward: Optional[Qwen3LMHeadModel]  # twin: same shape, reads the sequence reversed
-    twin_proj: Optional[hnn.Linear]  # Embed -> Embed affine map from forward states to backward states
-    sr_head: Optional[hnn.Linear]  # Embed -> Embed successor-representation head
-    pi_proj: Optional[hnn.Linear]  # Embed -> Embed map from h_t to its prediction of h_{t+k}
-    eos_head: Optional[hnn.Linear]  # Embed -> eos_bins logits over log2 distance-to-EOS bins
+    twin_proj: Optional[eqx.Module]  # Embed -> Embed affine map from forward states to backward states
+    sr_head: Optional[eqx.Module]  # Embed -> Embed successor-representation head
+    pi_proj: Optional[eqx.Module]  # Embed -> Embed map from h_t to its prediction of h_{t+k}
+    eos_head: Optional[eqx.Module]  # Embed -> eos_bins logits over log2 distance-to-EOS bins
 
     @classmethod
     def init(cls, Vocab, config: ObjectiveQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # same forward initialisation as the baseline for this key
         k_b, k_t, k_s, k_p, k_e = jrandom.split(jrandom.fold_in(key, 2), 5)
+        fr = config.free_heads
         backward = Qwen3LMHeadModel.init(Vocab, config, key=k_b) if config.twin else None
-        twin_proj = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("twin_embed"), key=k_t, use_bias=True) if config.twin else None
-        sr_head = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("sr_embed"), key=k_s, use_bias=False) if config.sr else None
-        pi_proj = hnn.Linear.init(In=config.Embed, Out=config.Embed.alias("pi_embed"), key=k_p, use_bias=False) if config.pi else None
-        eos_head = hnn.Linear.init(In=config.Embed, Out=hax.Axis("eos_bin", config.eos_bins), key=k_e, use_bias=True) if config.eos else None
+        twin_proj = _head(config.Embed, config.Embed.alias("twin_embed"), key=k_t, use_bias=True, free=fr) if config.twin else None
+        sr_head = _head(config.Embed, config.Embed.alias("sr_embed"), key=k_s, use_bias=False, free=fr) if config.sr else None
+        pi_proj = _head(config.Embed, config.Embed.alias("pi_embed"), key=k_p, use_bias=False, free=fr) if config.pi else None
+        eos_head = _head(config.Embed, hax.Axis("eos_bin", config.eos_bins), key=k_e, use_bias=True, free=fr) if config.eos else None
         return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head)
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
@@ -150,14 +189,17 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         Pos = example.tokens.resolve_axis("position")
         backward = cast(Qwen3LMHeadModel, self.backward)
         rev_tokens = _flip(example.tokens, Pos)
-        rev_weight = _flip(example.loss_weight, Pos)
+        # loss_weight[t] says whether position t has a real next token. In the reversed frame position i predicts
+        # rev[i+1] = x_{T-2-i}, so the weight it needs is the forward weight of position T-2-i = flip(lw)[i+1]; a
+        # plain flip would be off by one (masking the first reversed position, un-masking the last, whose target wraps).
+        rev_weight = hax.roll(_flip(example.loss_weight, Pos), -1, Pos)
         hb_rev = backward.activations(rev_tokens, _flipped_mask(example.attn_mask), key=key)
         ntp_b = self._ntp(backward, hb_rev, rev_tokens, rev_weight)
         # hb[i] has read x_{>= i} and predicts x_{i-1}; the state that predicts x_{t+1} without seeing it is hb[t+2].
         hb = _flip(hb_rev, Pos)
         off = cfg.twin_offset
         target = jax.lax.stop_gradient(hax.roll(hb, -off, Pos)).astype(jnp.float32)
-        pred = cast(hnn.Linear, self.twin_proj)(h).rename({"twin_embed": "embed"}).astype(jnp.float32)
+        pred = cast(Any, self.twin_proj)(h).rename({"twin_embed": "embed"}).astype(jnp.float32)
         batch_axes = tuple(ax for ax in example.tokens.axes if ax.name != Pos.name)
         position = hax.arange(Pos).broadcast_axis(batch_axes)
         valid = (position + off <= Pos.size - 1).astype(jnp.float32) * (example.loss_weight > 0).astype(jnp.float32)
@@ -172,7 +214,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         Pos = example.tokens.resolve_axis("position")
         e = self.embeddings.embed(example.tokens).astype(jnp.float32)
         e = e * (hax.mean(e * e, axis="embed") + 1e-6) ** -0.5  # per-position RMS normalisation, no parameters
-        psi = cast(hnn.Linear, self.sr_head)(h).rename({"sr_embed": "embed"}).astype(jnp.float32)
+        psi = cast(Any, self.sr_head)(h).rename({"sr_embed": "embed"}).astype(jnp.float32)
         batch_axes = tuple(ax for ax in example.tokens.axes if ax.name != Pos.name)
         position = hax.arange(Pos).broadcast_axis(batch_axes)
         in_range1 = (position + 1 <= Pos.size - 1).astype(jnp.float32)
@@ -196,7 +238,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         def unit(x):
             return x / (hax.sqrt(hax.sum(x * x, axis="embed")) + 1e-6)
 
-        pred = unit(cast(hnn.Linear, self.pi_proj)(h).rename({"pi_embed": "embed"}).astype(jnp.float32))
+        pred = unit(cast(Any, self.pi_proj)(h).rename({"pi_embed": "embed"}).astype(jnp.float32))
         tgt = unit(h.astype(jnp.float32))
         pos = hax.roll(tgt, -k, Pos)  # the positive for anchor t is the state at t+k
         # Shared negatives: pi_negatives states drawn without replacement from every (batch, position) of this step.
@@ -239,7 +281,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     def _eos_loss(self, h: NamedArray, example: LmExample):
         cfg = cast(ObjectiveQwen3Config, self.config)
         bins, valid = self.eos_targets(example.tokens, example.loss_weight, cfg.eos_id, cfg.eos_bins)
-        logits = cast(hnn.Linear, self.eos_head)(h).astype(jnp.float32)
+        logits = cast(Any, self.eos_head)(h).astype(jnp.float32)
         EosBin = logits.resolve_axis("eos_bin")
         onehot = (bins.broadcast_axis(EosBin) == hax.arange(EosBin)).astype(jnp.float32)
         picked = hax.sum(logits * onehot, axis="eos_bin")
