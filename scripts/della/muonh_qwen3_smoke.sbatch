@@ -36,7 +36,7 @@ case "$VARIANT" in  # must mirror variant_tags in della_muonh_qwen3_scaling.py (
   eos)    SUFFIX="$SUFFIX-eosw${EOS_W:-0.1}" ;;
   ebm)    SUFFIX="$SUFFIX-ebmr${EBM_RHO:-0.5}w${EBM_W:-0.1}" ;;
 esac
-case "$VARIANT" in twin|sr|twinsr|pi|eos|ebm) [ "${FREE_HEADS:-1}" = 1 ] && SUFFIX="$SUFFIX-fh" ;;
+case "$VARIANT" in twin|sr|twinsr|pi|eos|ebm) [ "${AUX_LAYER:--1}" -ge 1 ] && SUFFIX="$SUFFIX-L${AUX_LAYER}"; [ "${FREE_HEADS:-1}" = 1 ] && SUFFIX="$SUFFIX-fh" ;;
 esac
 [ -n "${INIT_FROM:-}" ] && SUFFIX="$SUFFIX${CPT_TAG:--cpt}"
 nvidia-smi -L

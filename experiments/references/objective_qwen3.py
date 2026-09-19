@@ -96,6 +96,11 @@ class ObjectiveQwen3Config(Qwen3Config):
     ebm_temp: float = 1.0  # sampling temperature for the corruption samples
     ebm_blocks: int = 32  # vocab blocks for the Gumbel-max sampler (memory: batch*pos*(vocab/blocks) fp32 logits)
     free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
+    # Which state the auxiliary heads read. -1 = the final normed h that the lm_head reads (rung 1-5 behaviour). k in
+    # 1..num_layers = the residual stream after layer k, RMS-normalised without parameters, so the auxiliary gradient
+    # shapes only layers <= k and the top layers, final norm and lm_head operating point stay NTP's alone (Caruana 1993/97
+    # multitask learning: share the hidden layers, keep the outputs task-specific). NTP always uses the final h.
+    aux_layer: int = -1
 
     def __post_init__(self):
         if self.twin_offset < 1:
@@ -108,6 +113,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("eos_bins must be >= 2")
         if not (0.0 < self.ebm_rho_max <= 1.0) or self.ebm_temp <= 0 or self.ebm_blocks < 1:
             raise ValueError("ebm_rho_max in (0, 1], ebm_temp > 0 and ebm_blocks >= 1 are required")
+        if self.aux_layer == 0 or self.aux_layer < -1 or self.aux_layer > self.num_layers:
+            raise ValueError(f"aux_layer must be -1 (final h) or in 1..num_layers={self.num_layers}, got {self.aux_layer}")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -196,6 +203,31 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
         return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, model.get_lm_head(), tokens, loss_weight=loss_weight, **kw)
+
+    def forward_with_aux(self, input_ids: NamedArray, attn_mask, *, key=None):
+        """(h, h_aux): the final normed states the lm_head reads, and the state the auxiliary heads read.
+
+        aux_layer = -1: h_aux is h (one forward, identical to ``activations``). aux_layer = k: one scan over the layers
+        that also returns every layer's output; h_aux = residual stream after layer k, RMS-normalised per position with
+        no parameters. Same attention mask, same (absent) dropout keys as the transformer's own call.
+        """
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        if cfg.aux_layer < 0:
+            h = self.activations(input_ids, attn_mask, key=key)
+            return h, h
+        tr = self.transformer
+        x = self.embeddings.embed(input_ids)
+        keys = maybe_rng_split(key, cfg.num_layers) if key is not None else None
+
+        def step(layer, carry, **kw):
+            y = layer(carry, **kw)
+            return y, y
+
+        x, outs = tr.layers.scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
+        h = tr.norm(x)
+        xk = outs[tr.layers.Block.name, cfg.aux_layer - 1].astype(jnp.float32)
+        h_aux = xk * (hax.mean(xk * xk, axis="embed") + 1e-6) ** -0.5
+        return h, h_aux
 
     @named_call
     def _twin_loss(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
@@ -366,9 +398,12 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         return x_noisy, replaced, informative
 
     @named_call
-    def _ebm_loss(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
+    def _ebm_loss(self, h: NamedArray, h_aux: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
+        # Samples come from the lm_head on the FINAL h (the model's own next-token distribution); the energy head reads
+        # h_aux (final h, or the aux_layer state) for both the clean and the corrupted pass.
         x_noisy, _, valid = self._ebm_corrupt(h, example, seg, key=key)
-        h_noisy = self.activations(x_noisy, example.attn_mask, key=None)
+        _, h_noisy = self.forward_with_aux(x_noisy, example.attn_mask, key=None)
+        h = h_aux
 
         def unit(x):
             x = x.astype(jnp.float32)
@@ -398,21 +433,22 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         train = key is not None  # the trainer passes a key; evaluation does not
         k_f, k_b, k_p, k_e = maybe_rng_split(key, 4) if key is not None else (None, None, None, None)
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
-        h = self.activations(example.tokens, example.attn_mask, key=k_f)
-        loss = self._ntp(self, h, example.tokens, example.loss_weight, **kw)
         if not train:
-            return loss
+            h = self.activations(example.tokens, example.attn_mask, key=None)  # plain forward, identical to the baseline
+            return self._ntp(self, h, example.tokens, example.loss_weight, **kw)
+        h, h_aux = self.forward_with_aux(example.tokens, example.attn_mask, key=k_f)
+        loss = self._ntp(self, h, example.tokens, example.loss_weight, **kw)
         # The trainer differentiates through this function, so no host logging here (io callbacks reject JVP).
         seg = _segment_ids(example)
         if cfg.twin:
-            ntp_b, twin = self._twin_loss(h, example, seg, key=k_b)
+            ntp_b, twin = self._twin_loss(h_aux, example, seg, key=k_b)
             loss = loss + ntp_b + cfg.twin_weight * twin
         if cfg.sr:
-            loss = loss + cfg.sr_weight * self._sr_loss(h, example, seg)
+            loss = loss + cfg.sr_weight * self._sr_loss(h_aux, example, seg)
         if cfg.pi:
-            loss = loss + cfg.pi_weight * self._pi_loss(h, example, seg, key=k_p)
+            loss = loss + cfg.pi_weight * self._pi_loss(h_aux, example, seg, key=k_p)
         if cfg.eos:
-            loss = loss + cfg.eos_weight * self._eos_loss(h, example)
+            loss = loss + cfg.eos_weight * self._eos_loss(h_aux, example)
         if cfg.ebm:
-            loss = loss + cfg.ebm_weight * self._ebm_loss(h, example, seg, key=k_e)
+            loss = loss + cfg.ebm_weight * self._ebm_loss(h, h_aux, example, seg, key=k_e)
         return loss

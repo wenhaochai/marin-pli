@@ -149,4 +149,33 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
         aux = tr - ref_eval
         assert 0.3 * np.log(9) < aux / 0.1 < 3.0 * np.log(9), f"pi aux {aux / 0.1:.3f} vs log(9)={np.log(9):.3f}"
     print(f"{name:7s} flops_per_token x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}")
+
+# aux_layer: the auxiliary heads read an intermediate residual stream; eval must stay identical and the top must be NTP's.
+for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("ebm", dict(ebm=True, eos_id=EOS, ebm_blocks=7)), ("twin", dict(twin=True))]:
+    for k in (1, 2):
+        cfg = ObjectiveQwen3Config(**common, aux_layer=k, **kw)
+        model = cfg.model_type.init(Vocab, cfg, key=key)
+        ev = float(model.compute_next_token_loss(ex))
+        assert abs(ev - ref_eval) < 1e-5, f"{name} L{k}: eval {ev} != plain {ref_eval}"
+        h, h_aux = model.forward_with_aux(tokens, mask)
+        h_final = model.activations(tokens, mask)
+        assert float(hax.max(hax.abs(h - h_final))) < 1e-4, f"{name} L{k}: forward_with_aux h differs from activations"
+        rms = np.asarray(hax.sqrt(hax.mean(h_aux * h_aux, axis="embed")).array)
+        assert np.allclose(rms, 1.0, atol=1e-3), f"{name} L{k}: h_aux not unit RMS"
+        if k == 2:  # last layer: h = RmsNorm(x_L) = unit(x_L) * gain, so h_aux * gain must reproduce h (up to eps)
+            gain = model.transformer.norm.weight
+            assert float(hax.max(hax.abs(h_aux * gain - h.astype(jnp.float32)))) < 1e-3, f"{name} L2: h_aux*gain != h"
+        tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)))
+        grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(model)
+        leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
+        assert all(bool(jnp.all(jnp.isfinite(g))) for _, g in leaves), f"{name} L{k}: non-finite grads"
+        head_g = sum(float(jnp.linalg.norm(g.astype(jnp.float32))) for n, g in leaves if any(t in n for t in ("sr_head", "eos_head", "ebm_head", "twin_proj")))
+        assert head_g > 0, f"{name} L{k}: head got no gradient"
+        print(f"{name:5s} aux_layer={k}: eval == plain, h_aux unit-RMS, train {tr:.4f}, head grad {head_g:.3e}")
+# L1 and L2 readouts must differ (otherwise the index is ignored)
+c1 = ObjectiveQwen3Config(**common, aux_layer=1, eos=True, eos_id=EOS)
+c2 = ObjectiveQwen3Config(**common, aux_layer=2, eos=True, eos_id=EOS)
+d = float(hax.max(hax.abs(c1.model_type.init(Vocab, c1, key=key).forward_with_aux(tokens, mask)[1] - c2.model_type.init(Vocab, c2, key=key).forward_with_aux(tokens, mask)[1])))
+assert d > 1e-3, f"aux_layer 1 and 2 readouts identical ({d})"
+print(f"aux_layer readouts differ between layers (max |diff| {d:.3f})")
 print("CPU SMOKE PASSED")
