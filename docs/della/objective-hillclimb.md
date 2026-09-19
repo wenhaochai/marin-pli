@@ -58,6 +58,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 | R6 | **aux_layer=3**：辅助头改读第 3 层（共 6 层）残差流，顶部只归 NTP | 读出位置，不是新信号 | Caruana 1993/1997（多任务学习：共享隐层、输出专属）；Abu-Mostafa 1990（hints）；Suddarth & Kergosien 1990；deep supervision 2015 | 完成：sr-L3 +0.00034（去 1/2）、pi-L3 +0.00118（去 3/4）、eos-L3 +0.00235（去 1/4）、ebm-L3 +0.00299（去 1/2 但 code 收益消失）；均未 ≤ baseline。结论：诊断工具，不是梯级杠杆 |
 | R8 | **ebm w=0.03 × {L3, gate, L3+gate}**：把两个干扰杠杆叠到唯一有价值的信号上 | 组合，不是新信号 | —— | 完成：L3 +0.00056；**gate −0.00081**；**L3+gate −0.00064**——门控行两格都过阈值，macro 收益只在末层读出 |
 | R10 | **胜出格的复现**：门控早关 / 晚关 / w=0.05 三个邻域 + seed=1 复现对（含 seed=1 baseline） | 复现 | —— | 早关 −0.00067、晚关 +0.00042、w=0.05 −0.00015：全在噪声带内；**seed=1 baseline 本身 −0.00067 → 噪声带修订，阈值作废** |
+| R12 | **利用 ebm 的机制补 c4_en**：去噪 NTP（dn，腐蚀前缀 + 干净目标、同一 lm_head）、ebm+dn、ebm 高温腐蚀（τ=2） | 输入侧扰动 / 让散文上的腐蚀可识别 | Bishop 1995（加噪 = Tikhonov）；Vincent 2008 DAE；scheduled sampling 2015 | 14:3x 入队，seed 0 初筛：c4_en ≤ 1.16220 才进配对种子 |
 | R11 | **种子配对检验**：baseline 与 ebm-g4 各跑 seed 0/1/2/3 | 统计 | —— | **seed 1 配对差 +0.00073，与 seed 0 的 −0.00081 翻号 → c4_en 主张放弃**；s2/s3 继续跑以钉牢种子带与 code/macro 主张 |
 | R7 | **aux_gate**：辅助权重按 NTP 损失水平退火（4.0→3.6 之间线性降到 0，约前半程有效） | 权重时间表，不是新信号 | 课程式辅助任务（Bengio et al. 2009 curriculum；Caruana 1997 §"when to stop the extra tasks"） | 完成：sr-g4 **−0.00019**、eos-g4 **+0.00029**——门控把两种信号都带回 baseline（复现带内/边缘），未见收益 |
 | R9 | **sr 的门控时间表曲线 + L3 叠加**：g4.4-3.9（早关）、g3.8-3.4（晚关）、L3+g4 | 时间表形状 | —— | 完成：L3+g4 −0.00027、早关 −0.00004、晚关 −0.00003——曲线平在 0，无内点极小；sr 线关闭 |
@@ -260,6 +261,14 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - 预注册：(a) ≤ baseline（复现带 ±0.0001 内）→ 代价全是后期税，早期辅助免费但无用，平局、退役；(b) 赢 baseline > 0.0003 bpb → 早期塑形有留存价值，权重时间表成为一等旋钮（扫 lo、把门控加到 ebm）；(c) 仍负约 +0.001 → 连早期辅助梯度都要付账，伤害在前 2000 步造成且不可恢复——这是"NTP + 辅助"在此规模下最强的负结果，剩下的杠杆只有 R6 的放置位置。
 - CPU smoke：gate=1 与无门控损失相同；gate=0 与纯 NTP 相同；gate=0.5 等于 NTP + aux/2；eos 头在 gate=0.5 下的梯度恰为无门控的一半（stop-gradient 成立，没有梯度从门漏出）。
 
+**R12（14:3x 入队）——用 ebm 的机制补 c4_en。** 唯一可复现的正效应（门控 ebm，code −0.087、redpajama −0.044，n=4）出现在模型自身样本错得显眼的地方：判别器的梯度教出 NTP 持续使用的局部一致性特征；在 c4_en 这类多数域上样本以假乱真，信号缺席。三个候选复用 ebm 的腐蚀前向、不加新头：
+- **dn（去噪 NTP）**：对腐蚀后的前缀用干净的下一个 token 做标准 NTP，同一 lm_head、同一目标、同一损失形状，只是输入被扰动（Bishop 1995 加噪等价 Tikhonov 正则；Vincent 2008 DAE；scheduled sampling 2015）。它不属于被否决的目标侧变体（soft target / smoothing / 重加权 / scoring rule）；**如你认为它算 NTP 变体，请否决**。权重 0.1 与 0.3。
+- **ebm + dn**：能量头与去噪 NTP 共用一次腐蚀前向，不增加成本。
+- **ebm τ=2**：采样温度 2 让散文上的腐蚀也变得显眼，检验 code 上的机制能否迁移到 c4_en。
+- 全部自由头、末层读出、w_ebm 0.03、门控 4.0→3.6、seed 0，各约 1:38。
+- **两阶段判决（预注册）**：第一阶段单 run（seed 0），c4_en bpb ≤ **1.16220**（种子均值减 2.5 个单 run 标准差）才进入第二阶段；第二阶段 seed 1–3 与已有 baseline 配对，配对均值全负且超过 2 个标准误才算梯级。不再用单 run 在 c4_en 上下结论。
+- 环境变量：`DENOISE_W`（>0 加去噪 NTP；`VARIANT=dn` 为仅去噪）、`EBM_TEMP`（采样温度，tag `-T{t}`）。
+
 ## 7. 工程备忘
 
 - 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/FREE_HEADS/AUX_LAYER/AUX_GATE(hi:lo)`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-g{hi}-{lo}][-L{k}][-fh]`。
@@ -310,5 +319,6 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **10:38** baseline seed 2 = 1.16278。三个种子均值 1.16309、标准差 0.00043；seed 0 是偏高抽样。以均值重读：门控 arm 零效应，小损失为真，大损失不变。参照改为种子均值。
 - **11:00** baseline seed 3 = 1.16338；四种子均值 **1.16316**、标准差 0.00038。ebm-g4 seed 2/3 等起跑（估计 12:32 / 12:43）。
 - **12:39** R11 seed 2 配对：c4_en +0.00064、macro −0.0080、code −0.097。三对种子：c4_en 零效应（+0.0002 ± 0.0005），macro −0.008（2.3 se），code −0.09（9 se）。目标指标上的最终判决：门控 ebm 不改变 c4_en。
+- **14:3x** 按 stop hook 反馈继续爬：R12 入队（dn 0.1 / dn 0.3 / ebm+dn / ebm τ=2，seed 0 初筛，阈值 1.16220）。
 - **14:01** R11 完成（n=4）：c4_en +0.00024 ± 0.00036（零效应）；macro −0.0102 ± 0.0032（四个种子全负）；code −0.087；redpajama −0.044；ptb +0.015。项目在 c4_en 上的结论为负，已测量而非假定；等待岔路决定，无算力排队。
 - **02:32** sr-fh w=0.1 归因 run 完成：+0.00069 bpb。伪影解释了 sr 第 1 梯约 2/3 的损失，残余 +0.0007 对权重不敏感；更正了 01:15 的"成比例"读法。pi-fh、twin-fh 起跑。
