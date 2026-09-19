@@ -108,7 +108,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 |---|---|---|---|
 | pi / twin w=0.1 **free-head 对照** | 14119260 / 61 | 02:33 起跑 | twin 另含反向权重修复；twin 约 1:50，若超 2h 手动续跑 |
 | ebm w=0.1 / 0.03 | 14121505→14131136 / 14127836 | 排队（w=0.1 估计 03:05 起跑） | GPU smoke 02:37 通过：1.2 s/it ≈ 0.5× baseline 吞吐，40 步无发散；一次 run 约 1:50，w=0.1 已加 resume 备用段 |
-| **R6** sr / pi / eos / ebm **-L3**（w=0.1） | 14130181 / 82 / 83 / 84 | 01:43 入队 | pli-cp smoke 14130180 同时入队；GPU 风险在 FSDP + remat 下的 `scan_via`，会在编译期（step 0）暴露 |
+| **R6** sr / pi / eos / ebm **-L3**（w=0.1） | 14130181 / 82 / 83 / 84 | 排队 | GPU smoke 02:53 通过（130m eos-L3，40 步 1:03）：`scan_via` 在 FSDP + remat 下编译运行正常 |
 | **R7** sr / eos **-g4-3.6**（w=0.1） | 14130605 / 06 | 02:10 入队 | 门控只是标量乘法，CPU smoke 已覆盖，不另做 GPU smoke |
 
 ## 5. 失败分析（2026-09-18 晚，按用户要求做在提新想法之前）
@@ -188,4 +188,5 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **01:57** eos w=0.1（自由头）完成：+0.00325 bpb，16/16 子集变差；预注册的逐子集检验失败，假说修订为"任何辅助梯度都伤害在该信号维度上偏离 batch 多数的域"（eos 的新指纹：twitterAAE、gab 短文档域）。待办第 6 条改为可行的"损失水平门控"衰减。
 - **02:05** eos w=0.03 完成：+0.00101 bpb，与权重成比例（纯竞争，同 sr）。记分板：四类信号、七个 run、零胜。
 - **02:10** R7 `aux_gate` 实现（commit d8b7d2e403）、CPU smoke 通过；sr / eos 的 g4-3.6 arm 入队（pli-short pending 回到 10）。
+- **02:37 / 02:53** ebm 与 aux_layer 的 130m GPU smoke 先后通过（ebm 0.5× 吞吐）。
 - **02:32** sr-fh w=0.1 归因 run 完成：+0.00069 bpb。伪影解释了 sr 第 1 梯约 2/3 的损失，残余 +0.0007 对权重不敏感；更正了 01:15 的"成比例"读法。pi-fh、twin-fh 起跑。
