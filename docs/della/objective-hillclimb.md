@@ -52,6 +52,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 | R4 | **eos**：到文档结尾的距离（13 个 log2 桶的分类） | 篇章位置，NTP 不显式索取 | 用户提议 | 排队（w=0.1 / 0.03） |
 | R5 | **ebm**：对自身一步去噪样本的因果 NCE | Boltzmann 负相 / 能量式扩散 | Hinton & Sejnowski 1983/1985；Gutmann & Hyvärinen 2010（NCE）；Deng et al. 2020（residual EBM）；EDLM, Xu et al. 2024 | 用户提议方向，排队（w=0.1 / 0.03） |
 | R6 | **aux_layer=3**：辅助头改读第 3 层（共 6 层）残差流，顶部只归 NTP | 读出位置，不是新信号 | Caruana 1993/1997（多任务学习：共享隐层、输出专属）；Abu-Mostafa 1990（hints）；Suddarth & Kergosien 1990；deep supervision 2015 | sr / pi / eos / ebm 各一条 L3 arm（w=0.1）排队 |
+| R7 | **aux_gate**：辅助权重按 NTP 损失水平退火（4.0→3.6 之间线性降到 0，约前半程有效） | 权重时间表，不是新信号 | 课程式辅助任务（Bengio et al. 2009 curriculum；Caruana 1997 §"when to stop the extra tasks"） | sr / eos 各一条 g4-3.6 arm（w=0.1）排队 |
 | — | 自蒸馏；NTP 变体 | —— | —— | **否决** |
 | — | 纯 diffusion LM 作为 objective | —— | —— | 不可受理：其 bpb 是 ELBO 上界，与 NTP bpb 不可比 |
 
@@ -62,7 +63,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 3. **能量的多步负样本**（ebm 的自然延伸）：用腐蚀→采样→再腐蚀的 Gibbs 式负样本，对应 contrastive divergence（Hinton 2002）；先看一步版本的判别器是否"看得见"。
 4. **Predictability minimization**（Schmidhuber 1992）：用对抗预测器逼表示各维互不可预测（factorial code）——与 R1/2 的"拉近表示"相反的一类信号；顾虑是它作用在表示空间，可能重演跨域同质化。
 5. **时间慢变 / trace rule**（Földiák 1991；SFA, Wiskott & Sejnowski 2002）：文档内表示慢变、边界处突变。同样是表示空间正则，先等 eos 的逐子集结果再决定。
-6. 辅助权重随训练衰减到 0——原以为被工程阻塞（`loss_function(model, example, *, key=None)` 不接收 step）。**不需要 step**：用 NTP 损失水平做门控，w_eff = w · clip((sg(L_ntp) − L_end)/(L_start − L_end), 0, 1)，L_start / L_end 取自 baseline 自己的训练损失曲线；完全在 objective 内部，不动 trainer。这是"早期塑形、后期不交 NTP 税"的干净检验，R6 读出后实现（队列空出则提前）。
+6. ~~辅助权重随训练衰减到 0~~ → 已实现为 R7 `aux_gate`（NTP 损失水平门控，不需要 step），见第 6 节。
 7. FBT 2×2 的结论（见 `closeout-2026-09-18.md`）建立在同样被钉死的 `hnn.Linear` 头上，引用前需在 free heads 下重跑。
 
 ## 4. 结果
@@ -104,6 +105,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 | pi / twin w=0.1 **free-head 对照** | 14119260 / 61 | 排队 | twin 另含反向权重修复 |
 | ebm w=0.1 / 0.03 | 14121505 / 14127836 | 排队 | pli-cp smoke 14121503 亦在排队 |
 | **R6** sr / pi / eos / ebm **-L3**（w=0.1） | 14130181 / 82 / 83 / 84 | 01:43 入队 | pli-cp smoke 14130180 同时入队；GPU 风险在 FSDP + remat 下的 `scan_via`，会在编译期（step 0）暴露 |
+| **R7** sr / eos **-g4-3.6**（w=0.1） | 14130605 / 06 | 02:10 入队 | 门控只是标量乘法，CPU smoke 已覆盖，不另做 GPU smoke |
 
 ## 5. 失败分析（2026-09-18 晚，按用户要求做在提新想法之前）
 
@@ -150,9 +152,14 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - 预注册：(i) sr-L3 ≤ baseline 而 sr-fh 仍负 → 代价来自顶部干扰，放置规则进入之后所有候选；(ii) pi-L3 仍负约 +0.003 → pi 的伤害不在顶部（几何压力经共享的低层同样传到 NTP），pi 退役；(iii) eos-L3 / ebm-L3 对 eos-fh / ebm-fh，看在顶部中性或正向的信号下移后是否获益。四条都落在各自末层版本的噪声带内 → 位置无关，剩下的杠杆只有信号本身。
 - CPU smoke：sr/eos/ebm/twin 在 aux_layer 1、2（共 2 层）下 eval 与原版一致；`forward_with_aux` 的 h 与 `activations` 一致；h_aux 单位 RMS；最后一层时 h_aux × 末层 gain 复现 h（误差 1e-3，索引与归一化正确）；L1/L2 读出不同；初始化时 aux_layer=2 与末层读出训练损失完全相同（gain=1），符合预期。
 
+**aux_gate**（R7，权重时间表，commit 随后）。gate = clip((sg(L_ntp) − lo)/(hi − lo), 0, 1) 乘在每个辅助项上（twin 的反向 NTP 不受门控）；hi=4.0、lo=3.6 取自 baseline 自己的训练损失曲线（step 200 4.43、500 3.99、1000 3.85、1500 3.75、2000 ≈3.7、2500 3.59、3000 3.50、4000 3.38、末 3.25），即辅助项前约 500 步全开、到约 2400 步线性降到 0、后半程关闭；名义 w=0.1，早期推力与 R1 相同。门控用的是本 run 自己每个 batch 的 NTP 损失（stop-gradient），不需要 trainer 传 step。
+- 直接检验 sr / eos 的"纯竞争"读法：辅助项在早期有没有买到能留存到关闭之后的东西。
+- 预注册：(a) ≤ baseline（复现带 ±0.0001 内）→ 代价全是后期税，早期辅助免费但无用，平局、退役；(b) 赢 baseline > 0.0003 bpb → 早期塑形有留存价值，权重时间表成为一等旋钮（扫 lo、把门控加到 ebm）；(c) 仍负约 +0.001 → 连早期辅助梯度都要付账，伤害在前 2000 步造成且不可恢复——这是"NTP + 辅助"在此规模下最强的负结果，剩下的杠杆只有 R6 的放置位置。
+- CPU smoke：gate=1 与无门控损失相同；gate=0 与纯 NTP 相同；gate=0.5 等于 NTP + aux/2；eos 头在 gate=0.5 下的梯度恰为无门控的一半（stop-gradient 成立，没有梯度从门漏出）。
+
 ## 7. 工程备忘
 
-- 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/FREE_HEADS/AUX_LAYER`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-L{k}][-fh]`。
+- 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/FREE_HEADS/AUX_LAYER/AUX_GATE(hi:lo)`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-g{hi}-{lo}][-L{k}][-fh]`。
 - 正式 run：`sbatch --job-name=obj-130m-<v> --export=ALL,SIZE=130m,VARIANT=<v>[,EBM_W=0.03] scripts/della/muonh_qwen3_h100x4.sbatch`（pli-short，2h 段；≈2× 成本的 twin/ebm 视情况加 `--dependency=afterany` 备用段）。smoke：`scripts/della/muonh_qwen3_smoke.sbatch`（pli-cp，40 步）。
 - CPU smoke：`scripts/della/objective_cpu_smoke.py`（`JAX_PLATFORMS=cpu PYTHONPATH=. .venv/bin/python …`），覆盖 eval 一致性、梯度、优化器分组、eos 目标精确检查、ebm 采样器与腐蚀统计。
 - 队列经验：pli fairshare 已耗尽，起跑靠 backfill；每个 QoS 只有 10 个 pending 累积 age，故 pending 控制在 10 以内；sbatch 在作业开始时才 import 启动器，所以 python 侧修复会落到已排队的作业上（run id 随之变化，如 `-fh`）。
@@ -176,3 +183,4 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **01:43** R6 `aux_layer` 实现（commit 90208d8ad4）、CPU smoke 通过；sr/pi/eos/ebm 四条 L3 arm 与 pli-cp smoke 入队。
 - **01:57** eos w=0.1（自由头）完成：+0.00325 bpb，16/16 子集变差；预注册的逐子集检验失败，假说修订为"任何辅助梯度都伤害在该信号维度上偏离 batch 多数的域"（eos 的新指纹：twitterAAE、gab 短文档域）。待办第 6 条改为可行的"损失水平门控"衰减。
 - **02:05** eos w=0.03 完成：+0.00101 bpb，与权重成比例（纯竞争，同 sr）。记分板：四类信号、七个 run、零胜。
+- **02:10** R7 `aux_gate` 实现（commit d8b7d2e403）、CPU smoke 通过；sr / eos 的 g4-3.6 arm 入队（pli-short pending 回到 10）。
