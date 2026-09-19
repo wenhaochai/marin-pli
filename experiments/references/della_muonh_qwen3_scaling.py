@@ -26,6 +26,7 @@ import jmp
 from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
 from haliax.quantization import QuantizationConfig
+from levanter.optim.model_averaging import EmaModelAveragingConfig
 from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
@@ -122,6 +123,9 @@ AUX_GATE = os.environ.get("AUX_GATE", "")
 AUX_GATE_HI, AUX_GATE_LO = (tuple(float(v) for v in AUX_GATE.split(":")) if AUX_GATE else (0.0, 0.0))
 # SEED (default 0 = the baseline's): trainer init seed for seed replicates; data order stays data_seed=42. Run tag -s{SEED}.
 SEED = int(os.environ.get("SEED", "0"))
+# EMA_BETA > 0 keeps an exponential moving average of the weights (levanter ModelAveraging) and evaluates it alongside the
+# raw weights (eval/ema/...). Training is untouched; this is an evaluation-noise reduction (Polyak 1992). Tag -ema{beta}.
+EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -173,6 +177,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-L{AUX_LAYER}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
+    if EMA_BETA > 0:
+        variant_tags += f"-ema{EMA_BETA:g}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
@@ -281,6 +287,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     },
                 ),
                 seed=SEED,
+                model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,
                 allow_nondivisible_batch_size=True,
             ),
             train_seq_len=SEQ_LEN,
