@@ -116,6 +116,8 @@ AUX_LAYER = int(os.environ.get("AUX_LAYER", "-1"))
 # 130m baseline train loss: 4.0 ~ step 500, 3.6 ~ step 2400, 3.25 at the end. Run tag -g{hi}-{lo}.
 AUX_GATE = os.environ.get("AUX_GATE", "")
 AUX_GATE_HI, AUX_GATE_LO = (tuple(float(v) for v in AUX_GATE.split(":")) if AUX_GATE else (0.0, 0.0))
+# SEED (default 0 = the baseline's): trainer init seed for seed replicates; data order stays data_seed=42. Run tag -s{SEED}.
+SEED = int(os.environ.get("SEED", "0"))
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -163,6 +165,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-L{AUX_LAYER}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
+    if SEED != 0:
+        variant_tags += f"-s{SEED}"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
@@ -265,7 +269,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                         "token_repeat": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
                     },
                 ),
-                seed=0,
+                seed=SEED,
                 allow_nondivisible_batch_size=True,
             ),
             train_seq_len=SEQ_LEN,
