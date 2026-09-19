@@ -86,6 +86,15 @@ class ObjectiveQwen3Config(Qwen3Config):
     eos_weight: float = 0.1
     eos_id: int = 128001  # marin tokenizer (same ids as llama3); checked against the tokenizer in the CPU smoke
     eos_bins: int = 13  # bin b holds d in (2^(b-1), 2^b]; 13 bins cover 1..4096
+    # ebm: energy-based NCE against the model's own one-step denoiser samples (energy-based diffusion LM training signal,
+    # made causal). A fraction rho ~ U(0, ebm_rho_max) of each sequence's tokens is replaced by samples from p(x_t | x_<t)
+    # (Gumbel-max over the lm_head, computed in vocab blocks); a second trunk pass reads the corrupted sequence and a scalar
+    # head on unit-RMS-normalised states must give the clean prefix a higher score than the corrupted one (binary NCE).
+    ebm: bool = False
+    ebm_weight: float = 0.1
+    ebm_rho_max: float = 0.5
+    ebm_temp: float = 1.0  # sampling temperature for the corruption samples
+    ebm_blocks: int = 32  # vocab blocks for the Gumbel-max sampler (memory: batch*pos*(vocab/blocks) fp32 logits)
     free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
 
     def __post_init__(self):
@@ -97,14 +106,17 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("pi_k >= 1, pi_tau > 0 and pi_negatives >= 1 are required")
         if self.eos_bins < 2:
             raise ValueError("eos_bins must be >= 2")
+        if not (0.0 < self.ebm_rho_max <= 1.0) or self.ebm_temp <= 0 or self.ebm_blocks < 1:
+            raise ValueError("ebm_rho_max in (0, 1], ebm_temp > 0 and ebm_blocks >= 1 are required")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
         return ObjectiveQwen3LMHeadModel
 
     def flops_per_token(self, vocab_size: int, context_length: int):
-        # The backward model is a full second stack plus LM head; the two small heads are not counted.
-        return (2 if self.twin else 1) * super().flops_per_token(vocab_size, context_length)
+        # twin: a full second stack plus LM head. ebm: a second trunk pass over the corrupted copy plus one lm_head-sized
+        # matmul for the sampler; counted as 2x as well. The small heads are not counted.
+        return (2 if (self.twin or self.ebm) else 1) * super().flops_per_token(vocab_size, context_length)
 
 
 def _flip(x: NamedArray, axis) -> NamedArray:
@@ -167,18 +179,20 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     sr_head: Optional[eqx.Module]  # Embed -> Embed successor-representation head
     pi_proj: Optional[eqx.Module]  # Embed -> Embed map from h_t to its prediction of h_{t+k}
     eos_head: Optional[eqx.Module]  # Embed -> eos_bins logits over log2 distance-to-EOS bins
+    ebm_head: Optional[eqx.Module]  # Embed -> 1 "clean" log-odds (negative energy) of the prefix
 
     @classmethod
     def init(cls, Vocab, config: ObjectiveQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # same forward initialisation as the baseline for this key
-        k_b, k_t, k_s, k_p, k_e = jrandom.split(jrandom.fold_in(key, 2), 5)
+        k_b, k_t, k_s, k_p, k_e, k_n = jrandom.split(jrandom.fold_in(key, 2), 6)
         fr = config.free_heads
         backward = Qwen3LMHeadModel.init(Vocab, config, key=k_b) if config.twin else None
         twin_proj = _head(config.Embed, config.Embed.alias("twin_embed"), key=k_t, use_bias=True, free=fr) if config.twin else None
         sr_head = _head(config.Embed, config.Embed.alias("sr_embed"), key=k_s, use_bias=False, free=fr) if config.sr else None
         pi_proj = _head(config.Embed, config.Embed.alias("pi_embed"), key=k_p, use_bias=False, free=fr) if config.pi else None
         eos_head = _head(config.Embed, hax.Axis("eos_bin", config.eos_bins), key=k_e, use_bias=True, free=fr) if config.eos else None
-        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head)
+        ebm_head = _head(config.Embed, hax.Axis("ebm_out", 1), key=k_n, use_bias=True, free=fr) if config.ebm else None
+        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head, ebm_head)
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
         return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, model.get_lm_head(), tokens, loss_weight=loss_weight, **kw)
@@ -288,6 +302,87 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         ce = hnn.logsumexp(logits, axis="eos_bin") - picked
         return _masked_mean(ce, valid)
 
+    def _sample_next(self, h: NamedArray, *, key) -> NamedArray:
+        """One Gumbel-max draw per position from softmax(lm_head(h_t) / temp): the model's own sample of x_{t+1}.
+
+        The vocab is swept in ``ebm_blocks`` blocks with a running (max, argmax), so the full logits are never
+        materialised; the result is an exact categorical sample (argmax of logit + Gumbel over all blocks).
+        """
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        W = self.get_lm_head().rearrange((self.Embed, self.Vocab)).array  # (D, V)
+        D, V = W.shape
+        nb = min(cfg.ebm_blocks, V)
+        blk = -(-V // nb)
+        pad = nb * blk - V
+        if pad:
+            W = jnp.pad(W, ((0, 0), (0, pad)))
+        Wb = jnp.transpose(W.reshape(D, nb, blk), (1, 0, 2))  # (nb, D, blk)
+        axes = tuple(ax for ax in h.axes if ax.name != self.Embed.name)
+        hf = jax.lax.stop_gradient(h.rearrange((*axes, self.Embed)).array.reshape(-1, D))
+        col = jnp.arange(blk)
+
+        def body(carry, xs):
+            best, arg = carry
+            i, wb, kb = xs
+            logits = jnp.dot(hf, wb, preferred_element_type=jnp.float32) / cfg.ebm_temp
+            val = logits + jrandom.gumbel(kb, logits.shape, dtype=jnp.float32)
+            val = jnp.where((i * blk + col)[None, :] < V, val, -jnp.inf)
+            m = jnp.max(val, axis=1)
+            a = jnp.argmax(val, axis=1).astype(jnp.int32) + i * blk
+            upd = m > best
+            return (jnp.where(upd, m, best), jnp.where(upd, a, arg)), None
+
+        n = hf.shape[0]
+        init = (jnp.full((n,), -jnp.inf, jnp.float32), jnp.zeros((n,), jnp.int32))
+        (_, idx), _ = jax.lax.scan(body, init, (jnp.arange(nb, dtype=jnp.int32), Wb, jrandom.split(key, nb)))
+        return hax.named(idx.reshape([ax.size for ax in axes]), axes)
+
+    def _ebm_corrupt(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
+        """Diffusion-style corruption with the model as the noise kernel. Returns (x_noisy, replaced, informative).
+
+        rho ~ U(0, ebm_rho_max) per sequence; each position is replaced with probability rho by a draw from p(x_t | x_<t)
+        taken from the clean pass. Never touched: position 0, EOS tokens, draws that are EOS, draws equal to the true
+        token (no corruption happened). ``informative`` marks loss-carrying positions with >= 1 replacement at or before
+        them inside the same document -- elsewhere the clean and corrupted prefixes coincide and the pair is a coin flip.
+        """
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        tokens = example.tokens
+        Pos = tokens.resolve_axis("position")
+        batch_axes = tuple(ax for ax in tokens.axes if ax.name != Pos.name)
+        k_s, k_r, k_u = jrandom.split(key, 3)
+        samp = hax.roll(self._sample_next(h, key=k_s), 1, Pos)  # samp[t] ~ p(x_t | x_<t), drawn from h_{t-1}
+        position = hax.arange(Pos).broadcast_axis(batch_axes)
+        rho = hax.random.uniform(k_r, batch_axes, maxval=cfg.ebm_rho_max) if batch_axes else cfg.ebm_rho_max
+        u = hax.random.uniform(k_u, tokens.axes)
+        protect = (position == 0) | (tokens == cfg.eos_id) | (samp == cfg.eos_id) | (samp == tokens)
+        replaced = (u < rho) & ~protect
+        x_noisy = hax.where(replaced, samp, tokens)
+        m = replaced.astype(jnp.int32)
+        c = hax.cumsum(m, axis=Pos)
+        is_start = (position == 0) | (seg != hax.roll(seg, 1, Pos)) if seg is not None else position == 0
+        ax = tokens.axes.index(Pos)
+        base = hax.named(jax.lax.cummax(hax.where(is_start, c - m, 0).array, axis=ax), tokens.axes)  # c before this document
+        informative = ((c - base >= 1) & (example.loss_weight > 0)).astype(jnp.float32)
+        return x_noisy, replaced, informative
+
+    @named_call
+    def _ebm_loss(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
+        x_noisy, _, valid = self._ebm_corrupt(h, example, seg, key=key)
+        h_noisy = self.activations(x_noisy, example.attn_mask, key=None)
+
+        def unit(x):
+            x = x.astype(jnp.float32)
+            return x * (hax.mean(x * x, axis="embed") + 1e-6) ** -0.5  # parameter-free: isolates the head from the final-norm gain
+
+        def softplus(x):
+            return hax.maximum(x, 0.0) + hax.log1p(hax.exp(-hax.abs(x)))
+
+        head = cast(Any, self.ebm_head)
+        s_clean = head(unit(h))["ebm_out", 0].astype(jnp.float32)  # log-odds "this prefix is real" = negative energy
+        s_noisy = head(unit(h_noisy))["ebm_out", 0].astype(jnp.float32)
+        nce = softplus(-s_clean) + softplus(s_noisy)  # NCE: real -> 1, own samples -> 0 (Gutmann & Hyvarinen 2010; kexue.fm/5617)
+        return _masked_mean(nce, valid)
+
     def compute_next_token_loss(  # type: ignore[override]
         self,
         example: LmExample,
@@ -301,7 +396,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     ):
         cfg = cast(ObjectiveQwen3Config, self.config)
         train = key is not None  # the trainer passes a key; evaluation does not
-        k_f, k_b, k_p = maybe_rng_split(key, 3) if key is not None else (None, None, None)
+        k_f, k_b, k_p, k_e = maybe_rng_split(key, 4) if key is not None else (None, None, None, None)
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
         h = self.activations(example.tokens, example.attn_mask, key=k_f)
         loss = self._ntp(self, h, example.tokens, example.loss_weight, **kw)
@@ -318,4 +413,6 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             loss = loss + cfg.pi_weight * self._pi_loss(h, example, seg, key=k_p)
         if cfg.eos:
             loss = loss + cfg.eos_weight * self._eos_loss(h, example)
+        if cfg.ebm:
+            loss = loss + cfg.ebm_weight * self._ebm_loss(h, example, seg, key=k_e)
         return loss

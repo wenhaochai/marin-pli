@@ -90,7 +90,7 @@ FBT_ALPHA_MULT = float(os.environ.get("FBT_ALPHA_MULT", "1"))  # Adam-invariant 
 # Objective hill-climb (experiments.references.objective_qwen3): VARIANT=twin adds the Twin-Networks backward model and
 # state-matching penalty (TWIN_W weight, TWIN_OFF offset), VARIANT=sr the successor-representation TD head (SR_W weight,
 # SR_GAMMA discount), VARIANT=twinsr both. The forward model, data, batch, schedule and optimizer stay the baseline's.
-OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr", "pi", "eos")
+OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr", "pi", "eos", "ebm")
 TWIN_W = float(os.environ.get("TWIN_W", "0.1"))
 TWIN_OFF = int(os.environ.get("TWIN_OFF", "2"))
 SR_W = float(os.environ.get("SR_W", "0.1"))
@@ -102,6 +102,10 @@ PI_TAU = float(os.environ.get("PI_TAU", "0.1"))
 PI_NEG = int(os.environ.get("PI_NEG", "512"))
 # VARIANT=eos: 13-way log2-binned cross-entropy on the distance to the current document's EOS (EOS_W weight).
 EOS_W = float(os.environ.get("EOS_W", "0.1"))
+# VARIANT=ebm: binary NCE between the clean prefix and a copy corrupted by the model's own next-token samples (EBM_W weight,
+# EBM_RHO max per-sequence corruption rate); second trunk pass, scalar head on unit-RMS states.
+EBM_W = float(os.environ.get("EBM_W", "0.1"))
+EBM_RHO = float(os.environ.get("EBM_RHO", "0.5"))
 # FREE_HEADS=1 (default): auxiliary heads are plain arrays in MuonH's adam group (norm free). FREE_HEADS=0 reproduces the
 # 2026-09-18 pinned-head runs (hnn.Linear heads that MuonH keeps at their init norm). Run ids carry -fh when free.
 FREE_HEADS = os.environ.get("FREE_HEADS", "1") == "1"
@@ -144,6 +148,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-pik{PI_K}w{PI_W:g}" + (f"t{PI_TAU:g}" if PI_TAU != 0.1 else "") + (f"n{PI_NEG}" if PI_NEG != 512 else "")
     if VARIANT == "eos":
         variant_tags += f"-eosw{EOS_W:g}"
+    if VARIANT == "ebm":
+        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
@@ -174,6 +180,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             pi_negatives=PI_NEG,
             eos=VARIANT == "eos",
             eos_weight=EOS_W,
+            ebm=VARIANT == "ebm",
+            ebm_weight=EBM_W,
+            ebm_rho_max=EBM_RHO,
             free_heads=FREE_HEADS,
         )
     else:
