@@ -206,6 +206,32 @@ d1 = np.asarray(m1._sample_next(hh, key=jax.random.PRNGKey(5)).array); d2 = np.a
 assert (d1 != d2).any(), "T=2 sampler identical to T=1"
 print(f"ebm_temp=2 changes {int((d1 != d2).sum())}/{d1.size} draws for the same key  OK")
 
+# mtp: x_{t+k} through a D x D projection and the shared lm_head; target/mask bookkeeping checked against a brute-force CE.
+for k in (2, 3):
+    cfg = ObjectiveQwen3Config(**common, mtp=True, mtp_k=k, eos_id=EOS)
+    model = cfg.model_type.init(Vocab, cfg, key=key)
+    ev = float(model.compute_next_token_loss(ex))
+    assert abs(ev - ref_eval) < 1e-5, f"mtp k={k}: eval {ev} != plain {ref_eval}"
+    tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)))
+    # brute force: CE(lm_head(proj(h_t)), x_{t+k}) over positions with t+k in the window, same document, loss weight
+    hh = model.activations(tokens, mask)
+    pred = model.mtp_proj(hh).rename({"mtp_embed": "embed"})
+    logits = np.asarray(hax.dot(pred, model.get_lm_head(), axis="embed").astype(jnp.float32).array)  # (B, T, V)
+    lp = logits - logits.max(-1, keepdims=True); lp = lp - np.log(np.exp(lp).sum(-1, keepdims=True))
+    num = 0.0; den = 0
+    for b in range(B):
+        for t in range(T):
+            if t + k <= T - 1 and lw[b, t] > 0 and seg[b, t] == seg[b, t + k]:
+                num += -lp[b, t, tok[b, t + k]]; den += 1
+    brute = num / den
+    aux = (tr - ref_eval) / 0.1
+    assert abs(aux - brute) < 1e-3, f"mtp k={k}: aux {aux:.5f} vs brute-force {brute:.5f} ({den} positions)"
+    grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(model)
+    leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
+    assert all(bool(jnp.all(jnp.isfinite(g))) for _, g in leaves)
+    assert sum(float(jnp.linalg.norm(g.astype(jnp.float32))) for n, g in leaves if "mtp_proj" in n) > 0
+    print(f"mtp k={k}: eval == plain, aux CE {aux:.4f} == brute force {brute:.4f} over {den} positions, grads finite, mtp_proj trained  OK")
+
 # aux_gate: the auxiliary weight is scaled by clip((L_ntp - lo)/(hi - lo), 0, 1) computed from the batch's own NTP loss.
 for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS))]:
     def train_loss(**extra):
