@@ -101,6 +101,13 @@ class ObjectiveQwen3Config(Qwen3Config):
     # shapes only layers <= k and the top layers, final norm and lm_head operating point stay NTP's alone (Caruana 1993/97
     # multitask learning: share the hidden layers, keep the outputs task-specific). NTP always uses the final h.
     aux_layer: int = -1
+    # Step-free annealing of the auxiliary weight, gated on the NTP loss LEVEL of the current batch (stop-gradient):
+    # gate = clip((L_ntp - aux_gate_lo) / (aux_gate_hi - aux_gate_lo), 0, 1). aux_gate_hi = 0 disables the gate. With
+    # hi/lo read off the baseline's own train-loss curve (130m: 4.0 ~ step 500, 3.6 ~ step 2400) the auxiliary is fully
+    # on early, ramps down as NTP improves and is off for the second half -- 'early shaping without the late NTP tax',
+    # implemented inside the objective because loss_function receives no step. twin's backward NTP is not gated.
+    aux_gate_hi: float = 0.0
+    aux_gate_lo: float = 0.0
 
     def __post_init__(self):
         if self.twin_offset < 1:
@@ -115,6 +122,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("ebm_rho_max in (0, 1], ebm_temp > 0 and ebm_blocks >= 1 are required")
         if self.aux_layer == 0 or self.aux_layer < -1 or self.aux_layer > self.num_layers:
             raise ValueError(f"aux_layer must be -1 (final h) or in 1..num_layers={self.num_layers}, got {self.aux_layer}")
+        if self.aux_gate_hi > 0 and not (0.0 <= self.aux_gate_lo < self.aux_gate_hi):
+            raise ValueError(f"aux_gate needs 0 <= lo < hi, got lo={self.aux_gate_lo} hi={self.aux_gate_hi}")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -440,15 +449,20 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         loss = self._ntp(self, h, example.tokens, example.loss_weight, **kw)
         # The trainer differentiates through this function, so no host logging here (io callbacks reject JVP).
         seg = _segment_ids(example)
+        gate: Any = 1.0
+        if cfg.aux_gate_hi > 0:
+            lvl = jax.lax.stop_gradient(loss)
+            lvl = hax.mean(lvl) if isinstance(lvl, NamedArray) else jnp.mean(lvl)
+            gate = hax.clip((lvl.astype(jnp.float32) - cfg.aux_gate_lo) / (cfg.aux_gate_hi - cfg.aux_gate_lo), 0.0, 1.0)
         if cfg.twin:
             ntp_b, twin = self._twin_loss(h_aux, example, seg, key=k_b)
-            loss = loss + ntp_b + cfg.twin_weight * twin
+            loss = loss + ntp_b + gate * cfg.twin_weight * twin
         if cfg.sr:
-            loss = loss + cfg.sr_weight * self._sr_loss(h_aux, example, seg)
+            loss = loss + gate * cfg.sr_weight * self._sr_loss(h_aux, example, seg)
         if cfg.pi:
-            loss = loss + cfg.pi_weight * self._pi_loss(h_aux, example, seg, key=k_p)
+            loss = loss + gate * cfg.pi_weight * self._pi_loss(h_aux, example, seg, key=k_p)
         if cfg.eos:
-            loss = loss + cfg.eos_weight * self._eos_loss(h_aux, example)
+            loss = loss + gate * cfg.eos_weight * self._eos_loss(h_aux, example)
         if cfg.ebm:
-            loss = loss + cfg.ebm_weight * self._ebm_loss(h, h_aux, example, seg, key=k_e)
+            loss = loss + gate * cfg.ebm_weight * self._ebm_loss(h, h_aux, example, seg, key=k_e)
         return loss
