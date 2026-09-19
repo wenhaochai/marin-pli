@@ -45,11 +45,11 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 
 | 梯 | 候选 | 信号类型 | 文献根（≤2000 优先） | 状态 |
 |---|---|---|---|---|
-| R1 | **twin**：反向模型的后见状态匹配 | 借另一个模型的 hindsight | Schuster & Paliwal 1997（BiRNN）；Twin Networks, Serdyuk et al. 2018 | w=0.1 负（钉死头）；free-head 对照排队 |
-| R1 | **sr**：successor representation 的 TD 回归 | 折扣未来嵌入和 | Dayan 1993；Sutton 1988 TD | w=0.1 负（钉死头）；w=0.03 与 free-head 对照在跑/排队 |
-| R2 | **pi**：过去-未来表示的互信息下界（InfoNCE） | 预测信息 | Becker & Hinton 1992（IMAX）；Bialek–Nemenman–Tishby 1999；CPC 2018 | 同上 |
-| R3 | 权重判别（sr/pi w=0.03） | —— | —— | 在跑：区分"抢梯度份额"与"信号无用" |
-| R4 | **eos**：到文档结尾的距离（13 个 log2 桶的分类） | 篇章位置，NTP 不显式索取 | 用户提议 | 排队（w=0.1 / 0.03） |
+| R1 | **twin**：反向模型的后见状态匹配 | 借另一个模型的 hindsight | Schuster & Paliwal 1997（BiRNN）；Twin Networks, Serdyuk et al. 2018 | w=0.1 负 +0.00148（钉死头）；自由头对照在跑 |
+| R1 | **sr**：successor representation 的 TD 回归 | 折扣未来嵌入和 | Dayan 1993；Sutton 1988 TD | 全负：+0.00219（钉死）、+0.00085（0.03 自由）、+0.00069（0.1 自由）；伪影占约 2/3，残余对权重不敏感 |
+| R2 | **pi**：过去-未来表示的互信息下界（InfoNCE） | 预测信息 | Becker & Hinton 1992（IMAX）；Bialek–Nemenman–Tishby 1999；CPC 2018 | 负：+0.00414（钉死）、+0.00320（0.03 自由）；0.1 自由头在跑 |
+| R3 | 权重判别（sr/pi w=0.03） | —— | —— | 完成，见 4.1：eos 成比例、sr 残余对权重不敏感、pi 待 -fh 定 |
+| R4 | **eos**：到文档结尾的距离（13 个 log2 桶的分类） | 篇章位置，NTP 不显式索取 | 用户提议 | 负：+0.00325（0.1）、+0.00101（0.03），成比例；逐子集预注册失败 |
 | R5 | **ebm**：对自身一步去噪样本的因果 NCE | Boltzmann 负相 / 能量式扩散 | Hinton & Sejnowski 1983/1985；Gutmann & Hyvärinen 2010（NCE）；Deng et al. 2020（residual EBM）；EDLM, Xu et al. 2024 | 用户提议方向，排队（w=0.1 / 0.03） |
 | R6 | **aux_layer=3**：辅助头改读第 3 层（共 6 层）残差流，顶部只归 NTP | 读出位置，不是新信号 | Caruana 1993/1997（多任务学习：共享隐层、输出专属）；Abu-Mostafa 1990（hints）；Suddarth & Kergosien 1990；deep supervision 2015 | sr / pi / eos / ebm 各一条 L3 arm（w=0.1）排队 |
 | R7 | **aux_gate**：辅助权重按 NTP 损失水平退火（4.0→3.6 之间线性降到 0，约前半程有效） | 权重时间表，不是新信号 | 课程式辅助任务（Bengio et al. 2009 curriculum；Caruana 1997 §"when to stop the extra tasks"） | sr / eos 各一条 g4-3.6 arm（w=0.1）排队 |
