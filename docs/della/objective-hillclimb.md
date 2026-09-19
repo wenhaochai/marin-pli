@@ -42,6 +42,8 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 
 **baseline 的种子分布（11:00，n=4）**：seed 0（Kaiyue 与本项目的参照）1.16358；seed 1 1.16291；seed 2 1.16278；seed 3 1.16338 → 均值 **1.16316**，标准差 **0.00038**，均值标准误 0.00019（macro 均值 4.1848，标准差 0.0043）。单 run 差异在约 1e-3（2.6 个标准差）才算"看见"；5e-4 量级需要约 4 对种子。**seed 0 是偏高的一次抽样**：所有候选此前都与它比较，每个差值都因此偏向候选约 −0.0005。以种子均值重读记分板：门控 arm（sr-g4 1.16339、ebm-g4 1.16277 / 1.16364、ebm-L3-g4 1.16294、eos-g4 1.16387 等）全在均值 ±1.5 个标准差内——零效应，与配对判决一致；此前的"小损失"（sr-fh 1.16427、twin-fh 1.16457、eos-0.03 1.16459、ebm-0.03 1.16526、pi-L3 1.16476）在均值之上 2～5 个标准差——**这些损失是真的**，seed 0 的参照之前遮住了一部分；大损失（pi、eos-0.1、ebm-0.1）9～15 个标准差，不变。**此后本项目一律以 baseline 的种子均值与标准差为参照，不再以 seed 0 单 run 为参照；判决需配对种子。**
 
+**平均权重评估（15:0x，校准中）**：用户给的博客（Deng, *Reading a Pretraining Run*）里与本项目直接相关的一条："raw checkpoint 的噪声足以颠倒两个 setup 的优劣，要同时评估平均后的权重"。启动器新增 `EMA_BETA`：levanter 的 EMA 模型平均（β=0.999，视野约 1000 步）与原权重并列评估（`eval/ema/...`），训练本身不受影响（EMA 副本不接收梯度）。已提交 4 个种子的 EMA baseline：其 raw 数字应把种子值复现到 1e-4（顺带验证确定性），EMA 数字给出平均权重评估的噪声下限。若 EMA 的种子标准差明显低于 raw 的 0.00038，本项目的判决指标改为 EMA 的 c4_en bpb（baseline 与候选都平均，仍需配对种子）。该博客的其他要点（按来源分解损失、grad norm / clip rate / co-spike、相对更新幅度 ρ = RMS(Δw)/RMS(w)、每 0.5–2% 训练进度评估一次）与本项目已有的做法一致或可按需加入，记录在台账。
+
 **噪声带（2026-09-19 09:40 修订）**：同配置、同种子复跑只差 0.00004 bpb（初始化与数据顺序都固定），这**不是**比较两个配置时该用的噪声。换初始化种子（`SEED=1`，数据顺序不变）后 baseline 自己的 c4_en bpb 从 1.16358 变为 1.16291（−0.00067），macro +0.003，单个子集 ±0.02～0.035。任意两个配置不同的 run 轨迹也不同，所以每个 (配置, 种子) run 是一次抽样，c4_en 的单 run 标准差约 0.0005 bpb。**判决规则（替代之前作废的 +0.0003 阈值）**：对候选与 baseline 做种子配对（同一种子各跑一次），配对差在所有种子上同号、均值超过 2 个标准误才算梯级；+0.003 以上的效应（6～12 个标准差）单 run 即可判。macro 与逐子集计数一并报告。
 
 ## 3. 思路谱系（idea ledger）
@@ -272,7 +274,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 
 ## 7. 工程备忘
 
-- 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/FREE_HEADS/AUX_LAYER/AUX_GATE(hi:lo)`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-g{hi}-{lo}][-L{k}][-fh]`。
+- 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/EBM_TEMP/DENOISE_W/FREE_HEADS/AUX_LAYER/AUX_GATE(hi:lo)/SEED/EMA_BETA`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-g{hi}-{lo}][-L{k}][-fh]`。
 - 正式 run：`sbatch --job-name=obj-130m-<v> --export=ALL,SIZE=130m,VARIANT=<v>[,EBM_W=0.03] scripts/della/muonh_qwen3_h100x4.sbatch`（pli-short，2h 段；≈2× 成本的 twin/ebm 视情况加 `--dependency=afterany` 备用段）。smoke：`scripts/della/muonh_qwen3_smoke.sbatch`（pli-cp，40 步）。
 - CPU smoke：`scripts/della/objective_cpu_smoke.py`（`JAX_PLATFORMS=cpu PYTHONPATH=. .venv/bin/python …`），覆盖 eval 一致性、梯度、优化器分组、eos 目标精确检查、ebm 采样器与腐蚀统计。
 - **300m 升档协议（已备好）**：`SIZE=300m`（hidden 768、12 层、11444 步、6.0B token、cosine + 1000 warmup、lr 0.01）；baseline seed 0 已有（c4_en bpb 1.05626、macro 3.8087、363k tok/s，约 5.5 h，4 × 2h afterany 段）；ebm 类 run 约 2× → 约 11 h（6 段）。门控阈值按**训练进度分数**而非损失值换算：130m 的 4.0 / 3.6 对应训练进度约 10% / 48%（train loss 3.977 / 3.593），300m baseline 在同进度的 train loss 是 3.649 / 3.226 → `AUX_GATE=3.65:3.23`。300m 只有一个 baseline 种子，任何 300m 判决前至少补一个（最好两个）baseline 种子，与首个升档候选同时排队。
@@ -323,5 +325,6 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **12:39** R11 seed 2 配对：c4_en +0.00064、macro −0.0080、code −0.097。三对种子：c4_en 零效应（+0.0002 ± 0.0005），macro −0.008（2.3 se），code −0.09（9 se）。目标指标上的最终判决：门控 ebm 不改变 c4_en。
 - **14:3x** 按 stop hook 反馈继续爬：R12 入队（dn 0.1 / dn 0.3 / ebm+dn / ebm τ=2，seed 0 初筛，阈值 1.16220）。
 - **14:4x** 用户定升档规则：130m 上 work 的候选上 300m 复验。300m 协议与门控换算（3.65:3.23）已备好。
+- **15:0x** 用户给博客 *Reading a Pretraining Run*；据其"评估平均权重"一条加 `EMA_BETA`，提交 4 个种子的 EMA baseline 做噪声下限校准。
 - **14:01** R11 完成（n=4）：c4_en +0.00024 ± 0.00036（零效应）；macro −0.0102 ± 0.0032（四个种子全负）；code −0.087；redpajama −0.044；ptb +0.015。项目在 c4_en 上的结论为负，已测量而非假定；等待岔路决定，无算力排队。
 - **02:32** sr-fh w=0.1 归因 run 完成：+0.00069 bpb。伪影解释了 sr 第 1 梯约 2/3 的损失，残余 +0.0007 对权重不敏感；更正了 01:15 的"成比例"读法。pi-fh、twin-fh 起跑。
