@@ -109,6 +109,9 @@ EBM_RHO = float(os.environ.get("EBM_RHO", "0.5"))
 # FREE_HEADS=1 (default): auxiliary heads are plain arrays in MuonH's adam group (norm free). FREE_HEADS=0 reproduces the
 # 2026-09-18 pinned-head runs (hnn.Linear heads that MuonH keeps at their init norm). Run ids carry -fh when free.
 FREE_HEADS = os.environ.get("FREE_HEADS", "1") == "1"
+# AUX_LAYER=-1 (default): auxiliary heads read the final normed h. AUX_LAYER=k: they read the RMS-normalised residual
+# stream after layer k, so the top layers / final norm / lm_head operating point stay NTP's alone (run tag -L{k}).
+AUX_LAYER = int(os.environ.get("AUX_LAYER", "-1"))
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -150,6 +153,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-eosw{EOS_W:g}"
     if VARIANT == "ebm":
         variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}"
+    if VARIANT in OBJECTIVE_VARIANTS and AUX_LAYER >= 1:
+        variant_tags += f"-L{AUX_LAYER}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
@@ -184,6 +189,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ebm_weight=EBM_W,
             ebm_rho_max=EBM_RHO,
             free_heads=FREE_HEADS,
+            aux_layer=AUX_LAYER,
         )
     else:
         model_cls, model_extra = Qwen3Config, {}
