@@ -112,6 +112,10 @@ FREE_HEADS = os.environ.get("FREE_HEADS", "1") == "1"
 # AUX_LAYER=-1 (default): auxiliary heads read the final normed h. AUX_LAYER=k: they read the RMS-normalised residual
 # stream after layer k, so the top layers / final norm / lm_head operating point stay NTP's alone (run tag -L{k}).
 AUX_LAYER = int(os.environ.get("AUX_LAYER", "-1"))
+# AUX_GATE="hi:lo" anneals the auxiliary weight on the NTP loss level: gate = clip((L_ntp - lo)/(hi - lo), 0, 1); empty = off.
+# 130m baseline train loss: 4.0 ~ step 500, 3.6 ~ step 2400, 3.25 at the end. Run tag -g{hi}-{lo}.
+AUX_GATE = os.environ.get("AUX_GATE", "")
+AUX_GATE_HI, AUX_GATE_LO = (tuple(float(v) for v in AUX_GATE.split(":")) if AUX_GATE else (0.0, 0.0))
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -153,6 +157,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-eosw{EOS_W:g}"
     if VARIANT == "ebm":
         variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}"
+    if VARIANT in OBJECTIVE_VARIANTS and AUX_GATE:
+        variant_tags += f"-g{AUX_GATE_HI:g}-{AUX_GATE_LO:g}"
     if VARIANT in OBJECTIVE_VARIANTS and AUX_LAYER >= 1:
         variant_tags += f"-L{AUX_LAYER}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
@@ -190,6 +196,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ebm_rho_max=EBM_RHO,
             free_heads=FREE_HEADS,
             aux_layer=AUX_LAYER,
+            aux_gate_hi=AUX_GATE_HI,
+            aux_gate_lo=AUX_GATE_LO,
         )
     else:
         model_cls, model_extra = Qwen3Config, {}

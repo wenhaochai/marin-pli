@@ -178,4 +178,31 @@ c2 = ObjectiveQwen3Config(**common, aux_layer=2, eos=True, eos_id=EOS)
 d = float(hax.max(hax.abs(c1.model_type.init(Vocab, c1, key=key).forward_with_aux(tokens, mask)[1] - c2.model_type.init(Vocab, c2, key=key).forward_with_aux(tokens, mask)[1])))
 assert d > 1e-3, f"aux_layer 1 and 2 readouts identical ({d})"
 print(f"aux_layer readouts differ between layers (max |diff| {d:.3f})")
+
+# aux_gate: the auxiliary weight is scaled by clip((L_ntp - lo)/(hi - lo), 0, 1) computed from the batch's own NTP loss.
+for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS))]:
+    def train_loss(**extra):
+        cfg = ObjectiveQwen3Config(**common, **kw, **extra)
+        m = cfg.model_type.init(Vocab, cfg, key=key)
+        return float(m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1))), float(m.compute_next_token_loss(ex))
+    tr0, ev0 = train_loss()
+    aux0 = tr0 - ev0
+    tr_on, _ = train_loss(aux_gate_hi=1.0, aux_gate_lo=0.5)  # L ~ 4.1 >> hi -> gate 1
+    tr_off, _ = train_loss(aux_gate_hi=100.0, aux_gate_lo=99.0)  # L << lo -> gate 0
+    tr_half, _ = train_loss(aux_gate_hi=ev0 + 0.05, aux_gate_lo=ev0 - 0.05)  # gate exactly 0.5
+    assert abs(tr_on - tr0) < 1e-5, f"{name}: gate=1 should equal ungated ({tr_on} vs {tr0})"
+    assert abs(tr_off - ev0) < 1e-5, f"{name}: gate=0 should equal the plain NTP loss ({tr_off} vs {ev0})"
+    assert abs(tr_half - (ev0 + 0.5 * aux0)) < 1e-4, f"{name}: gate=0.5 should give NTP + aux/2 ({tr_half} vs {ev0 + 0.5 * aux0})"
+    print(f"{name:4s} aux_gate: gate 1 -> {tr_on:.4f} (= ungated), gate 0 -> {tr_off:.4f} (= NTP {ev0:.4f}), gate 0.5 -> {tr_half:.4f} (= NTP + aux/2)  OK")
+# the gate must not leak gradient through the NTP loss (stop_gradient): grads with gate 0.5 == 0.5 * aux grads + ntp grads
+cfg_g = ObjectiveQwen3Config(**common, eos=True, eos_id=EOS, aux_gate_hi=ref_eval + 0.05, aux_gate_lo=ref_eval - 0.05)
+m_g = cfg_g.model_type.init(Vocab, cfg_g, key=key)
+g_gate = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(m_g)
+g_head = [g for p, g in jax.tree_util.tree_leaves_with_path(g_gate) if g is not None and "eos_head" in jax.tree_util.keystr(p) and "weight" in jax.tree_util.keystr(p)][0]
+cfg_u = ObjectiveQwen3Config(**common, eos=True, eos_id=EOS)
+m_u = cfg_u.model_type.init(Vocab, cfg_u, key=key)
+g_un = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(m_u)
+g_head_u = [g for p, g in jax.tree_util.tree_leaves_with_path(g_un) if g is not None and "eos_head" in jax.tree_util.keystr(p) and "weight" in jax.tree_util.keystr(p)][0]
+assert float(jnp.max(jnp.abs(g_head - 0.5 * g_head_u))) < 1e-6, "gate=0.5 head gradient is not half the ungated one (gate leaks gradient?)"
+print("aux_gate: head gradient at gate 0.5 is exactly half the ungated gradient (stop_gradient holds)")
 print("CPU SMOKE PASSED")
