@@ -237,6 +237,18 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 
 **预注册读法**：free-head 对照若回到 ≤ baseline，说明 R1/2 的损失是头的伪影，三个信号重获一次真正的试验；若仍以同样幅度落后，伪影真实存在但不是原因，这些信号在此规模下确实无用。
 
+### 5b. 训练监控盘点（training-monitor skill，2026-09-19 18:1x）
+
+按 Deng（2026）的监控规格盘点本项目的 levanter run（终端会话按用户要求转来的 skill）：
+
+| 状态 | 信号 |
+|---|---|
+| 已有 | `train/loss`（每 10 步）、`grad/norm/total` 与逐参数 `grad/norm/*`、逐参数 `params/norm/*`、`throughput/*`（mfu 及 p10/p50/p90、tok/s）、`eval/paloma/<domain>/{loss,bpb}`（每 1000 步 = 训练的 20%，粗于规格的 0.5–2%）、设 `EMA_BETA` 时的 `eval/ema/...` |
+| 可推导 | clip rate（grad norm > 1.0）、loss 与 grad norm 的稳健 spike z、co-spike 计数、stall 比例——都是 10 步分辨率 |
+| 缺失 | 最差 rank 损失、峰值显存、输出端 absmax、通信等待、逐层残差尺度；dense 无 router 指标。更新比 ρ 在 MuonH 下没有信息量（Linear 范数被钉死、更新被归一化，ρ 由 lr 时间表决定） |
+
+健康卡（`scripts/della/objective_health_card.py`，spike 阈值取 4 个 baseline 种子稳健 z 的 99.9 分位 = 2.79，窗口 200 个采样点）：所有 run 的 clip rate 0.2–0.6%（辅助项略高），grad norm 均值 0.37–0.41（辅助项 +3–6%），co-spike 每个 run 都只有 step 20 那一次（首个窗口的边缘效应，不是事件），stall 0–0.06%，MFU p10–p90 差 0.15 个点以内。**结论：项目里每个 run 按 P0 健康卡都是健康的**，+0.001～+0.006 的损失与 code / redpajama 的收益都不是不稳定效应——与第 5 节仅凭 clip rate 得出的结论一致。决定：不加新埋点（缺失的 P0 信号与"固定数据下比较 objective"这个问题无关，规格也说 P0 信号异常时再补）；从规格采纳的两条是平均权重评估（EMA 校准在跑）与"阈值来自健康 run"（4 个 baseline 种子为校准集）；任何逐子集模式看着奇怪的候选先跑一遍健康卡再做机制分析；10 步日志与 1000 步评估的节奏记为本栈的限制。
+
 ## 6. 各候选的设计要点
 
 所有变体在 `experiments/references/objective_qwen3.py`（`ObjectiveQwen3Config`，`VARIANT=twin | sr | twinsr | pi | eos | ebm`），共同点：损失 = NTP + w·aux；eval 只算 NTP；跨文档配对全部屏蔽（segment id 来自 EOS 分段，与 `block_cross_document_attention` 一致）。
@@ -338,6 +350,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **17:29** R12 dn 0.3：零效应；去噪 NTP 线关闭。
 - **17:44** R12 ebm τ=2：c4_en 零效应，macro −0.012，code −0.056——可识别性不是散文缺的那一环。初筛四条已败三条。
 - **18:03** R12 ebm+dn：零效应；R12 初筛四条全败。
+- **18:1x** 按 training-monitor skill 盘点监控信号并给关键 run 出健康卡：全部健康；不加埋点；健康卡脚本入库。
 - **18:1x** R13 mtp（门控 / 不门控）入队，seed 0 初筛。
 - **14:01** R11 完成（n=4）：c4_en +0.00024 ± 0.00036（零效应）；macro −0.0102 ± 0.0032（四个种子全负）；code −0.087；redpajama −0.044；ptb +0.015。项目在 c4_en 上的结论为负，已测量而非假定；等待岔路决定，无算力排队。
 - **02:32** sr-fh w=0.1 归因 run 完成：+0.00069 bpb。伪影解释了 sr 第 1 梯约 2/3 的损失，残余 +0.0007 对权重不敏感；更正了 01:15 的"成比例"读法。pi-fh、twin-fh 起跑。
