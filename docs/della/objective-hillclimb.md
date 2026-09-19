@@ -25,6 +25,7 @@
 | 文献 | "思路要开阔，要去寻找 2000 以前的 paper 去找找思路"；kexue.fm 作为参考库 |
 | 算力通道 | 只用 H100：smoke 走 `pli-cp`，正式 run 走 `pli-short`；A100 不作为绕队列的手段 |
 | 失败处理 | "失败了就详细观察 model 的表现，梯度，norm 啥的看看为什么变差，以及保证没有 bug，总结给提出新的 idea" |
+| 升档规则 | "验证这些 idea 的时候如果在最小档 work 了，就上高一级档的继续验"（2026-09-19 14:4x）：在 130m 上通过判决（同数据 c4_en bpb，配对种子）的候选，升到 300m 复验，再往上 |
 
 ## 2. 判据与 baseline
 
@@ -274,6 +275,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/FREE_HEADS/AUX_LAYER/AUX_GATE(hi:lo)`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-g{hi}-{lo}][-L{k}][-fh]`。
 - 正式 run：`sbatch --job-name=obj-130m-<v> --export=ALL,SIZE=130m,VARIANT=<v>[,EBM_W=0.03] scripts/della/muonh_qwen3_h100x4.sbatch`（pli-short，2h 段；≈2× 成本的 twin/ebm 视情况加 `--dependency=afterany` 备用段）。smoke：`scripts/della/muonh_qwen3_smoke.sbatch`（pli-cp，40 步）。
 - CPU smoke：`scripts/della/objective_cpu_smoke.py`（`JAX_PLATFORMS=cpu PYTHONPATH=. .venv/bin/python …`），覆盖 eval 一致性、梯度、优化器分组、eos 目标精确检查、ebm 采样器与腐蚀统计。
+- **300m 升档协议（已备好）**：`SIZE=300m`（hidden 768、12 层、11444 步、6.0B token、cosine + 1000 warmup、lr 0.01）；baseline seed 0 已有（c4_en bpb 1.05626、macro 3.8087、363k tok/s，约 5.5 h，4 × 2h afterany 段）；ebm 类 run 约 2× → 约 11 h（6 段）。门控阈值按**训练进度分数**而非损失值换算：130m 的 4.0 / 3.6 对应训练进度约 10% / 48%（train loss 3.977 / 3.593），300m baseline 在同进度的 train loss 是 3.649 / 3.226 → `AUX_GATE=3.65:3.23`。300m 只有一个 baseline 种子，任何 300m 判决前至少补一个（最好两个）baseline 种子，与首个升档候选同时排队。
 - 队列经验：pli fairshare 已耗尽，起跑靠 backfill；每个 QoS 只有 10 个 pending 累积 age，故 pending 控制在 10 以内；sbatch 在作业开始时才 import 启动器，所以 python 侧修复会落到已排队的作业上（run id 随之变化，如 `-fh`）。
 - 提交历史：d81d846dc9（twin+sr）→ 6efa140ec4（pi）→ 0f26a4d803（eos）→ 4a2c2572f4（free heads + twin 修复）→ 3c95cb2551（ebm）。
 
@@ -320,5 +322,6 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **11:00** baseline seed 3 = 1.16338；四种子均值 **1.16316**、标准差 0.00038。ebm-g4 seed 2/3 等起跑（估计 12:32 / 12:43）。
 - **12:39** R11 seed 2 配对：c4_en +0.00064、macro −0.0080、code −0.097。三对种子：c4_en 零效应（+0.0002 ± 0.0005），macro −0.008（2.3 se），code −0.09（9 se）。目标指标上的最终判决：门控 ebm 不改变 c4_en。
 - **14:3x** 按 stop hook 反馈继续爬：R12 入队（dn 0.1 / dn 0.3 / ebm+dn / ebm τ=2，seed 0 初筛，阈值 1.16220）。
+- **14:4x** 用户定升档规则：130m 上 work 的候选上 300m 复验。300m 协议与门控换算（3.65:3.23）已备好。
 - **14:01** R11 完成（n=4）：c4_en +0.00024 ± 0.00036（零效应）；macro −0.0102 ± 0.0032（四个种子全负）；code −0.087；redpajama −0.044；ptb +0.015。项目在 c4_en 上的结论为负，已测量而非假定；等待岔路决定，无算力排队。
 - **02:32** sr-fh w=0.1 归因 run 完成：+0.00069 bpb。伪影解释了 sr 第 1 梯约 2/3 的损失，残余 +0.0007 对权重不敏感；更正了 01:15 的"成比例"读法。pi-fh、twin-fh 起跑。
