@@ -90,7 +90,7 @@ FBT_ALPHA_MULT = float(os.environ.get("FBT_ALPHA_MULT", "1"))  # Adam-invariant 
 # Objective hill-climb (experiments.references.objective_qwen3): VARIANT=twin adds the Twin-Networks backward model and
 # state-matching penalty (TWIN_W weight, TWIN_OFF offset), VARIANT=sr the successor-representation TD head (SR_W weight,
 # SR_GAMMA discount), VARIANT=twinsr both. The forward model, data, batch, schedule and optimizer stay the baseline's.
-OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr", "pi", "eos", "ebm")
+OBJECTIVE_VARIANTS = ("twin", "sr", "twinsr", "pi", "eos", "ebm", "dn")
 TWIN_W = float(os.environ.get("TWIN_W", "0.1"))
 TWIN_OFF = int(os.environ.get("TWIN_OFF", "2"))
 SR_W = float(os.environ.get("SR_W", "0.1"))
@@ -106,6 +106,10 @@ EOS_W = float(os.environ.get("EOS_W", "0.1"))
 # EBM_RHO max per-sequence corruption rate); second trunk pass, scalar head on unit-RMS states.
 EBM_W = float(os.environ.get("EBM_W", "0.1"))
 EBM_RHO = float(os.environ.get("EBM_RHO", "0.5"))
+# EBM_TEMP: sampling temperature of the corruption samples (tag -T{t} when != 1). DENOISE_W > 0 adds denoising NTP on the
+# same corrupted copy (tag -dn{w}); VARIANT=dn runs denoising NTP alone (default weight 0.1), no energy head.
+EBM_TEMP = float(os.environ.get("EBM_TEMP", "1"))
+DENOISE_W = float(os.environ.get("DENOISE_W", "0"))
 # FREE_HEADS=1 (default): auxiliary heads are plain arrays in MuonH's adam group (norm free). FREE_HEADS=0 reproduces the
 # 2026-09-18 pinned-head runs (hnn.Linear heads that MuonH keeps at their init norm). Run ids carry -fh when free.
 FREE_HEADS = os.environ.get("FREE_HEADS", "1") == "1"
@@ -158,7 +162,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "eos":
         variant_tags += f"-eosw{EOS_W:g}"
     if VARIANT == "ebm":
-        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}"
+        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "")
+    if VARIANT == "dn":
+        variant_tags += f"-dnr{EBM_RHO:g}w{DENOISE_W or 0.1:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "")
+    elif VARIANT in OBJECTIVE_VARIANTS and DENOISE_W > 0:
+        variant_tags += f"-dn{DENOISE_W:g}"
     if VARIANT in OBJECTIVE_VARIANTS and AUX_GATE:
         variant_tags += f"-g{AUX_GATE_HI:g}-{AUX_GATE_LO:g}"
     if VARIANT in OBJECTIVE_VARIANTS and AUX_LAYER >= 1:
@@ -198,6 +206,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ebm=VARIANT == "ebm",
             ebm_weight=EBM_W,
             ebm_rho_max=EBM_RHO,
+            ebm_temp=EBM_TEMP,
+            denoise=VARIANT == "dn" or DENOISE_W > 0,
+            denoise_weight=DENOISE_W or 0.1,
             free_heads=FREE_HEADS,
             aux_layer=AUX_LAYER,
             aux_gate_hi=AUX_GATE_HI,

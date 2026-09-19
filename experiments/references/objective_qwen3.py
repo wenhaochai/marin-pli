@@ -95,6 +95,12 @@ class ObjectiveQwen3Config(Qwen3Config):
     ebm_rho_max: float = 0.5
     ebm_temp: float = 1.0  # sampling temperature for the corruption samples
     ebm_blocks: int = 32  # vocab blocks for the Gumbel-max sampler (memory: batch*pos*(vocab/blocks) fp32 logits)
+    # denoise: standard NTP (clean next-token targets, same lm_head) computed on the SAME corrupted copy the ebm uses
+    # (rho ~ U(0, ebm_rho_max) of the tokens replaced by the model's own samples). Input-side perturbation only; the
+    # target and the loss are exactly NTP (denoising autoencoder, Vincent et al. 2008; training with noise as Tikhonov
+    # regularisation, Bishop 1995; scheduled sampling, Bengio et al. 2015). Works with or without the ebm head.
+    denoise: bool = False
+    denoise_weight: float = 0.1
     free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
     # Which state the auxiliary heads read. -1 = the final normed h that the lm_head reads (rung 1-5 behaviour). k in
     # 1..num_layers = the residual stream after layer k, RMS-normalised without parameters, so the auxiliary gradient
@@ -132,7 +138,7 @@ class ObjectiveQwen3Config(Qwen3Config):
     def flops_per_token(self, vocab_size: int, context_length: int):
         # twin: a full second stack plus LM head. ebm: a second trunk pass over the corrupted copy plus one lm_head-sized
         # matmul for the sampler; counted as 2x as well. The small heads are not counted.
-        return (2 if (self.twin or self.ebm) else 1) * super().flops_per_token(vocab_size, context_length)
+        return (2 if (self.twin or self.ebm or self.denoise) else 1) * super().flops_per_token(vocab_size, context_length)
 
 
 def _flip(x: NamedArray, axis) -> NamedArray:
@@ -406,14 +412,19 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         informative = ((c - base >= 1) & (example.loss_weight > 0)).astype(jnp.float32)
         return x_noisy, replaced, informative
 
-    @named_call
-    def _ebm_loss(self, h: NamedArray, h_aux: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
-        # Samples come from the lm_head on the FINAL h (the model's own next-token distribution); the energy head reads
-        # h_aux (final h, or the aux_layer state) for both the clean and the corrupted pass.
-        x_noisy, _, valid = self._ebm_corrupt(h, example, seg, key=key)
-        _, h_noisy = self.forward_with_aux(x_noisy, example.attn_mask, key=None)
-        h = h_aux
+    def _corrupted_pass(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
+        """One corrupted copy (samples from the lm_head on the FINAL h) and one trunk pass over it.
 
+        Returns (informative, h_noisy_final, h_noisy_aux): the NCE mask, the final normed states (for denoising NTP) and
+        the auxiliary-readout states (for the energy head). Shared by ebm and denoise so both cost one extra pass.
+        """
+        x_noisy, _, valid = self._ebm_corrupt(h, example, seg, key=key)
+        h_noisy_final, h_noisy_aux = self.forward_with_aux(x_noisy, example.attn_mask, key=None)
+        return valid, h_noisy_final, h_noisy_aux
+
+    @named_call
+    def _ebm_loss(self, h_aux: NamedArray, h_noisy_aux: NamedArray, valid: NamedArray):
+        # The energy head reads h_aux (final h, or the aux_layer state) for both the clean and the corrupted pass.
         def unit(x):
             x = x.astype(jnp.float32)
             return x * (hax.mean(x * x, axis="embed") + 1e-6) ** -0.5  # parameter-free: isolates the head from the final-norm gain
@@ -422,10 +433,15 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             return hax.maximum(x, 0.0) + hax.log1p(hax.exp(-hax.abs(x)))
 
         head = cast(Any, self.ebm_head)
-        s_clean = head(unit(h))["ebm_out", 0].astype(jnp.float32)  # log-odds "this prefix is real" = negative energy
-        s_noisy = head(unit(h_noisy))["ebm_out", 0].astype(jnp.float32)
+        s_clean = head(unit(h_aux))["ebm_out", 0].astype(jnp.float32)  # log-odds "this prefix is real" = negative energy
+        s_noisy = head(unit(h_noisy_aux))["ebm_out", 0].astype(jnp.float32)
         nce = softplus(-s_clean) + softplus(s_noisy)  # NCE: real -> 1, own samples -> 0 (Gutmann & Hyvarinen 2010; kexue.fm/5617)
         return _masked_mean(nce, valid)
+
+    @named_call
+    def _denoise_loss(self, h_noisy_final: NamedArray, example: LmExample, **kw):
+        # Plain NTP on the corrupted prefix with the CLEAN next tokens as targets and the baseline's loss weights.
+        return self._ntp(self, h_noisy_final, example.tokens, example.loss_weight, **kw)
 
     def compute_next_token_loss(  # type: ignore[override]
         self,
@@ -463,6 +479,10 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             loss = loss + gate * cfg.pi_weight * self._pi_loss(h_aux, example, seg, key=k_p)
         if cfg.eos:
             loss = loss + gate * cfg.eos_weight * self._eos_loss(h_aux, example)
-        if cfg.ebm:
-            loss = loss + gate * cfg.ebm_weight * self._ebm_loss(h, h_aux, example, seg, key=k_e)
+        if cfg.ebm or cfg.denoise:
+            valid, h_noisy_final, h_noisy_aux = self._corrupted_pass(h, example, seg, key=k_e)
+            if cfg.ebm:
+                loss = loss + gate * cfg.ebm_weight * self._ebm_loss(h_aux, h_noisy_aux, valid)
+            if cfg.denoise:
+                loss = loss + gate * cfg.denoise_weight * self._denoise_loss(h_noisy_final, example, **kw)
         return loss

@@ -179,6 +179,33 @@ d = float(hax.max(hax.abs(c1.model_type.init(Vocab, c1, key=key).forward_with_au
 assert d > 1e-3, f"aux_layer 1 and 2 readouts identical ({d})"
 print(f"aux_layer readouts differ between layers (max |diff| {d:.3f})")
 
+# denoise: NTP on the corrupted copy with clean targets; alone (dn), with the energy head (ebm+dn), and ebm at T=2.
+for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn", dict(ebm=True, denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebmT2", dict(ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0))]:
+    cfg = ObjectiveQwen3Config(**common, **kw)
+    model = cfg.model_type.init(Vocab, cfg, key=key)
+    ev = float(model.compute_next_token_loss(ex))
+    assert abs(ev - ref_eval) < 1e-5, f"{name}: eval {ev} != plain {ref_eval}"
+    tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)))
+    grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(model)
+    leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
+    assert all(bool(jnp.all(jnp.isfinite(g))) for _, g in leaves), f"{name}: non-finite grads"
+    if name == "dn":
+        aux = (tr - ref_eval) / 0.1  # denoising NTP on a corrupted prefix at init ~ the plain NTP loss (random model)
+        assert 0.7 * ref_eval < aux < 1.5 * ref_eval, f"dn aux {aux:.3f} vs NTP {ref_eval:.3f}"
+        assert not any("ebm_head" in n for n, _ in leaves), "dn must not create an ebm head"
+    if name == "ebm+dn":
+        assert any("ebm_head" in n for n, _ in leaves)
+        aux = tr - ref_eval  # 0.1*NCE + 0.1*denoise-NTP
+        assert 0.1 * 0.5 * 2 * np.log(2) + 0.1 * 0.7 * ref_eval < aux < 0.1 * 1.5 * 2 * np.log(2) + 0.1 * 1.5 * ref_eval, f"ebm+dn aux {aux:.3f}"
+    print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}  OK")
+# temperature changes the samples: T=2 draws must differ from T=1 draws for the same key on the same states
+c1 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7); c2 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)
+m1 = c1.model_type.init(Vocab, c1, key=key); m2 = c2.model_type.init(Vocab, c2, key=key)
+hh = m1.activations(tokens, mask)
+d1 = np.asarray(m1._sample_next(hh, key=jax.random.PRNGKey(5)).array); d2 = np.asarray(m2._sample_next(hh, key=jax.random.PRNGKey(5)).array)
+assert (d1 != d2).any(), "T=2 sampler identical to T=1"
+print(f"ebm_temp=2 changes {int((d1 != d2).sum())}/{d1.size} draws for the same key  OK")
+
 # aux_gate: the auxiliary weight is scaled by clip((L_ntp - lo)/(hi - lo), 0, 1) computed from the batch's own NTP loss.
 for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS))]:
     def train_loss(**extra):
