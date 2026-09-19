@@ -101,6 +101,13 @@ class ObjectiveQwen3Config(Qwen3Config):
     # regularisation, Bishop 1995; scheduled sampling, Bengio et al. 2015). Works with or without the ebm head.
     denoise: bool = False
     denoise_weight: float = 0.1
+    # mtp: multi-token prediction as an auxiliary (Gloeckle et al. 2024; the classic 'predict several steps ahead'
+    # objective): h_t is mapped by a D x D projection and decoded by the SHARED lm_head to predict x_{t+mtp_k}
+    # (no new vocab-size head). Cross-entropy with the same fused kernel as NTP; positions whose target lies in
+    # another document or past the window are masked. Eval unchanged.
+    mtp: bool = False
+    mtp_weight: float = 0.1
+    mtp_k: int = 2
     free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
     # Which state the auxiliary heads read. -1 = the final normed h that the lm_head reads (rung 1-5 behaviour). k in
     # 1..num_layers = the residual stream after layer k, RMS-normalised without parameters, so the auxiliary gradient
@@ -128,6 +135,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("ebm_rho_max in (0, 1], ebm_temp > 0 and ebm_blocks >= 1 are required")
         if self.aux_layer == 0 or self.aux_layer < -1 or self.aux_layer > self.num_layers:
             raise ValueError(f"aux_layer must be -1 (final h) or in 1..num_layers={self.num_layers}, got {self.aux_layer}")
+        if self.mtp_k < 2:
+            raise ValueError("mtp_k must be >= 2 (k=1 is NTP itself)")
         if self.aux_gate_hi > 0 and not (0.0 <= self.aux_gate_lo < self.aux_gate_hi):
             raise ValueError(f"aux_gate needs 0 <= lo < hi, got lo={self.aux_gate_lo} hi={self.aux_gate_hi}")
 
@@ -202,11 +211,12 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     pi_proj: Optional[eqx.Module]  # Embed -> Embed map from h_t to its prediction of h_{t+k}
     eos_head: Optional[eqx.Module]  # Embed -> eos_bins logits over log2 distance-to-EOS bins
     ebm_head: Optional[eqx.Module]  # Embed -> 1 "clean" log-odds (negative energy) of the prefix
+    mtp_proj: Optional[eqx.Module]  # Embed -> Embed map whose output the shared lm_head decodes as x_{t+mtp_k}
 
     @classmethod
     def init(cls, Vocab, config: ObjectiveQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # same forward initialisation as the baseline for this key
-        k_b, k_t, k_s, k_p, k_e, k_n = jrandom.split(jrandom.fold_in(key, 2), 6)
+        k_b, k_t, k_s, k_p, k_e, k_n, k_m = jrandom.split(jrandom.fold_in(key, 2), 7)
         fr = config.free_heads
         backward = Qwen3LMHeadModel.init(Vocab, config, key=k_b) if config.twin else None
         twin_proj = _head(config.Embed, config.Embed.alias("twin_embed"), key=k_t, use_bias=True, free=fr) if config.twin else None
@@ -214,7 +224,8 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         pi_proj = _head(config.Embed, config.Embed.alias("pi_embed"), key=k_p, use_bias=False, free=fr) if config.pi else None
         eos_head = _head(config.Embed, hax.Axis("eos_bin", config.eos_bins), key=k_e, use_bias=True, free=fr) if config.eos else None
         ebm_head = _head(config.Embed, hax.Axis("ebm_out", 1), key=k_n, use_bias=True, free=fr) if config.ebm else None
-        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head, ebm_head)
+        mtp_proj = _head(config.Embed, config.Embed.alias("mtp_embed"), key=k_m, use_bias=True, free=fr) if config.mtp else None
+        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head, ebm_head, mtp_proj)
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
         return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, model.get_lm_head(), tokens, loss_weight=loss_weight, **kw)
@@ -439,6 +450,23 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         return _masked_mean(nce, valid)
 
     @named_call
+    def _mtp_loss(self, h_aux: NamedArray, example: LmExample, seg: Optional[NamedArray], **kw):
+        """CE of lm_head(mtp_proj(h_t)) against x_{t+k}. The fused NTP kernel shifts targets by one internally, so the
+        tokens are pre-rolled by k-1; the weight is the baseline's loss weight rolled the same way, with the wrapped
+        tail and cross-document pairs masked."""
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        Pos = example.tokens.resolve_axis("position")
+        k = cfg.mtp_k
+        batch_axes = tuple(ax for ax in example.tokens.axes if ax.name != Pos.name)
+        position = hax.arange(Pos).broadcast_axis(batch_axes)
+        tokens_k = hax.roll(example.tokens, -(k - 1), Pos)  # tokens_k[t+1] = x_{t+k}
+        weight = hax.roll(example.loss_weight, -(k - 1), Pos) * (position + k <= Pos.size - 1).astype(jnp.float32)
+        if seg is not None:
+            weight = weight * (seg == hax.roll(seg, -k, Pos)).astype(jnp.float32)
+        pred = cast(Any, self.mtp_proj)(h_aux).rename({"mtp_embed": "embed"}).astype(h_aux.dtype)
+        return self._ntp(self, pred, tokens_k, weight, **kw)
+
+    @named_call
     def _denoise_loss(self, h_noisy_final: NamedArray, example: LmExample, **kw):
         # Plain NTP on the corrupted prefix with the CLEAN next tokens as targets and the baseline's loss weights.
         return self._ntp(self, h_noisy_final, example.tokens, example.loss_weight, **kw)
@@ -479,6 +507,8 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
             loss = loss + gate * cfg.pi_weight * self._pi_loss(h_aux, example, seg, key=k_p)
         if cfg.eos:
             loss = loss + gate * cfg.eos_weight * self._eos_loss(h_aux, example)
+        if cfg.mtp:
+            loss = loss + gate * cfg.mtp_weight * self._mtp_loss(h_aux, example, seg, **kw)
         if cfg.ebm or cfg.denoise:
             valid, h_noisy_final, h_noisy_aux = self._corrupted_pass(h, example, seg, key=k_e)
             if cfg.ebm:
