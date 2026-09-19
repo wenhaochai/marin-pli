@@ -62,6 +62,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 | R8 | **ebm w=0.03 × {L3, gate, L3+gate}**：把两个干扰杠杆叠到唯一有价值的信号上 | 组合，不是新信号 | —— | 完成：L3 +0.00056；**gate −0.00081**；**L3+gate −0.00064**——门控行两格都过阈值，macro 收益只在末层读出 |
 | R10 | **胜出格的复现**：门控早关 / 晚关 / w=0.05 三个邻域 + seed=1 复现对（含 seed=1 baseline） | 复现 | —— | 早关 −0.00067、晚关 +0.00042、w=0.05 −0.00015：全在噪声带内；**seed=1 baseline 本身 −0.00067 → 噪声带修订，阈值作废** |
 | R12 | **利用 ebm 的机制补 c4_en**：去噪 NTP（dn，腐蚀前缀 + 干净目标、同一 lm_head）、ebm+dn、ebm 高温腐蚀（τ=2） | 输入侧扰动 / 让散文上的腐蚀可识别 | Bishop 1995（加噪 = Tikhonov）；Vincent 2008 DAE；scheduled sampling 2015 | 14:3x 入队，seed 0 初筛：c4_en ≤ 1.16220 才进配对种子 |
+| R13 | **多 token 预测辅助（mtp）**：D×D 投影 + 共享 lm_head 预测 x_{t+2}，门控与不门控各一 | 待办池第 2 条 | Gloeckle et al. 2024 | 18:1x 入队，seed 0 初筛 |
 | R11 | **种子配对检验**：baseline 与 ebm-g4 各跑 seed 0/1/2/3 | 统计 | —— | **seed 1 配对差 +0.00073，与 seed 0 的 −0.00081 翻号 → c4_en 主张放弃**；s2/s3 继续跑以钉牢种子带与 code/macro 主张 |
 | R7 | **aux_gate**：辅助权重按 NTP 损失水平退火（4.0→3.6 之间线性降到 0，约前半程有效） | 权重时间表，不是新信号 | 课程式辅助任务（Bengio et al. 2009 curriculum；Caruana 1997 §"when to stop the extra tasks"） | 完成：sr-g4 **−0.00019**、eos-g4 **+0.00029**——门控把两种信号都带回 baseline（复现带内/边缘），未见收益 |
 | R9 | **sr 的门控时间表曲线 + L3 叠加**：g4.4-3.9（早关）、g3.8-3.4（晚关）、L3+g4 | 时间表形状 | —— | 完成：L3+g4 −0.00027、早关 −0.00004、晚关 −0.00003——曲线平在 0，无内点极小；sr 线关闭 |
@@ -71,7 +72,7 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 待办池（尚未实现，按优先级）：
 
 1. ~~辅助头读 pre-final-norm 或 unit-RMS 归一化状态~~ → 已升级为 R6 `aux_layer`（读中间层），见第 6 节。
-2. **MTP 作为辅助**：用 D×D 投影复用 lm_head，而不是新建 Vocab×D 头（130m 上 26M 参数）；文献在 <3B 上对 NTP ppl 为负，故排后。
+2. ~~MTP 作为辅助~~ → 已实现为 R13（D×D 投影 + 共享 lm_head，k=2，门控 / 不门控），见第 6 节。
 3. **能量的多步负样本**（ebm 的自然延伸）：用腐蚀→采样→再腐蚀的 Gibbs 式负样本，对应 contrastive divergence（Hinton 2002）；先看一步版本的判别器是否"看得见"。
 4. **Predictability minimization**（Schmidhuber 1992）：用对抗预测器逼表示各维互不可预测（factorial code）——与 R1/2 的"拉近表示"相反的一类信号；顾虑是它作用在表示空间，可能重演跨域同质化。
 5. **时间慢变 / trace rule**（Földiák 1991；SFA, Wiskott & Sejnowski 2002）：文档内表示慢变、边界处突变。同样是表示空间正则，先等 eos 的逐子集结果再决定。
@@ -276,6 +277,8 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - 环境变量：`DENOISE_W`（>0 加去噪 NTP；`VARIANT=dn` 为仅去噪）、`EBM_TEMP`（采样温度，tag `-T{t}`）。
 - **R12 首个读数（16:05，dn 0.1）**：c4_en 1.16353（对种子均值 +0.0004），macro 持平，code +0.003——**零效应，未过初筛阈值**。同时说明 ebm 的 code / redpajama 收益来自**判别器目标**本身，而不是"见过腐蚀前缀"这件事（去噪 NTP 见过同样的腐蚀前缀却没有 code 收益）；主干范数 +42 与 ebm 一样，说明那部分增长来自腐蚀前向而非能量头。**dn 0.3（17:29）**：1.16328（对种子均值 +0.0001），macro 持平，ptb +0.049、code +0.020——三倍权重仍是零，去噪 NTP 这条线关闭。**ebm τ=2（17:44）**：c4_en 1.16296（对种子均值 −0.0002，未过初筛），macro −0.012（与 τ=1 门控格同级），code −0.056（τ=1 为 −0.094），主干范数 +92 为全场最大。把散文上的腐蚀变显眼**没有**把 code 机制迁移到 c4_en：可识别性不是缺的那一环，散文的下一个 token 预测就是不需要"这是不是我写的"这类特征。与 dn 合看，ebm 效应被钉死为：判别器目标、自然温度样本、code / redpajama 特异、c4_en 中性。
 
+**R13（18:1x 入队）——多 token 预测辅助（mtp）**：可受理清单上最后一个经典候选。NTP + w·CE(lm_head(P·h_t), x_{t+2})，P 为自由的 D×D 投影，解码用**共享的** lm_head（不新建词表大小的头，只多 0.26M 参数）。文献说 MTP 全程开启会伤小模型的 NTP ppl；这里同时跑门控（4.0→3.6）与不门控两条：前者问"早期两步预测有没有塑出 NTP 留得住的东西"，后者在本尺度上复核文献。掩码：t+2 在窗口内、同文档、baseline 的 loss weight；CE 走同一融合核（token 预先滚动 k−1）。CPU smoke：eval 一致；辅助 CE 与逐位置暴力 CE 在 k=2、3 下相等。seed 0 初筛，阈值 1.16220。
+
 ## 7. 工程备忘
 
 - 启动器：`experiments/references/della_muonh_qwen3_scaling.py`，env `VARIANT` 与 `TWIN_W/TWIN_OFF/SR_W/SR_GAMMA/PI_W/PI_K/PI_TAU/PI_NEG/EOS_W/EBM_W/EBM_RHO/EBM_TEMP/DENOISE_W/FREE_HEADS/AUX_LAYER/AUX_GATE(hi:lo)/SEED/EMA_BETA`；W&B 项目 `marin-della`，group `muonh-qwen3-objective-della`；run id `muonh-qwen3-130m-della4xh100-<tag>[-g{hi}-{lo}][-L{k}][-fh]`。
@@ -333,5 +336,6 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 - **16:05** R12 dn 0.1：零效应（对种子均值 +0.0004），无 code 收益 → ebm 的收益来自判别器而非腐蚀输入本身。
 - **17:29** R12 dn 0.3：零效应；去噪 NTP 线关闭。
 - **17:44** R12 ebm τ=2：c4_en 零效应，macro −0.012，code −0.056——可识别性不是散文缺的那一环。初筛四条已败三条。
+- **18:1x** R13 mtp（门控 / 不门控）入队，seed 0 初筛。
 - **14:01** R11 完成（n=4）：c4_en +0.00024 ± 0.00036（零效应）；macro −0.0102 ± 0.0032（四个种子全负）；code −0.087；redpajama −0.044；ptb +0.015。项目在 c4_en 上的结论为负，已测量而非假定；等待岔路决定，无算力排队。
 - **02:32** sr-fh w=0.1 归因 run 完成：+0.00069 bpb。伪影解释了 sr 第 1 梯约 2/3 的损失，残余 +0.0007 对权重不敏感；更正了 01:15 的"成比例"读法。pi-fh、twin-fh 起跑。
