@@ -4,28 +4,36 @@
 
 Use the ``--flag=value`` form: suffixes start with a hyphen and argparse would otherwise read them as options.
 
-Every run is admitted only if it reached its configured last step (``trainer.num_train_steps - 1``). A run that is
-still training reports a mid-flight summary whose losses are far above the final ones; mixing one into a cell silently
-inverts the comparison. This happened once (2026-09-20, sr-gated control) and the filter exists so it cannot recur.
+Two silent failure modes this script exists to prevent, both hit on 2026-09-20:
+
+* A run that is still training reports a mid-flight summary whose losses sit far above its final ones. One such run
+  in a cell inverts the comparison without any error. Every run is therefore admitted only at its configured last
+  step (``trainer.num_train_steps - 1``), and each dropped run is printed with the reason.
+* Three of the sixteen Paloma domains are logged under names that do not match their common spelling
+  (``m2d2_s2orc_unsplit``, ``m2d2_wikipedia_unsplit``, ``manosphere_meta_sep``). A hardcoded domain list skipped
+  them and reported a 13-domain table as if it were complete, so the list is read off the run instead.
 
 Suffixes are appended to ``muonh-qwen3-{size}-della4x{device}``; the empty string is the seed-0 run of a family.
 """
 import argparse
+import re
 
 import numpy as np
 import wandb
 
 MACRO = "eval/paloma/macro_loss"
 MACRO_BPB = "eval/macro_bpb"
-DOMAINS = [
-    "dolma_100_programing_languages", "redpajama", "dolma-v1_5", "mc4", "c4_en", "ptb",
-    "twitterAAE_HELM_fixed", "gab", "4chan", "manosphere", "m2d2_s2orc", "m2d2_wikipedia",
-    "wikitext_103", "falcon-refinedweb", "dolma_100_subreddits", "c4_100_domains",
-]
+C4_BPB = "eval/paloma/c4_en-marin-tokenizer/bpb"
+DOM_RE = re.compile(r"^eval/paloma/(.+)-marin-tokenizer/loss$")
 
 
 def dom_key(d: str) -> str:
     return f"eval/paloma/{d}-marin-tokenizer/loss"
+
+
+def discover_domains(summary) -> list:
+    """Read the Paloma domain list off a run summary rather than hardcoding it."""
+    return sorted({m.group(1) for k in summary.keys() if (m := DOM_RE.match(k))})
 
 
 def collect(api, prefix, suffixes, label, verbose=True):
@@ -72,7 +80,7 @@ def main():
     p.add_argument("--cell2", default="", help="optional second cell (e.g. a control arm)")
     p.add_argument("--name", default="cell")
     p.add_argument("--name2", default="control")
-    p.add_argument("--domains", default=",".join(DOMAINS[:8]))
+    p.add_argument("--domains", default="auto", help="'auto' reads the domain list off the pool runs")
     a = p.parse_args()
 
     api = wandb.Api(timeout=60)
@@ -87,31 +95,35 @@ def main():
         print("not enough finished runs to compare"); return
 
     print(f"\n=== {a.name} n={len(cell)} vs pool n={len(pool)} ===")
-    for nm, k in [("macro_loss", MACRO), ("macro_bpb", MACRO_BPB), ("c4_en bpb", "eval/paloma/c4_en-marin-tokenizer/bpb")]:
+    for nm, k in [("macro_loss", MACRO), ("macro_bpb", MACRO_BPB), ("c4_en bpb", C4_BPB)]:
         d, se, t = welch(series(cell, k), series(pool, k))
         print(f"  {nm:11s} {d:+.5f}  se {se:.5f}  t {t:+.2f}  95%CI [{d - 2 * se:+.5f},{d + 2 * se:+.5f}]")
-    below = (series(cell, MACRO) < series(pool, MACRO).mean()).sum()
-    print(f"  below pool mean: {below}/{len(cell)}")
+    print(f"  below pool mean: {(series(cell, MACRO) < series(pool, MACRO).mean()).sum()}/{len(cell)}")
     if ctrl:
         d, se, t = welch(series(ctrl, MACRO), series(pool, MACRO))
         print(f"\n=== {a.name2} n={len(ctrl)} vs pool ===\n  macro_loss {d:+.5f}  se {se:.5f}  t {t:+.2f}")
 
-    hdr = f"\n{'domain':34s} {'pool sd':>8s} | {a.name[:9]:>9s} {'t':>6s}"
+    doms = discover_domains(pool[0]) if a.domains == "auto" else split(a.domains)
+    rows = []
+    for dm in doms:
+        b = series(pool, dom_key(dm))
+        if len(b) < len(pool):
+            print(f"  !! {dm}: only {len(b)}/{len(pool)} pool runs report it"); continue
+        rows.append((dm, b.std(ddof=1)) + welch(series(cell, dom_key(dm)), b))
+
+    hdr = f"\n{len(rows)} domains, best first\n{'domain':34s} {'pool sd':>8s} | {a.name[:9]:>9s} {'t':>6s}"
     if ctrl:
         hdr += f" | {a.name2[:9]:>9s} {'t':>6s} | {'gap/sd':>6s}"
     print(hdr)
-    for dm in split(a.domains):
-        k = dom_key(dm)
-        sd = series(pool, k).std(ddof=1)
-        de, see, te = welch(series(cell, k), series(pool, k))
+    for dm, sd, de, _see, te in sorted(rows, key=lambda r: r[2]):
         line = f"{dm:34s} {sd:8.4f} | {de:+9.4f} {te:6.2f}"
         if ctrl:
-            dc, sec, tc = welch(series(ctrl, k), series(pool, k))
+            dc, _sec, tc = welch(series(ctrl, dom_key(dm)), series(pool, dom_key(dm)))
             line += f" | {dc:+9.4f} {tc:6.2f} | {(dc - de) / sd:6.2f}"
         print(line)
 
     print(f"\n{a.name} macro:", np.round(series(cell, MACRO), 5).tolist())
-    print(f"pool  macro:", np.round(series(pool, MACRO), 5).tolist())
+    print("pool  macro:", np.round(series(pool, MACRO), 5).tolist())
     if ctrl:
         print(f"{a.name2} macro:", np.round(series(ctrl, MACRO), 5).tolist())
 
