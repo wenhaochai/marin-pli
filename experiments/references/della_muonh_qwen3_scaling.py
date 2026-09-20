@@ -129,6 +129,10 @@ SEED = int(os.environ.get("SEED", "0"))
 # EMA_BETA > 0 keeps an exponential moving average of the weights (levanter ModelAveraging) and evaluates it alongside the
 # raw weights (eval/ema/...). Training is untouched; this is an evaluation-noise reduction (Polyak 1992). Tag -ema{beta}.
 EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
+# RUN_TAG appends a literal suffix to the run id ONLY (output path and W&B name); it changes nothing about training.
+# Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
+# under two names, so their difference measures the hardware/compiler nondeterminism floor.
+RUN_TAG = os.environ.get("RUN_TAG", "")
 if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -186,7 +190,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-ema{EMA_BETA:g}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
-    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     if VARIANT == "fbt":
