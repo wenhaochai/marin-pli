@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import haliax as hax
+from haliax.jax_utils import maybe_rng_split
 from levanter.layers.attention import AttentionBackend, AttentionMask
 from levanter.models.lm_model import LmExample
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
@@ -123,13 +124,19 @@ for free in (True, False):
     assert all(v == "adamh" for v in lmh.values()), lmh
     print(f"free_heads={free!s:5s}: heads -> {sorted(set(heads.values()))} ({len(heads)} leaves), trunk linears -> muonh ({len(trunk)}), lm_head -> adamh  OK")
 
-def scored_key(model, ex, ev, start=1, tries=16):
-    """First PRNGKey >= start under which the corruption scores at least one position (train loss != pure NTP).
-    Document starts, EOS and same-token draws are protected, so on this 2x16 fixture a small rho draw can leave
-    nothing to score; that key is a legitimate 'loss == NTP' case (checked below), not a usable gradient probe."""
+def scored_key(model, ex, seg_named, start=1, tries=16):
+    """First PRNGKey >= start whose corruption scores at least one position, and how many. Derives the corruption
+    sub-key exactly as compute_next_token_loss does (k_f, k_b, k_p, k_e = split(key, 4); h from k_f, corruption
+    from k_e) and reads the informative mask itself rather than the loss: with denoise on, the loss differs from
+    NTP even when the NCE term has nothing to score. Document starts, EOS and same-token draws are protected, so
+    on this 2x16 fixture a small rho draw can leave nothing to score; such a key is a legitimate 'loss == NTP'
+    case (checked below), not a usable gradient probe."""
     for k in range(start, start + tries):
-        if abs(float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(k))) - ev) > 1e-7:
-            return k
+        k_f, _, _, k_e = maybe_rng_split(jax.random.PRNGKey(k), 4)
+        h, _ = model.forward_with_aux(ex.tokens, ex.attn_mask, key=k_f)
+        n = int(np.asarray(model._ebm_corrupt(h, ex, seg_named, key=k_e)[2].array).sum())
+        if n > 0:
+            return k, n
     raise AssertionError(f"no key in [{start}, {start + tries}) scored any position")
 
 
@@ -137,7 +144,7 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
     cfg = ObjectiveQwen3Config(**common, **kw)
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
-    tk = scored_key(model, ex, ev) if (cfg.ebm or cfg.denoise) else 1
+    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
     tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
     assert np.isfinite(tr), f"{name}: train loss not finite"
     assert abs(ev - ref_eval) < 1e-5, f"{name}: eval loss {ev} != plain {ref_eval}"
@@ -158,7 +165,7 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
         # A key that scores no position must give EXACTLY the NTP loss: the auxiliary contributes 0, not NaN.
         zk = next((k for k in range(0, 32) if abs(float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(k))) - ev) <= 1e-7), None)
         if zk is not None:
-            print(f"{name:7s} key {zk} scores no position and train loss == NTP exactly; gradient probe uses key {tk}  OK")
+            print(f"{name:7s} key {zk} scores no position and train loss == NTP exactly; gradient probe uses key {tk} ({n_scored} scored positions)  OK")
         assert nz("ebm_head") > 0
         aux = (tr - ref_eval) / 0.1
         assert 0.5 * 2 * np.log(2) < aux < 1.5 * 2 * np.log(2), f"ebm aux {aux:.3f} vs 2 log 2 = {2*np.log(2):.3f} at init"
@@ -184,7 +191,7 @@ for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("e
         model = cfg.model_type.init(Vocab, cfg, key=key)
         ev = float(model.compute_next_token_loss(ex))
         assert abs(ev - ref_eval) < 1e-5, f"{name} L{k}: eval {ev} != plain {ref_eval}"
-        tk = scored_key(model, ex, ev) if (cfg.ebm or cfg.denoise) else 1
+        tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
         h, h_aux = model.forward_with_aux(tokens, mask)
         h_final = model.activations(tokens, mask)
         assert float(hax.max(hax.abs(h - h_final))) < 1e-4, f"{name} L{k}: forward_with_aux h differs from activations"
@@ -213,7 +220,7 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
     assert abs(ev - ref_eval) < 1e-5, f"{name}: eval {ev} != plain {ref_eval}"
-    tk = scored_key(model, ex, ev) if (cfg.ebm or cfg.denoise) else 1
+    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
     tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
     grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)).scalar())(model)
     leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
@@ -226,7 +233,7 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
         assert any("ebm_head" in n for n, _ in leaves)
         aux = tr - ref_eval  # 0.1*NCE + 0.1*denoise-NTP
         assert 0.1 * 0.5 * 2 * np.log(2) + 0.1 * 0.7 * ref_eval < aux < 0.1 * 1.5 * 2 * np.log(2) + 0.1 * 1.5 * ref_eval, f"ebm+dn aux {aux:.3f}"
-    print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}  OK")
+    print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}, {n_scored} scored positions  OK")
 # temperature changes the samples: T=2 draws must differ from T=1 draws for the same key on the same states
 c1 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7); c2 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)
 m1 = c1.model_type.init(Vocab, c1, key=key); m2 = c2.model_type.init(Vocab, c2, key=key)
