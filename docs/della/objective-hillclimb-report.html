@@ -18,7 +18,7 @@ code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-s
 ul{padding-left:20px} li{margin:3px 0} .small{font-size:13px}
 </style></head><body><main>
 <h1>LLM 目标函数爬坡（objective hill-climb）结档报告 <span class=badge>已结档 2026-09-22</span></h1>
-<div class=meta>2026-09-18 → 2026-09-22 · 仓库 <code>marin</code> 分支 <code>objective-hillclimb</code> @ <code>92684205e7</code> · W&amp;B <a href="https://wandb.ai/reself/marin-della">reself/marin-della</a> · 研究日志 <code>docs/della/objective-hillclimb.md</code></div>
+<div class=meta>2026-09-18 → 2026-09-22 · 仓库 <code>marin</code> 分支 <code>objective-hillclimb</code> @ <code>681cb7421f</code> · W&amp;B <a href="https://wandb.ai/reself/marin-della">reself/marin-della</a> · 研究日志 <code>docs/della/objective-hillclimb.md</code></div>
 
 <div class=lead><b>一句话结论：</b>在数据、步数、batch、架构与优化器全不变的 Kaiyue Wen <code>muonh_qwen3</code> baseline 上，9 个辅助目标族（70 条完整 run）没有一个显著降低 Paloma macro。唯一真实的正效应是门控早期能量式 NCE（判别模型自身的一步样本），它只可靠改善 code、redpajama、dolma-v1_5 三个结构化文本域；修复文档边界 bug 后，它的 macro 为 −0.0047（p 0.15）；300m 升档（修复前代码）也未达预注册门槛。</div>
 
@@ -93,7 +93,7 @@ ul{padding-left:20px} li{margin:3px 0} .small{font-size:13px}
 <pre>for S in 0 1 2 3; do sbatch --time=03:15:00 --job-name=obj-130m-ebmk4-s$S \
   --export=ALL,SIZE=130m,VARIANT=ebm,EBM_W=0.03,EBM_RHO=0.5,EBM_STEPS=4,AUX_GATE=4.0:3.6,SEED=$S \
   scripts/della/muonh_qwen3_h100x4.sbatch; done</pre></li>
-<li><b>推送状态</b>：未推送（截至 2026-09-22 20:20）。origin <code>wenhaochai/marin-pli</code> 按明确 slug 查是 PUBLIC，按规则推送前需要用户明确同意。本地分支 <code>objective-hillclimb</code> 位于 <code>/scratch/gpfs/GROUP/USER/project/marin</code>，领先 <code>origin/objective-hillclimb</code>（4a2c2572f4）104+ 个提交；远端仓库已有的其它 marin 分支都已同步。</li>
+<li><b>推送状态</b>：已推送（2026-09-22）到<b>私有</b>仓库 <a href="https://github.com/wenhaochai/marin-objective-hillclimb">wenhaochai/marin-objective-hillclimb</a>，分支 <code>objective-hillclimb</code>，本地 remote 名为 <code>archive</code>，分支的上游已改指向它。推送前用明确 slug 确认了 PRIVATE。公开的 origin <code>wenhaochai/marin-pli</code> 上，这个分支仍停在 09-18 的 4a2c2572f4，此后的内容没有推到公开仓库。本地副本位于 <code>/scratch/gpfs/GROUP/USER/project/marin</code>。</li>
 </ul>
 
 <h2>7. W&amp;B 关键 run</h2>
