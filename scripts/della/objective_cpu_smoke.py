@@ -111,9 +111,36 @@ rates = [np.asarray(corrupt_jit(ebm_model, h_, ex, seg_named, jax.random.PRNGKey
 print(f"ebm corruption: replaced {rp.sum()} / {B*T}, informative {int(inf_.sum())}; mean replaced rate over 200 draws {np.mean(rates):.3f} (rho ~ U(0, 0.5), minus protected)")
 assert 0.1 < np.mean(rates) < 0.3
 
+# swap: real-text-wrong-context negatives. Spans come from the PREVIOUS row (batch roll by 1), never position 0 or EOS,
+# never cross the document that starts the span; informative is document-scoped exactly like ebm's.
+swap_cfg = ObjectiveQwen3Config(**common, swap=True, eos_id=EOS, swap_min=3, swap_max=6)
+swap_model = swap_cfg.model_type.init(Vocab, swap_cfg, key=key)
+swap_jit = eqx.filter_jit(lambda m, e, s, k: tuple(a.array for a in m._swap_corrupt(e, s, key=k)))
+src_row = np.roll(tok, 1, axis=0)
+fracs = []
+for _i in range(100):
+    xn_s, rp_s, inf_s = (np.asarray(a) for a in swap_jit(swap_model, ex, seg_named, jax.random.PRNGKey(_i)))
+    assert np.array_equal(xn_s != tok, rp_s), "swap: replaced must mark exactly the changed tokens"
+    assert not rp_s[:, 0].any() and not rp_s[tok == EOS].any(), "swap: a protected position was corrupted"
+    assert (xn_s[rp_s] == src_row[rp_s]).all(), "swap: a spliced token did not come from the previous row"
+    for b in range(B):
+        idx = np.flatnonzero(rp_s[b])
+        if idx.size:
+            assert len(set(seg[b, idx].tolist())) == 1, f"swap: span crosses a document boundary in row {b}: {idx.tolist()}"
+            assert idx.max() - idx.min() + 1 <= swap_cfg.swap_max, f"swap: run longer than swap_max in row {b}"
+    exp = np.zeros_like(inf_s)
+    for b in range(B):
+        for t in range(T):
+            same = seg[b] == seg[b, t]
+            exp[b, t] = float(rp_s[b, : t + 1][same[: t + 1]].any() and lw[b, t] > 0)
+    assert np.array_equal(inf_s, exp), "swap: informative mask != brute force"
+    fracs.append(rp_s.mean())
+print(f"swap corruption: 100 keys OK -- source = previous row, no position-0/EOS, no cross-document span, informative == brute force; mean replaced fraction {np.mean(fracs):.3f}")
+assert 0.05 < np.mean(fracs) < 0.5, np.mean(fracs)
+
 for free in (True, False):
-    lab = labels_for(ObjectiveQwen3Config(**common, twin=True, sr=True, pi=True, eos=True, ebm=True, eos_id=EOS, free_heads=free))
-    heads = {k: v for k, v in lab.items() if any(h in k for h in ("twin_proj", "sr_head", "pi_proj", "eos_head", "ebm_head")) and "backward" not in k}
+    lab = labels_for(ObjectiveQwen3Config(**common, twin=True, sr=True, pi=True, eos=True, ebm=True, swap=True, eos_id=EOS, free_heads=free))
+    heads = {k: v for k, v in lab.items() if any(h in k for h in ("twin_proj", "sr_head", "pi_proj", "eos_head", "ebm_head", "swap_head")) and "backward" not in k}
     trunk = {k: v for k, v in lab.items() if ".transformer." in k and "weight" in k and "norm" not in k and "backward" not in k}
     lmh = {k: v for k, v in lab.items() if k.endswith("lm_head.weight") and "backward" not in k}
     exp_w = "adam" if free else "muonh"
@@ -131,20 +158,24 @@ def scored_key(model, ex, seg_named, start=1, tries=16):
     NTP even when the NCE term has nothing to score. Document starts, EOS and same-token draws are protected, so
     on this 2x16 fixture a small rho draw can leave nothing to score; such a key is a legitimate 'loss == NTP'
     case (checked below), not a usable gradient probe."""
+    cfg = model.config
     for k in range(start, start + tries):
-        k_f, _, _, k_e = maybe_rng_split(jax.random.PRNGKey(k), 4)
-        h, _ = model.forward_with_aux(ex.tokens, ex.attn_mask, key=k_f)
-        n = int(np.asarray(model._ebm_corrupt(h, ex, seg_named, key=k_e)[2].array).sum())
+        if cfg.swap and not (cfg.ebm or cfg.denoise):  # swap draws its corruption from fold_in(key, 7), as the model does
+            n = int(np.asarray(model._swap_corrupt(ex, seg_named, key=jax.random.fold_in(jax.random.PRNGKey(k), 7))[2].array).sum())
+        else:
+            k_f, _, _, k_e = maybe_rng_split(jax.random.PRNGKey(k), 4)
+            h, _ = model.forward_with_aux(ex.tokens, ex.attn_mask, key=k_f)
+            n = int(np.asarray(model._ebm_corrupt(h, ex, seg_named, key=k_e)[2].array).sum())
         if n > 0:
             return k, n
     raise AssertionError(f"no key in [{start}, {start + tries}) scored any position")
 
 
-for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", dict(twin=True, sr=True)), ("pi", dict(pi=True, pi_negatives=8)), ("eos", dict(eos=True, eos_id=EOS)), ("ebm", dict(ebm=True, eos_id=EOS, ebm_blocks=7))]:
+for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", dict(twin=True, sr=True)), ("pi", dict(pi=True, pi_negatives=8)), ("eos", dict(eos=True, eos_id=EOS)), ("ebm", dict(ebm=True, eos_id=EOS, ebm_blocks=7)), ("swap", dict(swap=True, eos_id=EOS, swap_min=3, swap_max=6))]:
     cfg = ObjectiveQwen3Config(**common, **kw)
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
-    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
+    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise or cfg.swap) else (1, None)
     tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
     assert np.isfinite(tr), f"{name}: train loss not finite"
     assert abs(ev - ref_eval) < 1e-5, f"{name}: eval loss {ev} != plain {ref_eval}"
@@ -160,7 +191,7 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
     def nz(prefix):
         return sum(v for k, v in norms.items() if prefix in k)
     print(f"{name:7s} eval {ev:.6f} (== plain) train {tr:.4f} | grad norms: forward-transformer {nz('.transformer'):.3e} "
-          f"twin_proj {nz('twin_proj'):.3e} sr_head {nz('sr_head'):.3e} pi_proj {nz('pi_proj'):.3e} eos_head {nz('eos_head'):.3e} ebm_head {nz('ebm_head'):.3e} backward {nz('backward'):.3e}")
+          f"twin_proj {nz('twin_proj'):.3e} sr_head {nz('sr_head'):.3e} pi_proj {nz('pi_proj'):.3e} eos_head {nz('eos_head'):.3e} ebm_head {nz('ebm_head'):.3e} swap_head {nz('swap_head'):.3e} backward {nz('backward'):.3e}")
     if kw.get("ebm"):
         # A key that scores no position must give EXACTLY the NTP loss: the auxiliary contributes 0, not NaN.
         zk = next((k for k in range(0, 32) if abs(float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(k))) - ev) <= 1e-7), None)
@@ -169,6 +200,10 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
         assert nz("ebm_head") > 0
         aux = (tr - ref_eval) / 0.1
         assert 0.5 * 2 * np.log(2) < aux < 1.5 * 2 * np.log(2), f"ebm aux {aux:.3f} vs 2 log 2 = {2*np.log(2):.3f} at init"
+    if kw.get("swap"):
+        assert nz("swap_head") > 0
+        aux = (tr - ref_eval) / 0.1
+        assert 0.5 * 2 * np.log(2) < aux < 1.5 * 2 * np.log(2), f"swap aux {aux:.3f} vs 2 log 2 = {2*np.log(2):.3f} at init"
     if kw.get("twin"):
         assert nz("twin_proj") > 0 and nz("backward") > 0
     if kw.get("sr"):
@@ -185,13 +220,13 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
     print(f"{name:7s} flops_per_token x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}")
 
 # aux_layer: the auxiliary heads read an intermediate residual stream; eval must stay identical and the top must be NTP's.
-for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("ebm", dict(ebm=True, eos_id=EOS, ebm_blocks=7)), ("twin", dict(twin=True))]:
+for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("ebm", dict(ebm=True, eos_id=EOS, ebm_blocks=7)), ("swap", dict(swap=True, eos_id=EOS, swap_min=3, swap_max=6)), ("twin", dict(twin=True))]:
     for k in (1, 2):
         cfg = ObjectiveQwen3Config(**common, aux_layer=k, **kw)
         model = cfg.model_type.init(Vocab, cfg, key=key)
         ev = float(model.compute_next_token_loss(ex))
         assert abs(ev - ref_eval) < 1e-5, f"{name} L{k}: eval {ev} != plain {ref_eval}"
-        tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
+        tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise or cfg.swap) else (1, None)
         h, h_aux = model.forward_with_aux(tokens, mask)
         h_final = model.activations(tokens, mask)
         assert float(hax.max(hax.abs(h - h_final))) < 1e-4, f"{name} L{k}: forward_with_aux h differs from activations"
@@ -204,7 +239,7 @@ for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("e
         grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)).scalar())(model)
         leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
         assert all(bool(jnp.all(jnp.isfinite(g))) for _, g in leaves), f"{name} L{k}: non-finite grads"
-        head_g = sum(float(jnp.linalg.norm(g.astype(jnp.float32))) for n, g in leaves if any(t in n for t in ("sr_head", "eos_head", "ebm_head", "twin_proj")))
+        head_g = sum(float(jnp.linalg.norm(g.astype(jnp.float32))) for n, g in leaves if any(t in n for t in ("sr_head", "eos_head", "ebm_head", "swap_head", "twin_proj")))
         assert head_g > 0, f"{name} L{k}: head got no gradient"
         print(f"{name:5s} aux_layer={k}: eval == plain, h_aux unit-RMS, train {tr:.4f}, head grad {head_g:.3e}")
 # L1 and L2 readouts must differ (otherwise the index is ignored)
@@ -220,7 +255,7 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
     assert abs(ev - ref_eval) < 1e-5, f"{name}: eval {ev} != plain {ref_eval}"
-    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
+    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise or cfg.swap) else (1, None)
     tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
     grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)).scalar())(model)
     leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]

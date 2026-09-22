@@ -37,8 +37,9 @@ case "$VARIANT" in  # must mirror variant_tags in della_muonh_qwen3_scaling.py (
   ebm)    SUFFIX="$SUFFIX-ebmr${EBM_RHO:-0.5}w${EBM_W:-0.1}$([ "${EBM_TEMP:-1}" != 1 ] && echo "T${EBM_TEMP}")" ;;
   dn)     SUFFIX="$SUFFIX-dnr${EBM_RHO:-0.5}w${DENOISE_W:-0.1}$([ "${EBM_TEMP:-1}" != 1 ] && echo "T${EBM_TEMP}")" ;;
   mtp)    SUFFIX="$SUFFIX-mtpk${MTP_K:-2}w${MTP_W:-0.1}" ;;
+  swap)   SUFFIX="$SUFFIX-sww${SWAP_W:-0.1}$([ "${SWAP_SPANS:-1}" != 1 ] && echo "n${SWAP_SPANS}")$([ "${SWAP_MIN:-16}-${SWAP_MAX:-128}" != "16-128" ] && echo "l${SWAP_MIN:-16}-${SWAP_MAX:-128}")" ;;
 esac
-case "$VARIANT" in twin|sr|twinsr|pi|eos|ebm|dn|mtp) [ "$VARIANT" != dn ] && [ "${DENOISE_W:-0}" != 0 ] && SUFFIX="$SUFFIX-dn${DENOISE_W}"; [ -n "${AUX_GATE:-}" ] && SUFFIX="$SUFFIX-g${AUX_GATE%%:*}-${AUX_GATE##*:}"; [ "${AUX_LAYER:--1}" -ge 1 ] && SUFFIX="$SUFFIX-L${AUX_LAYER}"; [ "${FREE_HEADS:-1}" = 1 ] && SUFFIX="$SUFFIX-fh" ;;
+case "$VARIANT" in twin|sr|twinsr|pi|eos|ebm|dn|mtp|swap) [ "$VARIANT" != dn ] && [ "${DENOISE_W:-0}" != 0 ] && SUFFIX="$SUFFIX-dn${DENOISE_W}"; [ -n "${AUX_GATE:-}" ] && SUFFIX="$SUFFIX-g${AUX_GATE%%:*}-${AUX_GATE##*:}"; [ "${AUX_LAYER:--1}" -ge 1 ] && SUFFIX="$SUFFIX-L${AUX_LAYER}"; [ "${FREE_HEADS:-1}" = 1 ] && SUFFIX="$SUFFIX-fh" ;;
 esac
 [ -n "${INIT_FROM:-}" ] && SUFFIX="$SUFFIX${CPT_TAG:--cpt}"
 nvidia-smi -L
