@@ -250,7 +250,7 @@ assert d > 1e-3, f"aux_layer 1 and 2 readouts identical ({d})"
 print(f"aux_layer readouts differ between layers (max |diff| {d:.3f})")
 
 # denoise: NTP on the corrupted copy with clean targets; alone (dn), with the energy head (ebm+dn), and ebm at T=2.
-for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn", dict(ebm=True, denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebmT2", dict(ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0))]:
+for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn", dict(ebm=True, denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebmT2", dict(ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)), ("ebm+adv", dict(ebm=True, adv=True, eos_id=EOS, ebm_blocks=7))]:
     cfg = ObjectiveQwen3Config(**common, **kw)
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
@@ -269,6 +269,40 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
         aux = tr - ref_eval  # 0.1*NCE + 0.1*denoise-NTP
         assert 0.1 * 0.5 * 2 * np.log(2) + 0.1 * 0.7 * ref_eval < aux < 0.1 * 1.5 * 2 * np.log(2) + 0.1 * 1.5 * ref_eval, f"ebm+dn aux {aux:.3f}"
     print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}, {n_scored} scored positions  OK")
+# adv: REINFORCE on the sampler with the ebm head's score as reward. The formula is checked against a numpy reimplementation
+# from full logits, a constant reward must give exactly 0 (baseline cancels), adv without ebm must be rejected, and the
+# term must actually reach the LM (lm_head gradient differs from ebm-only under the same key).
+try:
+    ObjectiveQwen3Config(**common, adv=True, eos_id=EOS); raise AssertionError("adv without ebm was accepted")
+except ValueError:
+    pass
+adv_cfg = ObjectiveQwen3Config(**common, ebm=True, adv=True, eos_id=EOS, ebm_blocks=7)
+adv_model = adv_cfg.model_type.init(Vocab, adv_cfg, key=key)
+h_a, _ = adv_model.forward_with_aux(tokens, mask, key=None)
+xn_a, rp_a, _ = adv_model._ebm_corrupt(h_a, ex, seg_named, key=jax.random.PRNGKey(2))
+KW = dict(reduction=hax.mean, reduction_axis=None, logsumexp_weight=None, dtype=jnp.float32, logit_soft_cap=None)
+r_np = np.random.default_rng(3).normal(size=(B, T)).astype(np.float32)
+got = float(adv_model._adv_loss(h_a, xn_a, rp_a, hax.named(jnp.asarray(r_np), (Batch, Pos)), ex, **KW))
+logits_a = np.asarray(hax.dot(h_a, adv_model.get_lm_head(), axis="embed").astype(jnp.float32).array)
+lp_a = logits_a - logits_a.max(-1, keepdims=True); lp_a = lp_a - np.log(np.exp(lp_a).sum(-1, keepdims=True))
+xn_np, rp_np = np.asarray(xn_a.array), np.asarray(rp_a.array)
+ce_np = np.zeros((B, T)); w_np = np.zeros((B, T)); rr = np.zeros((B, T))
+for b in range(B):
+    for t in range(T - 1):
+        ce_np[b, t] = -lp_a[b, t, xn_np[b, t + 1]]; w_np[b, t] = float(rp_np[b, t + 1] and lw[b, t] > 0); rr[b, t] = r_np[b, t + 1]
+n_w = max(w_np.sum(), 1.0); bl = (rr * w_np).sum() / n_w; want = ((rr - bl) * w_np * ce_np).sum() / n_w
+assert w_np.sum() >= 2, "adv fixture has fewer than 2 rewarded positions"
+assert abs(got - want) < 1e-4, f"adv: model {got:.6f} vs numpy {want:.6f}"
+zero = float(adv_model._adv_loss(h_a, xn_a, rp_a, hax.named(jnp.ones((B, T), jnp.float32), (Batch, Pos)), ex, **KW))
+assert abs(zero) < 1e-6, f"adv: constant reward must give 0, got {zero}"
+ebm_only = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7)
+m_e = ebm_only.model_type.init(Vocab, ebm_only, key=key)
+def lm_head_grad(m):
+    g = eqx.filter_grad(lambda mm: mm.compute_next_token_loss(ex, key=jax.random.PRNGKey(2)).scalar())(m)
+    return [gg for pth, gg in jax.tree_util.tree_leaves_with_path(g) if gg is not None and "lm_head" in jax.tree_util.keystr(pth)][0]
+gd = float(jnp.linalg.norm((lm_head_grad(adv_model) - lm_head_grad(m_e)).astype(jnp.float32)))
+assert gd > 1e-6, "adv adds no gradient to the lm_head"
+print(f"adv REINFORCE: matches numpy ({got:+.5f}, {int(w_np.sum())} rewarded positions); constant reward -> 0; lm_head grad differs from ebm-only by {gd:.3e}  OK")
 # temperature changes the samples: T=2 draws must differ from T=1 draws for the same key on the same states
 c1 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7); c2 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)
 m1 = c1.model_type.init(Vocab, c1, key=key); m2 = c2.model_type.init(Vocab, c2, key=key)

@@ -43,8 +43,17 @@ directly comparable with the baseline. Two objectives, switchable independently:
   coherence break in real text is most detectable in prose. Encoder-side relatives: NSP / sentence-order prediction,
   ELECTRA's replaced-token detection; here it is a gated early-phase auxiliary on a causal LM.
 
+* ``adv`` (adversarial use of the ebm discriminator; doc section 5.3, 2026-09-22; requires ``ebm``): the LM is also the
+  generator. At every replaced position of the corrupted copy the ebm head's "real" log-odds on the prefix ending in the
+  sampled token is a reward (stop-gradient), its mean over replaced positions the baseline, and the score function is
+  log p(x_hat_t | x_<t) from the CLEAN pass -- the distribution NTP trains. Minimised: mean_{replaced} sg(r - b) * CE(x_hat)
+  (REINFORCE, Williams 1992; the discriminator-as-reward split of SeqGAN, Yu et al. 2017). The head receives no
+  gradient from this term (NCE only), the LM receives NTP + this. The per-position CE comes from the fused kernel with
+  reduction=None, which returns the unreduced loss times the not-last mask and applies no normaliser, so the signed
+  weights are applied and normalised here (a weighted MEAN in the kernel would divide by the signed weight sum).
+
 Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi] [+ eos_weight * eos]
-[+ ebm/denoise/mtp terms] [+ swap_weight * swap].
+[+ ebm/denoise/mtp terms] [+ swap_weight * swap] [+ adv_weight * adv].
 The logged train loss is that sum; eval reports the forward NTP alone.
 
 HEAD PARAMETRISATION (``free_heads``, default True). MuonH keeps every ``hnn.Linear`` weight at exactly its
@@ -125,6 +134,9 @@ class ObjectiveQwen3Config(Qwen3Config):
     swap_spans: int = 1
     swap_min: int = 16
     swap_max: int = 128
+    # adv: REINFORCE on the sampler with the ebm head's score as reward (module docstring). Needs ebm=True. No new parameters.
+    adv: bool = False
+    adv_weight: float = 0.03
     free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
     # Which state the auxiliary heads read. -1 = the final normed h that the lm_head reads (rung 1-5 behaviour). k in
     # 1..num_layers = the residual stream after layer k, RMS-normalised without parameters, so the auxiliary gradient
@@ -156,6 +168,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("mtp_k must be >= 2 (k=1 is NTP itself)")
         if self.swap_spans < 1 or self.swap_min < 1 or self.swap_max < self.swap_min:
             raise ValueError("swap needs swap_spans >= 1 and 1 <= swap_min <= swap_max")
+        if self.adv and not self.ebm:
+            raise ValueError("adv rewards the sampler with the ebm head's score, so it needs ebm=True")
         if self.aux_gate_hi > 0 and not (0.0 <= self.aux_gate_lo < self.aux_gate_hi):
             raise ValueError(f"aux_gate needs 0 <= lo < hi, got lo={self.aux_gate_lo} hi={self.aux_gate_hi}")
 
@@ -195,6 +209,10 @@ def _segment_ids(example: LmExample) -> Optional[NamedArray]:
 
 def _masked_mean(per_position: NamedArray, valid: NamedArray) -> NamedArray:
     return hax.sum(per_position * valid) / hax.maximum(hax.sum(valid), 1.0)
+
+
+def _softplus(x: NamedArray) -> NamedArray:
+    return hax.maximum(x, 0.0) + hax.log1p(hax.exp(-hax.abs(x)))
 
 
 def _doc_scoped_informative(replaced: NamedArray, is_start: NamedArray, loss_weight: NamedArray, Pos) -> NamedArray:
@@ -487,31 +505,44 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     def _corrupted_pass(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
         """One corrupted copy (samples from the lm_head on the FINAL h) and one trunk pass over it.
 
-        Returns (informative, h_noisy_final, h_noisy_aux): the NCE mask, the final normed states (for denoising NTP) and
-        the auxiliary-readout states (for the energy head). Shared by ebm and denoise so both cost one extra pass.
+        Returns (informative, h_noisy_final, h_noisy_aux, x_noisy, replaced): the NCE mask, the final normed states (for
+        denoising NTP), the auxiliary-readout states (for the energy head), the corrupted tokens and the replacement mask
+        (for adv). Shared by ebm, denoise and adv so all cost one extra pass.
         """
-        x_noisy, _, valid = self._ebm_corrupt(h, example, seg, key=key)
+        x_noisy, replaced, valid = self._ebm_corrupt(h, example, seg, key=key)
         h_noisy_final, h_noisy_aux = self.forward_with_aux(x_noisy, example.attn_mask, key=None)
-        return valid, h_noisy_final, h_noisy_aux
+        return valid, h_noisy_final, h_noisy_aux, x_noisy, replaced
 
     @named_call
     def _ebm_loss(self, h_aux: NamedArray, h_noisy_aux: NamedArray, valid: NamedArray):
         return self._nce_loss(cast(Any, self.ebm_head), h_aux, h_noisy_aux, valid)
 
-    def _nce_loss(self, head, h_aux: NamedArray, h_noisy_aux: NamedArray, valid: NamedArray):
+    def _nce_scores(self, head, h_aux: NamedArray, h_noisy_aux: NamedArray):
         # The scalar head reads h_aux (final h, or the aux_layer state) for both the clean and the corrupted pass.
         def unit(x):
             x = x.astype(jnp.float32)
             return x * (hax.mean(x * x, axis="embed") + 1e-6) ** -0.5  # parameter-free: isolates the head from the final-norm gain
 
-        def softplus(x):
-            return hax.maximum(x, 0.0) + hax.log1p(hax.exp(-hax.abs(x)))
-
         out = head.Out.name
         s_clean = head(unit(h_aux))[out, 0].astype(jnp.float32)  # log-odds "this prefix is real" = negative energy
         s_noisy = head(unit(h_noisy_aux))[out, 0].astype(jnp.float32)
-        nce = softplus(-s_clean) + softplus(s_noisy)  # NCE: real -> 1, own samples -> 0 (Gutmann & Hyvarinen 2010; kexue.fm/5617)
-        return _masked_mean(nce, valid)
+        return s_clean, s_noisy
+
+    def _nce_loss(self, head, h_aux: NamedArray, h_noisy_aux: NamedArray, valid: NamedArray):
+        s_clean, s_noisy = self._nce_scores(head, h_aux, h_noisy_aux)
+        return _masked_mean(_softplus(-s_clean) + _softplus(s_noisy), valid)  # NCE: real -> 1, own samples -> 0 (Gutmann & Hyvarinen 2010; kexue.fm/5617)
+
+    def _adv_loss(self, h: NamedArray, x_noisy: NamedArray, replaced: NamedArray, s_noisy: NamedArray, example: LmExample, **kw):
+        """REINFORCE on the sampler: mean over replaced positions of sg(r - b) * CE(x_hat), r = the ebm head's log-odds
+        on the corrupted prefix ending in x_hat (stop-gradient), b = its mean over replaced positions, CE from the CLEAN
+        pass. ce[t] scores the target at t+1, so the reward and the mask are rolled by -1 to line up."""
+        Pos = example.tokens.resolve_axis("position")
+        ce = self._ntp(self, h, x_noisy, None, **dict(kw, reduction=None, reduction_axis=None))  # unreduced, not-last masked
+        w = hax.roll(replaced, -1, Pos).astype(jnp.float32) * (example.loss_weight > 0).astype(jnp.float32)
+        r = jax.lax.stop_gradient(hax.roll(s_noisy, -1, Pos).astype(jnp.float32))
+        n = hax.maximum(hax.sum(w), 1.0)
+        b = hax.sum(r * w) / n
+        return hax.sum((r - b) * w * ce.astype(jnp.float32)) / n
 
     @named_call
     def _mtp_loss(self, h_aux: NamedArray, example: LmExample, seg: Optional[NamedArray], **kw):
@@ -575,9 +606,12 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         if cfg.mtp:
             loss = loss + gate * cfg.mtp_weight * self._mtp_loss(h_aux, example, seg, **kw)
         if cfg.ebm or cfg.denoise:
-            valid, h_noisy_final, h_noisy_aux = self._corrupted_pass(h, example, seg, key=k_e)
+            valid, h_noisy_final, h_noisy_aux, x_noisy, replaced = self._corrupted_pass(h, example, seg, key=k_e)
             if cfg.ebm:
-                loss = loss + gate * cfg.ebm_weight * self._ebm_loss(h_aux, h_noisy_aux, valid)
+                s_clean, s_noisy = self._nce_scores(cast(Any, self.ebm_head), h_aux, h_noisy_aux)
+                loss = loss + gate * cfg.ebm_weight * _masked_mean(_softplus(-s_clean) + _softplus(s_noisy), valid)
+                if cfg.adv:
+                    loss = loss + gate * cfg.adv_weight * self._adv_loss(h, x_noisy, replaced, s_noisy, example, **kw)
             if cfg.denoise:
                 loss = loss + gate * cfg.denoise_weight * self._denoise_loss(h_noisy_final, example, **kw)
         if cfg.swap:
