@@ -399,9 +399,11 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         """Diffusion-style corruption with the model as the noise kernel. Returns (x_noisy, replaced, informative).
 
         rho ~ U(0, ebm_rho_max) per sequence; each position is replaced with probability rho by a draw from p(x_t | x_<t)
-        taken from the clean pass. Never touched: position 0, EOS tokens, draws that are EOS, draws equal to the true
-        token (no corruption happened). ``informative`` marks loss-carrying positions with >= 1 replacement at or before
-        them inside the same document -- elsewhere the clean and corrupted prefixes coincide and the pair is a coin flip.
+        taken from the clean pass. Never touched: every document-start position (position 0, and any t with
+        seg[t] != seg[t-1], whose sample would otherwise come from h_{t-1} in the PREVIOUS document), EOS tokens,
+        draws that are EOS, and draws equal to the true token (no corruption happened). ``informative`` marks
+        loss-carrying positions with >= 1 replacement at or before them inside the same document -- elsewhere the
+        clean and corrupted prefixes coincide and the pair is a coin flip.
         """
         cfg = cast(ObjectiveQwen3Config, self.config)
         tokens = example.tokens
@@ -410,14 +412,14 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         k_s, k_r, k_u = jrandom.split(key, 3)
         samp = hax.roll(self._sample_next(h, key=k_s), 1, Pos)  # samp[t] ~ p(x_t | x_<t), drawn from h_{t-1}
         position = hax.arange(Pos).broadcast_axis(batch_axes)
+        is_start = (position == 0) | (seg != hax.roll(seg, 1, Pos)) if seg is not None else position == 0
         rho = hax.random.uniform(k_r, batch_axes, maxval=cfg.ebm_rho_max) if batch_axes else cfg.ebm_rho_max
         u = hax.random.uniform(k_u, tokens.axes)
-        protect = (position == 0) | (tokens == cfg.eos_id) | (samp == cfg.eos_id) | (samp == tokens)
+        protect = is_start | (tokens == cfg.eos_id) | (samp == cfg.eos_id) | (samp == tokens)
         replaced = (u < rho) & ~protect
         x_noisy = hax.where(replaced, samp, tokens)
         m = replaced.astype(jnp.int32)
         c = hax.cumsum(m, axis=Pos)
-        is_start = (position == 0) | (seg != hax.roll(seg, 1, Pos)) if seg is not None else position == 0
         ax = tokens.axes.index(Pos)
         base = hax.named(jax.lax.cummax(hax.where(is_start, c - m, 0).array, axis=ax), tokens.axes)  # c before this document
         informative = ((c - base >= 1) & (example.loss_weight > 0)).astype(jnp.float32)
