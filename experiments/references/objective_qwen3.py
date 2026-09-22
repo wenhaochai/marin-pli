@@ -34,7 +34,17 @@ directly comparable with the baseline. Two objectives, switchable independently:
   new). Masked: positions with no EOS later in the window (the truncated last document -- unknowable) and positions
   that are themselves EOS (the next EOS belongs to the following document, which cross-document masking hides).
 
-Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi] [+ eos_weight * eos].
+* ``swap`` (real text, wrong context; doc section 5.1, 2026-09-22): ``swap_spans`` contiguous spans per sequence, each of
+  length ~U(swap_min, swap_max), are replaced in place by the SAME positions of the previous sequence in the batch (a
+  batch roll), truncated at the current document's end; position 0 and EOS are never touched. A second trunk pass reads
+  the spliced copy and a scalar head must score the clean prefix above the spliced one (binary NCE, exactly as ``ebm``) at
+  every loss-carrying position at or after the first splice inside the same document. This is the complement of ebm's
+  negatives: ebm's own samples are detectable in structured text and invisible in fluent prose, whereas a topic or
+  coherence break in real text is most detectable in prose. Encoder-side relatives: NSP / sentence-order prediction,
+  ELECTRA's replaced-token detection; here it is a gated early-phase auxiliary on a causal LM.
+
+Loss = forward NTP [+ backward NTP + twin_weight * twin] [+ sr_weight * sr] [+ pi_weight * pi] [+ eos_weight * eos]
+[+ ebm/denoise/mtp terms] [+ swap_weight * swap].
 The logged train loss is that sum; eval reports the forward NTP alone.
 
 HEAD PARAMETRISATION (``free_heads``, default True). MuonH keeps every ``hnn.Linear`` weight at exactly its
@@ -108,6 +118,13 @@ class ObjectiveQwen3Config(Qwen3Config):
     mtp: bool = False
     mtp_weight: float = 0.1
     mtp_k: int = 2
+    # swap: real-text-wrong-context negatives (module docstring). Spans of the previous sequence in the batch spliced in
+    # place, document-truncated; scalar head, binary NCE on a second trunk pass, document-scoped informative mask like ebm.
+    swap: bool = False
+    swap_weight: float = 0.1
+    swap_spans: int = 1
+    swap_min: int = 16
+    swap_max: int = 128
     free_heads: bool = True  # auxiliary heads as plain arrays in MuonH's adam group (norm free); False = hnn.Linear (norm pinned)
     # Which state the auxiliary heads read. -1 = the final normed h that the lm_head reads (rung 1-5 behaviour). k in
     # 1..num_layers = the residual stream after layer k, RMS-normalised without parameters, so the auxiliary gradient
@@ -137,6 +154,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError(f"aux_layer must be -1 (final h) or in 1..num_layers={self.num_layers}, got {self.aux_layer}")
         if self.mtp_k < 2:
             raise ValueError("mtp_k must be >= 2 (k=1 is NTP itself)")
+        if self.swap_spans < 1 or self.swap_min < 1 or self.swap_max < self.swap_min:
+            raise ValueError("swap needs swap_spans >= 1 and 1 <= swap_min <= swap_max")
         if self.aux_gate_hi > 0 and not (0.0 <= self.aux_gate_lo < self.aux_gate_hi):
             raise ValueError(f"aux_gate needs 0 <= lo < hi, got lo={self.aux_gate_lo} hi={self.aux_gate_hi}")
 
@@ -147,7 +166,7 @@ class ObjectiveQwen3Config(Qwen3Config):
     def flops_per_token(self, vocab_size: int, context_length: int):
         # twin: a full second stack plus LM head. ebm: a second trunk pass over the corrupted copy plus one lm_head-sized
         # matmul for the sampler; counted as 2x as well. The small heads are not counted.
-        return (2 if (self.twin or self.ebm or self.denoise) else 1) * super().flops_per_token(vocab_size, context_length)
+        return (2 if (self.twin or self.ebm or self.denoise or self.swap) else 1) * super().flops_per_token(vocab_size, context_length)
 
 
 def _flip(x: NamedArray, axis) -> NamedArray:
@@ -176,6 +195,15 @@ def _segment_ids(example: LmExample) -> Optional[NamedArray]:
 
 def _masked_mean(per_position: NamedArray, valid: NamedArray) -> NamedArray:
     return hax.sum(per_position * valid) / hax.maximum(hax.sum(valid), 1.0)
+
+
+def _doc_scoped_informative(replaced: NamedArray, is_start: NamedArray, loss_weight: NamedArray, Pos) -> NamedArray:
+    """Loss-carrying positions with >= 1 replacement at or before them inside the same document (shared by ebm and swap)."""
+    m = replaced.astype(jnp.int32)
+    c = hax.cumsum(m, axis=Pos)
+    ax = c.axes.index(Pos)
+    base = hax.named(jax.lax.cummax(hax.where(is_start, c - m, 0).array, axis=ax), c.axes)  # count before this document
+    return ((c - base >= 1) & (loss_weight > 0)).astype(jnp.float32)
 
 
 class FreeLinear(eqx.Module):
@@ -212,6 +240,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
     eos_head: Optional[eqx.Module]  # Embed -> eos_bins logits over log2 distance-to-EOS bins
     ebm_head: Optional[eqx.Module]  # Embed -> 1 "clean" log-odds (negative energy) of the prefix
     mtp_proj: Optional[eqx.Module]  # Embed -> Embed map whose output the shared lm_head decodes as x_{t+mtp_k}
+    swap_head: Optional[eqx.Module]  # Embed -> 1 "clean" log-odds of the prefix against a real-text splice
 
     @classmethod
     def init(cls, Vocab, config: ObjectiveQwen3Config, *, key):  # type: ignore[override]
@@ -225,7 +254,9 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         eos_head = _head(config.Embed, hax.Axis("eos_bin", config.eos_bins), key=k_e, use_bias=True, free=fr) if config.eos else None
         ebm_head = _head(config.Embed, hax.Axis("ebm_out", 1), key=k_n, use_bias=True, free=fr) if config.ebm else None
         mtp_proj = _head(config.Embed, config.Embed.alias("mtp_embed"), key=k_m, use_bias=True, free=fr) if config.mtp else None
-        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head, ebm_head, mtp_proj)
+        # Own key stream: the 7-way split above must stay byte-identical for every existing variant's head initialisation.
+        swap_head = _head(config.Embed, hax.Axis("swap_out", 1), key=jrandom.fold_in(key, 3), use_bias=True, free=fr) if config.swap else None
+        return cls(base.transformer, base.embeddings, base.lm_head, backward, twin_proj, sr_head, pi_proj, eos_head, ebm_head, mtp_proj, swap_head)
 
     def _ntp(self, model: Qwen3LMHeadModel, h: NamedArray, tokens: NamedArray, loss_weight: NamedArray, **kw):
         return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, model.get_lm_head(), tokens, loss_weight=loss_weight, **kw)
@@ -418,12 +449,40 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         protect = is_start | (tokens == cfg.eos_id) | (samp == cfg.eos_id) | (samp == tokens)
         replaced = (u < rho) & ~protect
         x_noisy = hax.where(replaced, samp, tokens)
-        m = replaced.astype(jnp.int32)
-        c = hax.cumsum(m, axis=Pos)
-        ax = tokens.axes.index(Pos)
-        base = hax.named(jax.lax.cummax(hax.where(is_start, c - m, 0).array, axis=ax), tokens.axes)  # c before this document
-        informative = ((c - base >= 1) & (example.loss_weight > 0)).astype(jnp.float32)
-        return x_noisy, replaced, informative
+        return x_noisy, replaced, _doc_scoped_informative(replaced, is_start, example.loss_weight, Pos)
+
+    def _swap_corrupt(self, example: LmExample, seg: Optional[NamedArray], *, key):
+        """Real-text splice corruption. Returns (x_noisy, replaced, informative).
+
+        For each of ``swap_spans`` spans: length L ~ U(swap_min, swap_max), start t0 ~ U(1, T - L); positions in
+        [t0, t0 + L) whose document is the one at t0 are replaced by the same positions of the PREVIOUS sequence in the
+        batch (real text from another document). Position 0, EOS tokens and positions where the source token equals the
+        true token are left alone, so ``replaced`` marks exactly the changed tokens. No model forward is needed.
+        """
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        tokens = example.tokens
+        Pos = tokens.resolve_axis("position")
+        batch_axes = tuple(ax for ax in tokens.axes if ax.name != Pos.name)
+        if not batch_axes:
+            raise NotImplementedError("swap needs a batch axis to draw the splice from another sequence")
+        position = hax.arange(Pos).broadcast_axis(batch_axes)
+        is_start = (position == 0) | (seg != hax.roll(seg, 1, Pos)) if seg is not None else position == 0
+        src = hax.roll(tokens, 1, batch_axes[0])  # the previous sequence in the batch
+        bshape = tuple(ax.size for ax in batch_axes)
+        in_span = None
+        for k in jrandom.split(key, cfg.swap_spans):
+            k_l, k_t = jrandom.split(k)
+            L = jrandom.randint(k_l, bshape, cfg.swap_min, cfg.swap_max + 1)
+            t0 = jrandom.randint(k_t, bshape, 1, jnp.maximum(Pos.size - L, 2))  # start in [1, T - L); span may be truncated at T
+            L_n, t0_n = hax.named(L, batch_axes), hax.named(t0, batch_axes)
+            span = (position >= t0_n) & (position < t0_n + L_n)
+            if seg is not None:
+                span = span & (seg == seg.take(Pos, t0_n))  # never cross the document that starts the span
+            in_span = span if in_span is None else (in_span | span)
+        protect = (position == 0) | (tokens == cfg.eos_id) | (src == tokens)
+        replaced = in_span & ~protect
+        x_noisy = hax.where(replaced, src, tokens)
+        return x_noisy, replaced, _doc_scoped_informative(replaced, is_start, example.loss_weight, Pos)
 
     def _corrupted_pass(self, h: NamedArray, example: LmExample, seg: Optional[NamedArray], *, key):
         """One corrupted copy (samples from the lm_head on the FINAL h) and one trunk pass over it.
@@ -437,7 +496,10 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
 
     @named_call
     def _ebm_loss(self, h_aux: NamedArray, h_noisy_aux: NamedArray, valid: NamedArray):
-        # The energy head reads h_aux (final h, or the aux_layer state) for both the clean and the corrupted pass.
+        return self._nce_loss(cast(Any, self.ebm_head), h_aux, h_noisy_aux, valid)
+
+    def _nce_loss(self, head, h_aux: NamedArray, h_noisy_aux: NamedArray, valid: NamedArray):
+        # The scalar head reads h_aux (final h, or the aux_layer state) for both the clean and the corrupted pass.
         def unit(x):
             x = x.astype(jnp.float32)
             return x * (hax.mean(x * x, axis="embed") + 1e-6) ** -0.5  # parameter-free: isolates the head from the final-norm gain
@@ -445,9 +507,9 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         def softplus(x):
             return hax.maximum(x, 0.0) + hax.log1p(hax.exp(-hax.abs(x)))
 
-        head = cast(Any, self.ebm_head)
-        s_clean = head(unit(h_aux))["ebm_out", 0].astype(jnp.float32)  # log-odds "this prefix is real" = negative energy
-        s_noisy = head(unit(h_noisy_aux))["ebm_out", 0].astype(jnp.float32)
+        out = head.Out.name
+        s_clean = head(unit(h_aux))[out, 0].astype(jnp.float32)  # log-odds "this prefix is real" = negative energy
+        s_noisy = head(unit(h_noisy_aux))[out, 0].astype(jnp.float32)
         nce = softplus(-s_clean) + softplus(s_noisy)  # NCE: real -> 1, own samples -> 0 (Gutmann & Hyvarinen 2010; kexue.fm/5617)
         return _masked_mean(nce, valid)
 
@@ -487,6 +549,7 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         cfg = cast(ObjectiveQwen3Config, self.config)
         train = key is not None  # the trainer passes a key; evaluation does not
         k_f, k_b, k_p, k_e = maybe_rng_split(key, 4) if key is not None else (None, None, None, None)
+        k_w = jrandom.fold_in(key, 7) if key is not None else None  # swap's own stream; the 4-way split above is unchanged
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
         if not train:
             h = self.activations(example.tokens, example.attn_mask, key=None)  # plain forward, identical to the baseline
@@ -517,4 +580,8 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
                 loss = loss + gate * cfg.ebm_weight * self._ebm_loss(h_aux, h_noisy_aux, valid)
             if cfg.denoise:
                 loss = loss + gate * cfg.denoise_weight * self._denoise_loss(h_noisy_final, example, **kw)
+        if cfg.swap:
+            x_sw, _, valid_sw = self._swap_corrupt(example, seg, key=k_w)
+            _, h_sw_aux = self.forward_with_aux(x_sw, example.attn_mask, key=None)
+            loss = loss + gate * cfg.swap_weight * self._nce_loss(cast(Any, self.swap_head), h_aux, h_sw_aux, valid_sw)
         return loss
