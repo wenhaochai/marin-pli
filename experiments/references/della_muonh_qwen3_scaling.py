@@ -111,6 +111,8 @@ EBM_RHO = float(os.environ.get("EBM_RHO", "0.5"))
 # same corrupted copy (tag -dn{w}); VARIANT=dn runs denoising NTP alone (default weight 0.1), no energy head.
 EBM_TEMP = float(os.environ.get("EBM_TEMP", "1"))
 DENOISE_W = float(os.environ.get("DENOISE_W", "0"))
+# ADV_W > 0 (ebm only): REINFORCE on the sampler with the ebm head's score as reward, weight ADV_W (tag -adv{w}).
+ADV_W = float(os.environ.get("ADV_W", "0"))
 # VARIANT=mtp: multi-token prediction auxiliary (D x D projection + shared lm_head) predicting x_{t+MTP_K}, weight MTP_W.
 MTP_W = float(os.environ.get("MTP_W", "0.1"))
 MTP_K = int(os.environ.get("MTP_K", "2"))
@@ -179,7 +181,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "eos":
         variant_tags += f"-eosw{EOS_W:g}"
     if VARIANT == "ebm":
-        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "")
+        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"-adv{ADV_W:g}" if ADV_W > 0 else "")
     if VARIANT == "mtp":
         variant_tags += f"-mtpk{MTP_K}w{MTP_W:g}"
     if VARIANT == "swap":
@@ -232,6 +234,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ebm_temp=EBM_TEMP,
             denoise=VARIANT == "dn" or DENOISE_W > 0,
             denoise_weight=DENOISE_W or 0.1,
+            adv=VARIANT == "ebm" and ADV_W > 0,
+            adv_weight=ADV_W or 0.03,
             mtp=VARIANT == "mtp",
             mtp_weight=MTP_W,
             mtp_k=MTP_K,

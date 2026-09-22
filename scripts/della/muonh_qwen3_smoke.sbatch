@@ -34,7 +34,7 @@ case "$VARIANT" in  # must mirror variant_tags in della_muonh_qwen3_scaling.py (
   twinsr) SUFFIX="$SUFFIX-twin${TWIN_W:-0.1}$([ "${TWIN_OFF:-2}" != 2 ] && echo "o${TWIN_OFF}")-sr${SR_GAMMA:-0.9}w${SR_W:-0.1}" ;;
   pi)     SUFFIX="$SUFFIX-pik${PI_K:-4}w${PI_W:-0.1}$([ "${PI_TAU:-0.1}" != 0.1 ] && echo "t${PI_TAU}")$([ "${PI_NEG:-512}" != 512 ] && echo "n${PI_NEG}")" ;;
   eos)    SUFFIX="$SUFFIX-eosw${EOS_W:-0.1}" ;;
-  ebm)    SUFFIX="$SUFFIX-ebmr${EBM_RHO:-0.5}w${EBM_W:-0.1}$([ "${EBM_TEMP:-1}" != 1 ] && echo "T${EBM_TEMP}")" ;;
+  ebm)    SUFFIX="$SUFFIX-ebmr${EBM_RHO:-0.5}w${EBM_W:-0.1}$([ "${EBM_TEMP:-1}" != 1 ] && echo "T${EBM_TEMP}")$([ "${ADV_W:-0}" != 0 ] && echo "-adv${ADV_W}")" ;;
   dn)     SUFFIX="$SUFFIX-dnr${EBM_RHO:-0.5}w${DENOISE_W:-0.1}$([ "${EBM_TEMP:-1}" != 1 ] && echo "T${EBM_TEMP}")" ;;
   mtp)    SUFFIX="$SUFFIX-mtpk${MTP_K:-2}w${MTP_W:-0.1}" ;;
   swap)   SUFFIX="$SUFFIX-sww${SWAP_W:-0.1}$([ "${SWAP_SPANS:-1}" != 1 ] && echo "n${SWAP_SPANS}")$([ "${SWAP_MIN:-16}-${SWAP_MAX:-128}" != "16-128" ] && echo "l${SWAP_MIN:-16}-${SWAP_MAX:-128}")" ;;

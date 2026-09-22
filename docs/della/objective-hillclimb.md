@@ -727,6 +727,16 @@ Kaiyue `muonh_qwen3_scaling` 130m：hidden 512、6 层、batch 128 × seq 4096�
 twin、sr、pi、eos、mtp、dn、swap 都是**只重新打包数据里已有信息**的辅助项——在此预算下 **7/7 在 macro 上为零或负**。ebm 是唯一有净逐域收益的，它注入的是 NTP 拿不到的信息：**模型自身的错误分布**，且只在这些错误可被检测的域（结构化文本）起效。工作论点：**下一族必须是模型派生的信息，否则在这里没有先验。** 由此排序：**① 对抗式**——把 ebm 判别器的分数当作采样侧的奖励（生成侧梯度），以新的方式检验论点（固定数据下把模型样本推向「真实」是否帮到 NTP）；文献对 ppl 的先验偏低。实现关键在离散采样不可导：用 REINFORCE，奖励 = 头对被替换位置的分数、基线为批均值，采样 token 的 log-prob 来自干净 pass——可写成「以 `sg(r−b)·replaced` 为 loss_weight、目标为采样 token 的加权 CE」，但**只有在融合 CE 核接受带符号权重且用固定归一化时才成立**，实现前先读 `levanter/models/loss.py`。**② 多步自回归自身样本负样本**——把 ebm 的负样本变难，是一个不随规模的族的精修，排第二。
 
 **顺带待定**：6 条 `JobHeldUser` 的确定性探针（14183277–280、14183686/687）——其问题已由代码审计解决、与 objective 无关，建议取消。
+
+### 5.3 第三族：对抗式（`adv`，实现与预注册，12:40）
+
+**设计**（需 `ebm`）：LM 同时是生成器。对腐蚀副本里每个被替换位置，ebm 头对「以采样 token 结尾的前缀」给出的「真实」log-odds 作为奖励 r（stop-grad），被替换位置上的均值作基线 b，得分函数是**干净 pass** 的 log p(x̂_t | x_<t)——正是 NTP 训练的那个分布；最小化 mean_{被替换} sg(r−b)·CE(x̂)（REINFORCE；SeqGAN 式的判别器当奖励）。头只收 NCE 梯度，LM 收 NTP + adv；无新参数。逐位置 CE 来自融合核 `reduction=None`——已读源码确认它返回未归约损失乘「非末位」掩码、不做归一化（而加权**均值**会除以带符号权重之和），带符号权重在 `_adv_loss` 里自乘自归一。
+
+**smoke**：公式与从完整 logits 用 numpy 重算的值在随机奖励向量上对齐到 1e-4；常数奖励精确为 0（基线抵消）；`adv` 无 `ebm` 抛错；同一 key 下 lm_head 梯度与纯 ebm 不同；`_nce_scores` 重构后 ebm 训练损失仍为 4.2769；eval 与 plain 相等。启动器 `ADV_W`、tag `-adv{w}`，smoke sbatch 镜像同步。
+
+**预注册（seed-0 筛）**：`EBM_W=0.03 ADV_W=0.03 AUX_GATE=4.0:3.6`（ebm 的既有工作点 + 同权重的生成项），run id `…-ebmr0.5w0.03-adv0.03-g4-3.6-fh`，对 8 条池、one-vs-sample se。**推进到 n=4 的条件**：macro < 4.17422 **且** c4_en bpb 不差于 +2 池 sd（生成侧推力不得给散文加税）。附带记录但不作闸门：ebm 的 code/redpajama 收益是否保留（code ≤ −0.05）。**先验低于 20%**——对抗式 LM 训练的文献对 ppl 一致为负；这条 run 的意义是用第二种方式检验 5.2 的论点。**事先写明的混杂**：门控让辅助项只在前半程开着，而判别器恰在那时最弱；若筛失败，**唯一**的后续是一条不门控的 adv 筛，之后关线。
+
 - **08:30** **`swap` 族实现并入筛。** 提交 `67305ec306`：`VARIANT=swap`（上一行序列的 span 原位拼入、按文档截断、position 0 / EOS / 未变 token 不动；第二次 trunk pass；FreeLinear 标量头；二元 NCE；文档作用域 informative 与 ebm 共用一个助手），启动器 `SWAP_W/SPANS/MIN/MAX` 与 tag `-sww{w}`，smoke sbatch 的 tag 镜像，CPU smoke 新增源行 / 保护 / 文档截断 / 暴力 informative / 初值 NCE / 头梯度 / flops / aux_layer 检查——**全部通过**，且 ebm 的 smoke 损失在重构前后到 4 位一致（4.2769），即抽取与泛化是行为保持的。**可复现性**：新头 key 用 `fold_in(key,3)`、新腐蚀 key 用 `fold_in(key,7)`，既有 7 路头 split 与 4 路损失 split 一字不动，旧配置重跑仍逐位一致。DRY_RUN 核实 id `…-sww0.03-g4-3.6-fh`（新 tag，无碰撞）。**已提交**：seed-0 筛 **14269581**（pli-short，w=0.03、gate 4.0:3.6、1 段 U(16,128)）；并行 40 步 GPU smoke **14269582**（pli-cp）——CPU 覆盖不到的唯一路径是分片 batch 轴上的 `hax.roll`（跨设备 permute），smoke 失败则取消筛。判据见 5.1。
 
 - **12:05** **`swap` 筛判负、线关闭。** macro +0.007（高于池均值）、散文五域 0/5 命中且 c4_en/wikitext 各差约 2 个池 sd、mc4 t 3.34 变差；结构化文本亦无收益。判别头伤了它本该帮的域，且因真实文本负样本不含模型错误信息而无补偿。**跨 8 族综合**写入 5.2：只重新打包数据的 7/7 为零或负，唯一有效的注入了模型自身错误分布；下一族必须是模型派生信息——对抗式排第一，先读融合 CE 核的权重语义再实现。
+- **12:40** **第三族 `adv`（对抗式）实现并预注册。** REINFORCE 用 ebm 头分数当奖励、干净 pass 的 log p(x̂) 当得分函数；融合核 `reduction=None` 的语义读源码确认后自算带符号权重。smoke：公式对 numpy 1e-4、常数奖励为 0、无 ebm 抛错、lm_head 梯度确有变化、ebm 损失不变。预注册见 5.3：macro < 4.17422 且 c4_en 不差于 +2 sd 才推进；先验 <20%；门控-判别器强度的混杂已事先写明。
