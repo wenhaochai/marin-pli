@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import haliax as hax
+from haliax.jax_utils import maybe_rng_split
 from levanter.layers.attention import AttentionBackend, AttentionMask
 from levanter.models.lm_model import LmExample
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
@@ -87,6 +88,18 @@ x_noisy, replaced, informative = ebm_model._ebm_corrupt(h_, ex, seg_named, key=j
 xn, rp, inf_ = np.asarray(x_noisy.array), np.asarray(replaced.array), np.asarray(informative.array)
 assert not rp[:, 0].any() and not rp[tok == EOS].any() and not (xn == EOS)[tok != EOS].any(), "protected positions were corrupted"
 assert np.array_equal(xn != tok, rp), "replaced must mark exactly the changed tokens"
+# Document starts must never be corrupted: samp[t] there is drawn from h_{t-1}, which belongs to the PREVIOUS
+# document, so replacing it splices in an out-of-context token that the discriminator can spot for free.
+starts = np.zeros_like(rp, dtype=bool)
+starts[:, 0] = True
+starts[:, 1:] = seg[:, 1:] != seg[:, :-1]
+assert starts.sum() == 4, f"fixture must contain 4 document starts, has {starts.sum()}"
+assert not rp[starts].any(), "a document-start position was corrupted"
+rp_any = np.zeros_like(rp, dtype=bool)
+for _i in range(200):
+    rp_any |= np.asarray(corrupt_jit(ebm_model, h_, ex, seg_named, jax.random.PRNGKey(_i))) > 0
+assert not rp_any[starts].any(), "a document-start position was corrupted under some key"
+print(f"ebm boundary protection: {int(starts.sum())} document starts, none corrupted over 200 keys  OK")
 # informative = loss-carrying position with >= 1 replacement at or before it inside the same document
 exp_inf = np.zeros_like(inf_)
 for b in range(B):
@@ -111,16 +124,33 @@ for free in (True, False):
     assert all(v == "adamh" for v in lmh.values()), lmh
     print(f"free_heads={free!s:5s}: heads -> {sorted(set(heads.values()))} ({len(heads)} leaves), trunk linears -> muonh ({len(trunk)}), lm_head -> adamh  OK")
 
+def scored_key(model, ex, seg_named, start=1, tries=16):
+    """First PRNGKey >= start whose corruption scores at least one position, and how many. Derives the corruption
+    sub-key exactly as compute_next_token_loss does (k_f, k_b, k_p, k_e = split(key, 4); h from k_f, corruption
+    from k_e) and reads the informative mask itself rather than the loss: with denoise on, the loss differs from
+    NTP even when the NCE term has nothing to score. Document starts, EOS and same-token draws are protected, so
+    on this 2x16 fixture a small rho draw can leave nothing to score; such a key is a legitimate 'loss == NTP'
+    case (checked below), not a usable gradient probe."""
+    for k in range(start, start + tries):
+        k_f, _, _, k_e = maybe_rng_split(jax.random.PRNGKey(k), 4)
+        h, _ = model.forward_with_aux(ex.tokens, ex.attn_mask, key=k_f)
+        n = int(np.asarray(model._ebm_corrupt(h, ex, seg_named, key=k_e)[2].array).sum())
+        if n > 0:
+            return k, n
+    raise AssertionError(f"no key in [{start}, {start + tries}) scored any position")
+
+
 for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", dict(twin=True, sr=True)), ("pi", dict(pi=True, pi_negatives=8)), ("eos", dict(eos=True, eos_id=EOS)), ("ebm", dict(ebm=True, eos_id=EOS, ebm_blocks=7))]:
     cfg = ObjectiveQwen3Config(**common, **kw)
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
-    tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)))
+    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
+    tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
     assert np.isfinite(tr), f"{name}: train loss not finite"
     assert abs(ev - ref_eval) < 1e-5, f"{name}: eval loss {ev} != plain {ref_eval}"
 
     def loss_fn(m):
-        return m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar()
+        return m.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)).scalar()
 
     grads = eqx.filter_grad(loss_fn)(model)
     leaves = [(p, g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
@@ -132,6 +162,10 @@ for name, kw in [("twin", dict(twin=True)), ("sr", dict(sr=True)), ("twinsr", di
     print(f"{name:7s} eval {ev:.6f} (== plain) train {tr:.4f} | grad norms: forward-transformer {nz('.transformer'):.3e} "
           f"twin_proj {nz('twin_proj'):.3e} sr_head {nz('sr_head'):.3e} pi_proj {nz('pi_proj'):.3e} eos_head {nz('eos_head'):.3e} ebm_head {nz('ebm_head'):.3e} backward {nz('backward'):.3e}")
     if kw.get("ebm"):
+        # A key that scores no position must give EXACTLY the NTP loss: the auxiliary contributes 0, not NaN.
+        zk = next((k for k in range(0, 32) if abs(float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(k))) - ev) <= 1e-7), None)
+        if zk is not None:
+            print(f"{name:7s} key {zk} scores no position and train loss == NTP exactly; gradient probe uses key {tk} ({n_scored} scored positions)  OK")
         assert nz("ebm_head") > 0
         aux = (tr - ref_eval) / 0.1
         assert 0.5 * 2 * np.log(2) < aux < 1.5 * 2 * np.log(2), f"ebm aux {aux:.3f} vs 2 log 2 = {2*np.log(2):.3f} at init"
@@ -157,6 +191,7 @@ for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("e
         model = cfg.model_type.init(Vocab, cfg, key=key)
         ev = float(model.compute_next_token_loss(ex))
         assert abs(ev - ref_eval) < 1e-5, f"{name} L{k}: eval {ev} != plain {ref_eval}"
+        tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
         h, h_aux = model.forward_with_aux(tokens, mask)
         h_final = model.activations(tokens, mask)
         assert float(hax.max(hax.abs(h - h_final))) < 1e-4, f"{name} L{k}: forward_with_aux h differs from activations"
@@ -165,8 +200,8 @@ for name, kw in [("sr", dict(sr=True)), ("eos", dict(eos=True, eos_id=EOS)), ("e
         if k == 2:  # last layer: h = RmsNorm(x_L) = unit(x_L) * gain, so h_aux * gain must reproduce h (up to eps)
             gain = model.transformer.norm.weight
             assert float(hax.max(hax.abs(h_aux * gain - h.astype(jnp.float32)))) < 1e-3, f"{name} L2: h_aux*gain != h"
-        tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)))
-        grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(model)
+        tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
+        grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)).scalar())(model)
         leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
         assert all(bool(jnp.all(jnp.isfinite(g))) for _, g in leaves), f"{name} L{k}: non-finite grads"
         head_g = sum(float(jnp.linalg.norm(g.astype(jnp.float32))) for n, g in leaves if any(t in n for t in ("sr_head", "eos_head", "ebm_head", "twin_proj")))
@@ -185,8 +220,9 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
     assert abs(ev - ref_eval) < 1e-5, f"{name}: eval {ev} != plain {ref_eval}"
-    tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)))
-    grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(1)).scalar())(model)
+    tk, n_scored = scored_key(model, ex, seg_named) if (cfg.ebm or cfg.denoise) else (1, None)
+    tr = float(model.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)))
+    grads = eqx.filter_grad(lambda m: m.compute_next_token_loss(ex, key=jax.random.PRNGKey(tk)).scalar())(model)
     leaves = [(jax.tree_util.keystr(p), g) for p, g in jax.tree_util.tree_leaves_with_path(grads) if g is not None]
     assert all(bool(jnp.all(jnp.isfinite(g))) for _, g in leaves), f"{name}: non-finite grads"
     if name == "dn":
@@ -197,7 +233,7 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
         assert any("ebm_head" in n for n, _ in leaves)
         aux = tr - ref_eval  # 0.1*NCE + 0.1*denoise-NTP
         assert 0.1 * 0.5 * 2 * np.log(2) + 0.1 * 0.7 * ref_eval < aux < 0.1 * 1.5 * 2 * np.log(2) + 0.1 * 1.5 * ref_eval, f"ebm+dn aux {aux:.3f}"
-    print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}  OK")
+    print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}, {n_scored} scored positions  OK")
 # temperature changes the samples: T=2 draws must differ from T=1 draws for the same key on the same states
 c1 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7); c2 = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)
 m1 = c1.model_type.init(Vocab, c1, key=key); m2 = c2.model_type.init(Vocab, c2, key=key)
