@@ -114,6 +114,12 @@ class ObjectiveQwen3Config(Qwen3Config):
     ebm_rho_max: float = 0.5
     ebm_temp: float = 1.0  # sampling temperature for the corruption samples
     ebm_blocks: int = 32  # vocab blocks for the Gumbel-max sampler (memory: batch*pos*(vocab/blocks) fp32 logits)
+    # ebm_steps = k > 1: the negatives are k-step autoregressive rollouts of the model's own continuation instead of
+    # independent one-step draws. Positions form aligned blocks of k; a block is chosen with probability rho (the same
+    # per-sequence rho ~ U(0, ebm_rho_max), so the corrupted fraction is unchanged); offset j of a chosen block is drawn
+    # given the sequence with offsets < j already replaced -- one extra stop-gradient trunk pass per offset. k = 1 is
+    # the original one-step code path, bit for bit.
+    ebm_steps: int = 1
     # denoise: standard NTP (clean next-token targets, same lm_head) computed on the SAME corrupted copy the ebm uses
     # (rho ~ U(0, ebm_rho_max) of the tokens replaced by the model's own samples). Input-side perturbation only; the
     # target and the loss are exactly NTP (denoising autoencoder, Vincent et al. 2008; training with noise as Tikhonov
@@ -162,6 +168,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("eos_bins must be >= 2")
         if not (0.0 < self.ebm_rho_max <= 1.0) or self.ebm_temp <= 0 or self.ebm_blocks < 1:
             raise ValueError("ebm_rho_max in (0, 1], ebm_temp > 0 and ebm_blocks >= 1 are required")
+        if self.ebm_steps < 1:
+            raise ValueError("ebm_steps must be >= 1")
         if self.aux_layer == 0 or self.aux_layer < -1 or self.aux_layer > self.num_layers:
             raise ValueError(f"aux_layer must be -1 (final h) or in 1..num_layers={self.num_layers}, got {self.aux_layer}")
         if self.mtp_k < 2:
@@ -170,6 +178,8 @@ class ObjectiveQwen3Config(Qwen3Config):
             raise ValueError("swap needs swap_spans >= 1 and 1 <= swap_min <= swap_max")
         if self.adv and not self.ebm:
             raise ValueError("adv rewards the sampler with the ebm head's score, so it needs ebm=True")
+        if self.adv and self.ebm_steps > 1:
+            raise ValueError("adv's score function is the clean pass's one-step log-prob, so it needs ebm_steps == 1")
         if self.aux_gate_hi > 0 and not (0.0 <= self.aux_gate_lo < self.aux_gate_hi):
             raise ValueError(f"aux_gate needs 0 <= lo < hi, got lo={self.aux_gate_lo} hi={self.aux_gate_hi}")
 
@@ -179,8 +189,12 @@ class ObjectiveQwen3Config(Qwen3Config):
 
     def flops_per_token(self, vocab_size: int, context_length: int):
         # twin: a full second stack plus LM head. ebm: a second trunk pass over the corrupted copy plus one lm_head-sized
-        # matmul for the sampler; counted as 2x as well. The small heads are not counted.
-        return (2 if (self.twin or self.ebm or self.denoise or self.swap) else 1) * super().flops_per_token(vocab_size, context_length)
+        # matmul for the sampler; counted as 2x as well. The small heads are not counted. ebm_steps = k adds k - 1
+        # forward-only rollout passes, ~1/3 of a forward+backward each (MFU reporting only).
+        mult = 2 if (self.twin or self.ebm or self.denoise or self.swap) else 1
+        if (self.ebm or self.denoise) and self.ebm_steps > 1:
+            mult += (self.ebm_steps - 1) / 3
+        return mult * super().flops_per_token(vocab_size, context_length)
 
 
 def _flip(x: NamedArray, axis) -> NamedArray:
@@ -452,7 +466,8 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         seg[t] != seg[t-1], whose sample would otherwise come from h_{t-1} in the PREVIOUS document), EOS tokens,
         draws that are EOS, and draws equal to the true token (no corruption happened). ``informative`` marks
         loss-carrying positions with >= 1 replacement at or before them inside the same document -- elsewhere the
-        clean and corrupted prefixes coincide and the pair is a coin flip.
+        clean and corrupted prefixes coincide and the pair is a coin flip. ``ebm_steps`` > 1 hands the same draws to
+        ``_ebm_rollout`` (k-step autoregressive negatives); ``ebm_steps`` = 1 never leaves this function.
         """
         cfg = cast(ObjectiveQwen3Config, self.config)
         tokens = example.tokens
@@ -464,10 +479,48 @@ class ObjectiveQwen3LMHeadModel(Qwen3LMHeadModel):
         is_start = (position == 0) | (seg != hax.roll(seg, 1, Pos)) if seg is not None else position == 0
         rho = hax.random.uniform(k_r, batch_axes, maxval=cfg.ebm_rho_max) if batch_axes else cfg.ebm_rho_max
         u = hax.random.uniform(k_u, tokens.axes)
+        if cfg.ebm_steps > 1:
+            return self._ebm_rollout(example, samp, position, is_start, rho, u, key=k_s)
         protect = is_start | (tokens == cfg.eos_id) | (samp == cfg.eos_id) | (samp == tokens)
         replaced = (u < rho) & ~protect
         x_noisy = hax.where(replaced, samp, tokens)
         return x_noisy, replaced, _doc_scoped_informative(replaced, is_start, example.loss_weight, Pos)
+
+    def _ebm_rollout(self, example: LmExample, samp0: NamedArray, position: NamedArray, is_start: NamedArray, rho, u: NamedArray, *, key):
+        """k-step autoregressive own-sample corruption (``ebm_steps`` = k > 1). Returns (x_noisy, replaced, informative).
+
+        Positions form aligned blocks of k; a block is chosen iff the uniform at its first position is < rho, so the
+        expected corrupted fraction matches the one-step path. Offset 0 of a chosen block takes the clean pass's draw
+        (``samp0``, the one-step sample); offset j >= 1 is drawn from p(x_t | current prefix), computed by one
+        stop-gradient trunk pass over the sequence with offsets < j already replaced in every chosen block. Inside a
+        block the negative is therefore a genuine k-step rollout of the model's own continuation, and the incoherent
+        bigram that two independent one-step draws form when adjacent positions are both replaced cannot occur. Earlier
+        blocks are seen in their partially replaced state (offsets >= j still clean) -- the same kind of approximation
+        the one-step path makes by conditioning every draw on the clean prefix. Never touched, as in the one-step path:
+        document starts, EOS tokens, and draws that are EOS (the true token is kept, so segment ids stay valid).
+        """
+        cfg = cast(ObjectiveQwen3Config, self.config)
+        tokens = example.tokens
+        Pos = tokens.resolve_axis("position")
+        K = cfg.ebm_steps
+        if Pos.size % K:
+            raise ValueError(f"ebm_steps={K} must divide the sequence length {Pos.size}")
+        pax = u.axes.index(Pos)
+        u_blk = jnp.take(u.array, jnp.arange(0, Pos.size, K), axis=pax)  # the uniform at each block's first position
+        chosen = hax.named(jnp.repeat(u_blk, K, axis=pax), u.axes) < rho
+        offset = hax.named(position.array % K, position.axes)
+        never = is_start | (tokens == cfg.eos_id)
+        x = tokens
+        for j in range(K):
+            if j == 0:
+                s_j = samp0
+            else:
+                h_j = jax.lax.stop_gradient(self.activations(x, example.attn_mask, key=None))
+                s_j = hax.roll(self._sample_next(h_j, key=jrandom.fold_in(key, j)), 1, Pos)
+            sel = chosen & (offset == j) & ~never & (s_j != cfg.eos_id)
+            x = hax.where(sel, s_j, x)
+        replaced = x != tokens
+        return x, replaced, _doc_scoped_informative(replaced, is_start, example.loss_weight, Pos)
 
     def _swap_corrupt(self, example: LmExample, seg: Optional[NamedArray], *, key):
         """Real-text splice corruption. Returns (x_noisy, replaced, informative).

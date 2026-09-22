@@ -250,7 +250,7 @@ assert d > 1e-3, f"aux_layer 1 and 2 readouts identical ({d})"
 print(f"aux_layer readouts differ between layers (max |diff| {d:.3f})")
 
 # denoise: NTP on the corrupted copy with clean targets; alone (dn), with the energy head (ebm+dn), and ebm at T=2.
-for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn", dict(ebm=True, denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebmT2", dict(ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)), ("ebm+adv", dict(ebm=True, adv=True, eos_id=EOS, ebm_blocks=7))]:
+for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn", dict(ebm=True, denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebmT2", dict(ebm=True, eos_id=EOS, ebm_blocks=7, ebm_temp=2.0)), ("ebm+adv", dict(ebm=True, adv=True, eos_id=EOS, ebm_blocks=7)), ("ebmk4", dict(ebm=True, eos_id=EOS, ebm_blocks=7, ebm_steps=4))]:
     cfg = ObjectiveQwen3Config(**common, **kw)
     model = cfg.model_type.init(Vocab, cfg, key=key)
     ev = float(model.compute_next_token_loss(ex))
@@ -264,11 +264,66 @@ for name, kw in [("dn", dict(denoise=True, eos_id=EOS, ebm_blocks=7)), ("ebm+dn"
         aux = (tr - ref_eval) / 0.1  # denoising NTP on a corrupted prefix at init ~ the plain NTP loss (random model)
         assert 0.7 * ref_eval < aux < 1.5 * ref_eval, f"dn aux {aux:.3f} vs NTP {ref_eval:.3f}"
         assert not any("ebm_head" in n for n, _ in leaves), "dn must not create an ebm head"
+    if name == "ebmk4":
+        assert sum(float(jnp.linalg.norm(g.astype(jnp.float32))) for n, g in leaves if "ebm_head" in n) > 0, "ebmk4: head got no gradient"
+        aux = (tr - ref_eval) / 0.1
+        assert 0.5 * 2 * np.log(2) < aux < 1.5 * 2 * np.log(2), f"ebmk4 aux {aux:.3f} vs 2 log 2 = {2*np.log(2):.3f} at init"
     if name == "ebm+dn":
         assert any("ebm_head" in n for n, _ in leaves)
         aux = tr - ref_eval  # 0.1*NCE + 0.1*denoise-NTP
         assert 0.1 * 0.5 * 2 * np.log(2) + 0.1 * 0.7 * ref_eval < aux < 0.1 * 1.5 * 2 * np.log(2) + 0.1 * 1.5 * ref_eval, f"ebm+dn aux {aux:.3f}"
     print(f"{name:7s} eval == plain, train {tr:.4f} (NTP {ref_eval:.4f}), flops x{cfg.flops_per_token(V, T) / Qwen3Config(**common).flops_per_token(V, T):.1f}, {n_scored} scored positions  OK")
+# ebm_steps: k-step autoregressive rollouts. A greedy subclass (argmax instead of Gumbel-max) makes the rollout
+# deterministic, so the corrupted sequence can be rebuilt here pass by pass and compared exactly: offset j of a chosen
+# block must be the model's own next-token choice given the sequence with offsets < j already replaced.
+class _Greedy(ObjectiveQwen3LMHeadModel):
+    def _sample_next(self, h, *, key):
+        return hax.argmax(hax.dot(h, self.get_lm_head(), axis="embed"), "vocab").astype(jnp.int32)
+
+
+K_R = 4
+ro_cfg = ObjectiveQwen3Config(**common, ebm=True, eos_id=EOS, ebm_blocks=7, ebm_steps=K_R)
+ro_model = _Greedy.init(Vocab, ro_cfg, key=key)
+h_ro = ro_model.activations(tokens, mask)
+ro_jit = eqx.filter_jit(lambda m, h, e, s_, k: tuple(a.array for a in m._ebm_corrupt(h, e, s_, key=k)))
+
+
+def greedy_next(xarr):
+    hh = ro_model.activations(hax.named(jnp.asarray(xarr), (Batch, Pos)), mask)
+    lg = np.asarray(hax.dot(hh, ro_model.get_lm_head(), axis="embed").astype(jnp.float32).array)
+    return np.roll(lg.argmax(-1), 1, axis=1)  # s[t] = argmax p(x_t | x_<t)
+
+
+one_step = greedy_next(tok)
+never = starts | (tok == EOS)
+offs = np.arange(T) % K_R
+n_multi = n_differs = 0
+for _i in range(10):
+    xk, rk, ik = (np.asarray(a) for a in ro_jit(ro_model, h_ro, ex, seg_named, jax.random.PRNGKey(_i)))
+    assert np.array_equal(xk != tok, rk), "rollout: replaced must mark exactly the changed tokens"
+    assert not rk[never].any() and not (xk == EOS)[tok != EOS].any(), "rollout: a protected position was corrupted"
+    chosen = np.repeat(rk.reshape(B, T // K_R, K_R).any(-1), K_R, axis=1)  # a block with any change was chosen
+    xr = tok.copy()
+    for j in range(K_R):
+        sj = greedy_next(xr)
+        xr = np.where(chosen & (offs == j) & ~never & (sj != EOS), sj, xr)
+    assert np.array_equal(xr, xk), f"rollout: sequence rebuilt pass by pass differs from _ebm_corrupt (key {_i})"
+    exp = np.zeros_like(ik)
+    for b in range(B):
+        for t in range(T):
+            same = seg[b] == seg[b, t]
+            exp[b, t] = float(rk[b, : t + 1][same[: t + 1]].any() and lw[b, t] > 0)
+    assert np.array_equal(ik, exp), "rollout: informative mask != brute force"
+    multi = rk & (offs >= 1)
+    n_multi += int(multi.sum())
+    n_differs += int((multi & (xk != one_step)).sum())
+assert n_multi > 0 and n_differs > 0, (n_multi, n_differs)
+print(f"ebm rollout k={K_R}: 10 keys rebuilt exactly pass by pass (greedy); {n_multi} replaced positions at offsets >= 1, "
+      f"{n_differs} of them differ from the one-step draw -- the rollout conditions on its own earlier samples  OK")
+try:
+    ObjectiveQwen3Config(**common, ebm=True, adv=True, eos_id=EOS, ebm_steps=4); raise AssertionError("adv with ebm_steps > 1 was accepted")
+except ValueError:
+    pass
 # adv: REINFORCE on the sampler with the ebm head's score as reward. The formula is checked against a numpy reimplementation
 # from full logits, a constant reward must give exactly 0 (baseline cancels), adv without ebm must be rejected, and the
 # term must actually reach the LM (lm_head gradient differs from ebm-only under the same key).

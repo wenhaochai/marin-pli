@@ -110,6 +110,9 @@ EBM_RHO = float(os.environ.get("EBM_RHO", "0.5"))
 # EBM_TEMP: sampling temperature of the corruption samples (tag -T{t} when != 1). DENOISE_W > 0 adds denoising NTP on the
 # same corrupted copy (tag -dn{w}); VARIANT=dn runs denoising NTP alone (default weight 0.1), no energy head.
 EBM_TEMP = float(os.environ.get("EBM_TEMP", "1"))
+# EBM_STEPS=k > 1: the ebm/dn corruption is a k-step autoregressive rollout of the model's own continuation in aligned
+# blocks of k instead of independent one-step draws (tag k{k} after the ebm/dn tag). 1 = the original one-step path.
+EBM_STEPS = int(os.environ.get("EBM_STEPS", "1"))
 DENOISE_W = float(os.environ.get("DENOISE_W", "0"))
 # ADV_W > 0 (ebm only): REINFORCE on the sampler with the ebm head's score as reward, weight ADV_W (tag -adv{w}).
 ADV_W = float(os.environ.get("ADV_W", "0"))
@@ -181,13 +184,13 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "eos":
         variant_tags += f"-eosw{EOS_W:g}"
     if VARIANT == "ebm":
-        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"-adv{ADV_W:g}" if ADV_W > 0 else "")
+        variant_tags += f"-ebmr{EBM_RHO:g}w{EBM_W:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"k{EBM_STEPS}" if EBM_STEPS != 1 else "") + (f"-adv{ADV_W:g}" if ADV_W > 0 else "")
     if VARIANT == "mtp":
         variant_tags += f"-mtpk{MTP_K}w{MTP_W:g}"
     if VARIANT == "swap":
         variant_tags += f"-sww{SWAP_W:g}" + (f"n{SWAP_SPANS}" if SWAP_SPANS != 1 else "") + (f"l{SWAP_MIN}-{SWAP_MAX}" if (SWAP_MIN, SWAP_MAX) != (16, 128) else "")
     if VARIANT == "dn":
-        variant_tags += f"-dnr{EBM_RHO:g}w{DENOISE_W or 0.1:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "")
+        variant_tags += f"-dnr{EBM_RHO:g}w{DENOISE_W or 0.1:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"k{EBM_STEPS}" if EBM_STEPS != 1 else "")
     elif VARIANT in OBJECTIVE_VARIANTS and DENOISE_W > 0:
         variant_tags += f"-dn{DENOISE_W:g}"
     if VARIANT in OBJECTIVE_VARIANTS and AUX_GATE:
@@ -232,6 +235,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ebm_weight=EBM_W,
             ebm_rho_max=EBM_RHO,
             ebm_temp=EBM_TEMP,
+            ebm_steps=EBM_STEPS,
             denoise=VARIANT == "dn" or DENOISE_W > 0,
             denoise_weight=DENOISE_W or 0.1,
             adv=VARIANT == "ebm" and ADV_W > 0,
