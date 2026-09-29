@@ -1,7 +1,9 @@
 # Sampled softmax on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-09-28):** implemented (`VARIANT=ss`, branch `sampled-softmax`); CPU tests pass; H100 smoke (job
-14652357) queued. No verdict yet on speed or quality.
+**Status (2026-09-28):** implemented (`VARIANT=ss`, branch `sampled-softmax`); CPU tests pass; on H100 the candidate
+CE is 5.2x cheaper than the full-vocabulary CE at P = 24,576 (41 vs 215 ms per device-step); the 60-step 130m smoke
+runs every stage cleanly, 1.36x faster per step than the baseline on the same node in the first stage (~1.29x over
+the whole schedule). Full 130m runs (4 ss seeds + 2 restore baselines, jobs 14658326-8) queued; no quality verdict yet.
 
 ## What it is
 
@@ -12,8 +14,11 @@ over a shared candidate set instead of the whole vocabulary. Our port, `experime
 * **Candidate set, per device and step:** every class that is a target somewhere in the device's microbatch, plus
   negatives up to P from a golden-ratio stride sweep of the vocabulary (a permutation), read from an offset drawn from
   the step key and staggered per device (record #92: stride 20011 over 50,304 from a per-rank offset; same idea).
-* **Kernel:** the lm_head rows of the set are gathered and the baseline's fused CE kernel runs on the `[Embed, P]` head
-  with targets remapped to positions in the set. The lm_head gradient is dense over the vocabulary, zero off the set.
+* **Kernel:** the lm_head rows of the set are gathered and the CE runs on the `[Embed, P]` head with targets remapped
+  to positions in the set, through the row-tiled fwd/bwd pair that levanter's H100 dispatch uses for the full 128K
+  vocabulary (for a head narrower than 65,536 the dispatch picks its vocab-streaming kernel, 18-27% slower here). The
+  row block grows as P shrinks to keep the full path's logits footprint. The lm_head gradient is dense over the
+  vocabulary, zero off the set. The full-softmax stage calls exactly the baseline's kernel.
 * **Schedule:** stages by step through `levanter.trainer.current_train_step()` (a context var that
   `Trainer._train_step` sets to the traced `state.step`; the loss function has no step argument). One compiled step
   holds every stage (`lax.switch`), so stage changes cost no recompilation. The run ends on the full softmax.
@@ -48,11 +53,58 @@ Why it can pay here: at 130m the lm_head (512 x 128,256 = 65.7M) is about three 
    reference (dense logits, numpy candidate sets per device block) at each stage; one compilation served steps in all
    three stages; the full stage, the all-device and mixed overflow fallbacks and evaluation reproduce the baseline or the
    reference; a keyed call outside the train step raises.
-2. `scripts/della/sampled_softmax_gpu_check.py` (H100, real tokens): kernel parity and fwd+bwd timing per P -- pending.
-3. `scripts/della/sampled_softmax_smoke.sbatch`: 60-step 130m smokes of ss and baseline on one node -- pending.
-4. Full 130m runs vs the 8-run baseline pool with `objective_compare.py` -- pending.
+2. `scripts/della/sampled_softmax_gpu_check.py` (H100, one real device-batch: 131,072 targets, 17,125 distinct) --
+   PASSED (job 14652357): every stage within 3e-6 of dense f32 on the loss, 3e-3 relative on dx (bf16 matmuls), and
+   dW exactly zero off the set. CE fwd+bwd per device-step (ms; D = 512 is 130m, 768 is 300m):
+
+   | head | D=512 dispatch | D=512 row-tiled | D=768 dispatch | D=768 row-tiled |
+   |---|---|---|---|---|
+   | full 128,256 (baseline) | 215.7 | (same) | 261.9 | (same) |
+   | P = 24,576 | 51.6 | **42.4** (5.1x) | 67.5 | **51.2** (5.1x) |
+   | P = 36,864 | 86.7 | **63.3** (3.4x) | 113.8 | **76.5** (3.4x) |
+   | P = 65,536 | 112.0 | 111.7 (1.9x) | 135.0 | 135.3 (1.9x) |
+
+   The candidate build costs 0.05 ms. Commit 314113fcdd moved the candidate heads to the row-tiled pair.
+3. `scripts/della/sampled_softmax_smoke.sbatch`: 60-step 130m smokes of ss and baseline on one node -- PASSED
+   (job 14653414; the first attempt, 14652357, died in the executor because the Paloma caches were gone, see Data
+   restore). Stages switched at steps 34 / 49 / 56 as scheduled, no overflow (max 17,860 targets per device). Mean
+   step time (W&B throughput/duration, steps >= 3):
+
+   | | step time | vs baseline |
+   |---|---|---|
+   | baseline (full softmax) | 645 ms | 1.00x |
+   | ss, P = 24,576 (57% of steps) | 473 ms | 1.36x |
+   | ss, P = 36,864 (24%) | 515 ms | 1.25x |
+   | ss, P = 65,536 (12%) | 526 ms | 1.23x |
+   | ss, full softmax (7%) | 628 ms | 1.03x |
+
+   Schedule-weighted, ~502 ms vs 645 ms per step, ~1.29x. At step 60 (train loss on the full softmax in both) ss
+   6.117 vs baseline 6.146, eval loss 7.182 vs 7.227, Paloma macro 7.253 vs 7.294: no sign of breakage, and 60 steps
+   says nothing about the final quality.
+4. Full 130m runs, packed two per 8-GPU node (`muonh_qwen3_h100x8_pair.sbatch`; the molt runs hold 9 of the 10
+   pli-short node slots), everything else as the pool's SubmitLine (`--export=ALL,SIZE=130m,...`):
+   * 14658326 pair1: baseline SEED=0 RUN_TAG=-restore | ss SEED=0 (same node: a paired control for speed and quality,
+     and a check that the restored data reproduce the pool)
+   * 14658327 pair2: ss SEED=1 | ss SEED=2
+   * 14658328 pair3: ss SEED=3 | baseline SEED=1 RUN_TAG=-restore
+   Readout: `objective_compare.py --pool=,-s1,-s2,-s3,-ema0.999,-ema0.999-s1,-ema0.999-s2,-ema0.999-s3
+   --cell=-ss24k.57-36k.81-64k.93,...-s1,-s2,-s3` (Paloma macro and per domain, Welch) and `sampled_softmax_timing.py`.
+   Pending.
+
+## Data restore (2026-09-28)
+
+The 09-24 store cleanup had kept only `marin_store_big/{tokenized,tokenizers}`, which removed both inputs of this
+baseline. Restored on della-vis1:
+
+* `fineweb-edu-10B/2026.06.28`: re-downloaded from `marin-community/fineweb-edu-pretokenized-10B` (1m39s, 20 GB);
+  10,000,000,738 tokens / 9,966,814 documents, identical to the counts recorded in objective-hillclimb.md.
+* Paloma with the marin tokenizer (`paloma/<domain>-marin-tokenizer/2026.06.28`, what the pool evaluated on): raw
+  `allenai/paloma@65cd6fc` val files copied from the HF hub cache to `raw/paloma-fc6827/65cd6fc` (571 files), then
+  tokenized. All 16 domains are byte-identical (tokens and document offsets, sha256) to the surviving
+  Llama-3.1-tokenized caches in `tokenized/paloma/`, so the eval set is exactly the pool's.
 
 ## Changelog
 
+* 2026-09-28 22:55: smoke passed (14653414); full runs 14658326-8 submitted.
 * 2026-09-28: fineweb-edu-10B cache re-downloaded (it was deleted with the 09-24 store cleanup; 10,000,000,738 tokens,
   matches the recorded count). Implementation + CPU tests, commit 209e8d1a9d. Smoke 14652357 submitted.
