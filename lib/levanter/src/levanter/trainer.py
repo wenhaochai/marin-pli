@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import atexit
+import contextvars
 import copy
 import functools
 import logging as pylogging
@@ -103,6 +104,15 @@ DEFAULT_JAX_CONFIG: Dict[str, JsonAtom] = {
 # A note on the semantics of "step" vs "next_step":
 # The "step" of a TrainerState is the state after `step` steps have been taken.
 # A "StepInfo"'s step is the step that was just completed. If you want the next step, use `next_step`.
+
+# The step whose update Trainer._train_step is tracing (state.step, a tracer inside the jitted step), so a loss
+# function can follow a step schedule without a new argument. None outside the train step, e.g. in evaluation.
+_TRACED_TRAIN_STEP: contextvars.ContextVar = contextvars.ContextVar("levanter_traced_train_step", default=None)
+
+
+def current_train_step():
+    """The step being taken by the train step under trace (``state.step``), or None outside ``Trainer._train_step``."""
+    return _TRACED_TRAIN_STEP.get()
 
 
 @dataclass
@@ -730,6 +740,13 @@ class Trainer:
         )
 
     def _train_step(self, state: S, batch, batch_kwargs, _no_hooks=False) -> TrainStepResult[S]:
+        token = _TRACED_TRAIN_STEP.set(state.step)
+        try:
+            return self._train_step_body(state, batch, batch_kwargs, _no_hooks)
+        finally:
+            _TRACED_TRAIN_STEP.reset(token)
+
+    def _train_step_body(self, state: S, batch, batch_kwargs, _no_hooks) -> TrainStepResult[S]:
         key, new_key = jax.random.split(state.training_key)
         model = inference_mode(state.model, False)
 

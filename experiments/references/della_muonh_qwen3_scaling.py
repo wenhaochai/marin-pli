@@ -13,7 +13,9 @@ SMOKE_STEPS turns a run into a short smoke test with its own run id and output, 
 VARIANT=fbt swaps the model for the full-bandwidth transformer (experiments.references.full_bandwidth_qwen3, two
 fixed passes) with everything else unchanged; its run ids end in ``-fbt2``. VARIANT=twin | sr | twinsr add the non-NTP
 auxiliary objectives of experiments.references.objective_qwen3 (Twin-Networks state matching, successor-representation
-TD head); run ids end in ``-twin<w>`` / ``-sr<gamma>w<w>``.
+TD head); run ids end in ``-twin<w>`` / ``-sr<gamma>w<w>``. VARIANT=ss trains with the sampled softmax of
+experiments.references.sampled_softmax_qwen3 (per-device candidate sets, full softmax at the end, full-softmax eval);
+SS_SCHEDULE sets its stages and the run id ends in ``-ss<P/1024>k<fraction>...``.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -46,6 +48,7 @@ from experiments.datasets.prebuilt_caches import fineweb_edu_10B_dataset
 from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
+from experiments.references.sampled_softmax_qwen3 import SampledSoftmaxQwen3Config
 
 # With a local MARIN_PREFIX the temporary checkpoint base comes back as a file:// URL, which the tensorstore
 # writer treats as a relative path (arrays land in <cwd>/file:/...), so resume finds only metadata.json.
@@ -69,7 +72,7 @@ VERSION = "2026.09.13"
 NUM_GPUS = 4
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
-VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | twin | sr | twinsr
+VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
 PRECISION = os.environ.get("PRECISION", "bf16")  # bf16 | fp8
@@ -144,7 +147,13 @@ EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
 # Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
 # under two names, so their difference measures the hardware/compiler nondeterminism floor.
 RUN_TAG = os.environ.get("RUN_TAG", "")
-if VARIANT not in ("baseline", "fbt", *OBJECTIVE_VARIANTS):
+# VARIANT=ss: sampled softmax for the training loss (nanoGPT speedrun record #92). SS_SCHEDULE = comma-separated
+# "fraction:P" stages: P candidate classes per device until that fraction of the steps, then the next stage; the full
+# softmax runs from the last fraction on. The default is record #92's schedule as fractions of the vocabulary (P / V =
+# 0.19, 0.29, 0.51 against its 0.20, 0.28, 0.49) and of training (0.57, 0.81, 0.93). MFU keeps the full-vocabulary FLOP
+# count, so it reads as baseline-equivalent throughput.
+SS_SCHEDULE = tuple((float(f), int(p)) for f, p in (st.split(":") for st in os.environ.get("SS_SCHEDULE", "0.57:24576,0.81:36864,0.93:65536").split(",")))
+if VARIANT not in ("baseline", "fbt", "ss", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -189,6 +198,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-mtpk{MTP_K}w{MTP_W:g}"
     if VARIANT == "swap":
         variant_tags += f"-sww{SWAP_W:g}" + (f"n{SWAP_SPANS}" if SWAP_SPANS != 1 else "") + (f"l{SWAP_MIN}-{SWAP_MAX}" if (SWAP_MIN, SWAP_MAX) != (16, 128) else "")
+    if VARIANT == "ss":
+        variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
         variant_tags += f"-dnr{EBM_RHO:g}w{DENOISE_W or 0.1:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"k{EBM_STEPS}" if EBM_STEPS != 1 else "")
     elif VARIANT in OBJECTIVE_VARIANTS and DENOISE_W > 0:
@@ -253,6 +264,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             aux_gate_hi=AUX_GATE_HI,
             aux_gate_lo=AUX_GATE_LO,
         )
+    elif VARIANT == "ss":
+        num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
+        model_cls, model_extra = SampledSoftmaxQwen3Config, dict(
+            ss_candidates=tuple(p for _, p in SS_SCHEDULE),
+            ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE),
+        )
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
@@ -297,7 +314,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
                     tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
