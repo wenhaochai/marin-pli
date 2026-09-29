@@ -105,6 +105,9 @@ baseline. Restored on della-vis1:
 
 ## Changelog
 
+* 2026-09-29 01:50: user call -- no more 130m seeds (pair2/pair3 cancelled); run the size ladder with ss seed 0 against
+  the existing baselines: 300m chain 14666494-6 (2h segments), 520m chain 14666513-19 (3h), 1_2b chain 14666546-8
+  (23h55). 520m/1_2b run two microbatches per step, the first use of the sampled loss under microbatching.
 * 2026-09-29 01:06: pair1 done. Seed 0, n=1 vs the 8-run pool: ss macro 4.1802 vs pool 4.1865 (-0.0063, t -1.02,
   p 0.34), c4_en bpb +0.00006 (t 0.16); the step-1000 gap (+0.12 macro) closed by the end. Restore baseline 4.1820,
   inside the pool (t -0.73): the data restore reproduces the pool. Same node, equal steps: ss 40.6 min vs 52.8 min of
