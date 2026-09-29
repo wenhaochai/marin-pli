@@ -1,15 +1,16 @@
-"""CPU tests for experiments.references.over_vocab_qwen3 (OV = over-encoding + MTP-DS) on a fake 4-device mesh.
+"""CPU tests for experiments.references.over_vocab_qwen3 (OV = over-encoding + over-decoding) on a fake 4-device mesh.
 
 Run from the marin repo on a vis node: nice -n 19 .venv/bin/python scripts/della/over_vocab_cpu_test.py
 1. The n-gram index equals the int64 formula (x_t + x_{t-1} V + x_{t-2} V^2) mod m, for the real V and m.
 2. Shifted tokens are 0 before the window and across a document boundary.
 3. The over-encoded embedding equals a direct computation from the tables and projections.
-4. Under the launcher's sharding (table rows over the 4 devices), the training loss equals NTP + w * MTP computed
-   independently (dense logits; MTP targets x_{t+2}, masked past the window, across documents and by the example
-   weights), every gradient matches, the logged ntp/mtp losses are right, and evaluation is the NTP loss alone.
+4. Under the launcher's sharding (table rows over the 4 devices), the training loss equals NTP + lambda_2 * OD computed
+   independently (dense logits; OD: x_{t+2} from W_2 h_t through its own output matrix, masked past the window, across
+   documents and by the example weights), every gradient matches, the logged ntp/od losses are right, and evaluation
+   is the NTP loss alone.
 5. OV + sampled softmax: in the full-softmax stage it equals OV exactly (loss and gradients); in a sampled stage it
    equals the reference with each head's per-device candidate sets.
-6. MuonH labels the tables 'adam' (like the token embedding), the projections and the MTP layer 'muonh'.
+6. MuonH labels the tables 'adam' (like the token embedding), the projections 'muonh', both output heads 'adamh'.
 """
 import os
 
@@ -70,7 +71,7 @@ for s in (1, 2):
 print("2. shifted tokens are 0 before the window and across document boundaries")
 
 common = dict(max_seq_len=T, hidden_dim=48, intermediate_dim=64, num_layers=2, num_heads=2, num_kv_heads=2, hybrid_norm=True, attn_backend=AttentionBackend.VANILLA)
-cfg = OverVocabQwen3Config(**common, oe_m=M, oe_k=2, mtp_weight=0.1)   # k = 2: two tables per order, 8 dims each
+cfg = OverVocabQwen3Config(**common, oe_m=M, oe_k=2, od_weight=0.1)   # k = 2: two tables per order, 8 dims each
 model = OverVocabQwen3LMHeadModel.init(Vocab, cfg, key=jrandom.PRNGKey(0))
 assert len(model.oe_tables) == 4 and cfg.table_dim == 8 and [m for _, m in cfg.moduli()] == [M, M + 4, M + 8, M + 12]
 
@@ -104,20 +105,20 @@ def np_candidates(labels, P, offset, Vv):
 
 
 def reference(m_, key, cands=None, stage=None):
-    """NTP + w * MTP from dense logits; cands/stage switch on per-device candidate sets (4 contiguous batch blocks)."""
-    k_main, k_mtp, k_s1, k_s2 = jax.random.split(key, 4)
+    """NTP + lambda_2 * OD from dense logits; cands/stage switch on per-device candidate sets (4 contiguous batch blocks)."""
+    k_main, k_s1, k_s2 = jax.random.split(key, 3)
     em = m_.embed(tokens, ex.attn_mask)
     h = m_.transformer(em, attn_mask=ex.attn_mask, key=k_main)
-    W = m_.get_lm_head().rearrange((cfg.Embed, Vocab)).array
-    u = hax.concatenate("mtp_in", [m_.mtp_norm_h(h).rename({"embed": "mtp_in"}), m_.mtp_norm_e(hax.roll(em, -1, Pos)).rename({"embed": "mtp_in"})])
-    h2 = m_.mtp_norm_out(m_.mtp_layer(m_.mtp_proj(u), ex.attn_mask, key=k_mtp)).array
+    W1 = m_.get_lm_head().rearrange((cfg.Embed, Vocab)).array
+    W2 = m_.od_lm_head.weight.rearrange((cfg.Embed, Vocab)).array
+    h2 = h.array @ m_.od_proj.weight.rearrange(("od_in", "embed")).array  # W_2 h_t
     y1, y2 = np.roll(tok, -1, 1), np.roll(tok, -2, 1)
     w1 = next_token_loss_weight(Pos, ex.loss_weight).array
     tt = np.arange(T)[None]
     ok2 = (tt <= T - 3) & (np.roll(seg, -1, 1) == seg) & (np.roll(seg, -2, 1) == seg)
     w2 = jnp.asarray(lw * np.roll(lw, -1, 1) * ok2)
     out = []
-    for hh, y, w, k_s in ((h.array, y1, w1, k_s1), (h2, y2, w2, k_s2)):
+    for hh, W, y, w, k_s in ((h.array, W1, y1, w1, k_s1), (h2, W2, y2, w2, k_s2)):
         num = 0.0
         off0 = int(jrandom.randint(k_s, (), 0, V, dtype=jnp.int32)) if cands else 0
         for d in range(4):
@@ -128,7 +129,7 @@ def reference(m_, key, cands=None, stage=None):
                 C = np_candidates(yd, cands[stage], (off0 + d * (V // 4)) % V, V)
             num = num + jnp.sum(ce_rows(hh[r].reshape(-1, hh.shape[-1]), W, jnp.asarray(yd), C) * w[r].reshape(-1))
         out.append(num / jnp.sum(w))
-    return out[0] + cfg.mtp_weight * out[1], out
+    return out[0] + cfg.od_weight * out[1], out
 
 
 tc = TrainerConfig(mesh=MeshConfig(axes={"data": -1, "replica": 1, "model": 1}, compute_mapping={
@@ -160,18 +161,18 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
     assert ms.oe_tables[0].array.sharding.spec[0] == "data", ms.oe_tables[0].array.sharding
     step_fn = eqx.filter_jit(train_step)
     loss, stats, g = step_fn(ms, es, jnp.int32(0), key)
-    (ref_l, (ref_ntp, ref_mtp)), ref_g = eqx.filter_value_and_grad(lambda mm: reference(mm, key), has_aux=True)(model)
+    (ref_l, (ref_ntp, ref_od)), ref_g = eqx.filter_value_and_grad(lambda mm: reference(mm, key), has_aux=True)(model)
     np.testing.assert_allclose(float(loss), float(ref_l), rtol=1e-5)
     np.testing.assert_allclose(float(stats["ntp_loss"]), float(ref_ntp), rtol=1e-5)
-    np.testing.assert_allclose(float(stats["mtp_loss"]), float(ref_mtp), rtol=1e-5)
+    np.testing.assert_allclose(float(stats["od_loss"]), float(ref_od), rtol=1e-5)
     close(g, ref_g, "ov grad")
-    assert float(jnp.abs(g.oe_tables[0].array).sum()) > 0 and float(jnp.abs(g.mtp_proj.weight.array).sum()) > 0
+    assert float(jnp.abs(g.oe_tables[0].array).sum()) > 0 and float(jnp.abs(g.od_proj.weight.array).sum()) > 0 and float(jnp.abs(g.od_lm_head.weight.array).sum()) > 0
     ev = eqx.filter_jit(lambda mm, e_: mm.compute_next_token_loss(e_, key=None))(ms, es)
     np.testing.assert_allclose(float(ev.array if isinstance(ev, hax.NamedArray) else ev), float(ref_ntp), rtol=1e-5)
-    print(f"4. sharded OV training loss {float(loss):.6f} == NTP {float(ref_ntp):.6f} + 0.1 x MTP {float(ref_mtp):.6f}; all grads match; eval == NTP alone")
+    print(f"4. sharded OV training loss {float(loss):.6f} == NTP {float(ref_ntp):.6f} + 0.1 x OD {float(ref_od):.6f}; all grads match; eval == NTP alone")
 
     cands, ends = (120, 200), (10, 20)
-    cfg_ss = OverVocabQwen3Config(**common, oe_m=M, oe_k=2, mtp_weight=0.1, ss_candidates=cands, ss_stage_ends=ends)
+    cfg_ss = OverVocabQwen3Config(**common, oe_m=M, oe_k=2, od_weight=0.1, ss_candidates=cands, ss_stage_ends=ends)
     model_ss = OverVocabQwen3LMHeadModel.init(Vocab, cfg_ss, key=jrandom.PRNGKey(0))
     close(model_ss, model, "init", rtol=0)
     mss = hax.shard(model_ss, tc.parameter_axis_mapping)
@@ -184,13 +185,12 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
         (rl, _), rg = eqx.filter_value_and_grad(lambda mm: reference(mm, key, cands, stage), has_aux=True)(model_ss)
         np.testing.assert_allclose(float(loss_s), float(rl), rtol=1e-5)
         close(g_s, rg, f"ovss stage {stage} grad")
-        assert float(stats_s["ss/candidates"]) == cands[stage] and float(stats_s["mtp_ss/candidates"]) == cands[stage], stats_s
+        assert float(stats_s["ss/candidates"]) == cands[stage] and float(stats_s["od_ss/candidates"]) == cands[stage], stats_s
     print("5. OV+ss: full-softmax stage == OV (loss, grads); sampled stages == per-head candidate-set reference (loss, grads)")
 
 labels = MuonHConfig().create_mask(model)
 assert all(l == "adam" for l in labels.oe_tables)
-assert all(l.weight == "muonh" for l in labels.oe_proj) and labels.mtp_proj.weight == "muonh"
-assert labels.mtp_layer.self_attn.q_proj.weight == "muonh" and labels.mtp_layer.mlp.gate_proj.weight == "muonh"
-assert labels.lm_head.weight == "adamh" if hasattr(labels.lm_head, "weight") else labels.lm_head == "adamh"
-print("6. MuonH groups: tables adam (as the token embedding), projections and MTP layer muonh, lm_head adamh")
+assert all(l.weight == "muonh" for l in labels.oe_proj) and labels.od_proj.weight == "muonh"
+assert labels.lm_head == "adamh" and labels.od_lm_head == "adamh", (labels.lm_head, labels.od_lm_head)
+print("6. MuonH groups: tables adam (as the token embedding), projections muonh, lm_head and od_lm_head adamh")
 print("ALL OVER-VOCAB CPU TESTS PASSED")

@@ -1,11 +1,11 @@
 # Copyright The Marin Authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Over-vocabulary (OV) Qwen3: the Over-Tokenized Transformer's OT configuration on the muonh_qwen3 baseline.
+"""Over-vocabulary (OV) Qwen3: over-encoding + over-decoding of the Over-Tokenized Transformer on the muonh_qwen3 baseline.
 
-Huang et al. 2025, "Over-Tokenized Transformer: Vocabulary is Generally Worth Scaling" (arXiv 2501.16975). Their OT
-model is over-encoding (OE) plus over-decoding in its MTP-DS form (DeepSeek-V3's conditional multi-token prediction):
-"combining OE-12.8M with MTP-DS, which we refer as OT-12.8M". We call it OV.
+Huang et al. 2025, "Over-Tokenized Transformer: Vocabulary is Generally Worth Scaling" (arXiv 2501.16975): n-gram
+vocabularies on the input side (over-encoding, OE) and on the output side (over-decoding, OD). Their final OT model
+realises OD as MTP-DS; here OD is the paper's own n-gram output vocabulary in its product decomposition (Eq. 6-7).
 
 * Over-encoding: the input embedding is the baseline's 1-gram token embedding plus hashed 2-gram and 3-gram
   embeddings, OE(x) = E(x_t) + sum_{i=2..n} sum_{j=1..k} E_ij(h_i) W_ij, divided by 1 + k(n - 1). The i-gram index is
@@ -14,13 +14,15 @@ model is over-encoding (OE) plus over-decoding in its MTP-DS form (DeepSeek-V3's
   Tokens before the window start are 0 (the paper's zero padding); tokens of the previous document count as out of
   range too, because the baseline blocks cross-document attention. Each table gets its own modulus (m + 4 t: the
   paper's "m + 2" trick for distinct collisions, kept divisible by the 4 devices the rows are sharded over).
-* MTP-DS, depth 1, weight 0.1: u_t = M [RMSNorm(h_t); RMSNorm(e_{t+1})] with M: 2d -> d, one more decoder layer,
-  RMSNorm, and the shared lm_head predicts x_{t+2}; e_{t+1} is the (over-encoded) input embedding of the next token.
-  Positions whose x_{t+1} or x_{t+2} lies past the window or in another document carry no MTP loss.
+* Over-decoding, n = 2: the output token is the 2-gram (x_{t+1}, x_{t+2}), whose V^2-way softmax the paper factorises
+  as L = sum_j lambda_j CE(h_t W_j E_j^T, z_j). j = 1 is the baseline's head (lambda_1 = 1, W_1 = I, E_1 = lm_head);
+  j = 2 predicts x_{t+2} from the same final state h_t through a d x d projection W_2 and its own V x d output
+  embedding E_2 (``od_lm_head``), weight lambda_2 = od_weight (the paper: lambda_1 = 1, lambda_i <= 1). Positions whose
+  x_{t+1} or x_{t+2} lies past the window or in another document carry no j = 2 loss.
 
 Everything else is the baseline's: data, steps, batch, schedule, and the optimizer, which labels the new parameters
-by its own rules (tables are plain arrays -> Adam, like the token embedding; W_ij, M and the extra layer are Linears
--> MuonH, like every other Linear). Evaluation (``key=None``) is next-token loss on the main head with the full softmax.
+by its own rules (tables are plain arrays -> Adam, like the token embedding; W_ij and W_2 are Linears -> MuonH, like
+every other Linear; E_2's path contains "lm_head" -> AdamH, like E_1). Evaluation (``key=None``) is next-token loss on the main head with the full softmax.
 ``ss_candidates`` (VARIANT=ovss) puts both heads' training cross-entropy through the sampled softmax of
 experiments.references.sampled_softmax_qwen3, each head with its own candidate sets.
 """
@@ -39,7 +41,6 @@ import haliax.nn as hnn
 from haliax import NamedArray
 from levanter.layers.attention import AttentionMask
 from levanter.metrics import Metric, ReductionType
-from levanter.models.llama import LlamaDecoderLayer
 from levanter.models.lm_model import LmConfig, LmExample
 from levanter.models.loss import maybe_fused_next_token_loss
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
@@ -56,15 +57,15 @@ class OverVocabQwen3Config(Qwen3Config):
     oe_m: int = 12_800_000
     oe_n: int = 3
     oe_k: int = 0  # 0: derived so that hidden_dim / (n k) ~ 256
-    mtp_weight: float = 0.1  # 0 turns MTP-DS off
+    od_weight: float = 0.1  # lambda_2 of over-decoding (n = 2); 0 turns OD off
     # sampled softmax for both heads (empty: full softmax); see experiments.references.sampled_softmax_qwen3
     ss_candidates: tuple[int, ...] = ()
     ss_stage_ends: tuple[int, ...] = ()
 
     def __post_init__(self):
         super().__post_init__()
-        if self.oe_n < 2 or self.oe_m < 1 or self.oe_k < 0 or self.mtp_weight < 0:
-            raise ValueError("oe_n >= 2, oe_m >= 1, oe_k >= 0 and mtp_weight >= 0 are required")
+        if self.oe_n < 2 or self.oe_m < 1 or self.oe_k < 0 or self.od_weight < 0:
+            raise ValueError("oe_n >= 2, oe_m >= 1, oe_k >= 0 and od_weight >= 0 are required")
         if len(self.ss_candidates) != len(self.ss_stage_ends):
             raise ValueError("one stage end per candidate count")
 
@@ -126,31 +127,24 @@ def _segment_ids(attn_mask) -> Optional[NamedArray]:
 class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
     oe_tables: list  # NamedArray [oe_rows, oe_dim] per table (Adam group, like the token embedding)
     oe_proj: list  # hnn.Linear oe_dim -> embed per table (MuonH group, like every Linear)
-    mtp_norm_h: Optional[hnn.RmsNorm]
-    mtp_norm_e: Optional[hnn.RmsNorm]
-    mtp_proj: Optional[hnn.Linear]  # mtp_in (2 d) -> embed
-    mtp_layer: Optional[LlamaDecoderLayer]
-    mtp_norm_out: Optional[hnn.RmsNorm]
+    od_proj: Optional[hnn.Linear]  # W_2: od_in (d) -> embed (MuonH group)
+    od_lm_head: Optional[hnn.Linear]  # E_2: embed -> vocab, initialised like lm_head (AdamH group, like lm_head)
 
     @classmethod
     def init(cls, Vocab, config: OverVocabQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # the baseline's parameters and initialisation, unchanged
-        k_t, k_p, k_m, k_l = jrandom.split(jrandom.fold_in(key, 0x0E), 4)
+        k_t, k_p, k_w, k_e = jrandom.split(jrandom.fold_in(key, 0x0E), 4)
         Dim = hax.Axis("oe_dim", config.table_dim)
         tables, projs = [], []
         for t, (_, m) in enumerate(config.moduli()):
             # Same initialisation as the token embedding table (hnn.Embedding.init).
             tables.append(hnn.Embedding.init(hax.Axis(ROWS, m), Dim, key=jrandom.fold_in(k_t, t)).weight)
             projs.append(hnn.Linear.init(In=Dim, Out=config.Embed, key=jrandom.fold_in(k_p, t), use_bias=False, out_first=True))
-        mtp = config.mtp_weight > 0
-        In2 = hax.Axis("mtp_in", 2 * config.hidden_dim)
+        od = config.od_weight > 0
         return cls(
             base.transformer, base.embeddings, base.lm_head, tables, projs,
-            config.mk_LayerNorm(config.Embed) if mtp else None,
-            config.mk_LayerNorm(config.Embed) if mtp else None,
-            hnn.Linear.init(In=In2, Out=config.Embed, key=k_m, use_bias=False, out_first=True) if mtp else None,
-            LlamaDecoderLayer.init(config, key=k_l) if mtp else None,
-            config.mk_LayerNorm(config.Embed) if mtp else None,
+            hnn.Linear.init(In=config.Embed.alias("od_in"), Out=config.Embed, key=k_w, use_bias=False, out_first=True) if od else None,
+            hnn.Linear.init(In=config.Embed, Out=Vocab, key=k_e, use_bias=False, out_first=True) if od else None,
         )
 
     def embed(self, input_ids: NamedArray, attn_mask) -> NamedArray:
@@ -189,7 +183,7 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, logit_soft_cap=logit_soft_cap)
         if key is None:  # evaluation: main head, full softmax (LmHeadModel's loss over this model's activations)
             return super().compute_next_token_loss(example, key=None, loss_dtype=loss_dtype, **kw)
-        k_main, k_mtp, k_s1, k_s2 = jrandom.split(key, 4)
+        k_main, k_s1, k_s2 = jrandom.split(key, 3)
         e = self.embed(example.tokens, example.attn_mask)
         h = self.transformer(e, attn_mask=example.attn_mask, key=k_main)
         sampled = bool(cfg.ss_candidates)
@@ -197,35 +191,30 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
         if sampled and step is None:
             raise RuntimeError("the sampled softmax follows the train step, but current_train_step() is None")
 
-        def head_loss(states, true_ids, weight, k_s):
+        def head_loss(states, head, true_ids, weight, k_s):
             if sampled:
-                return sampled_next_token_loss(self.Pos, self.Embed, self.Vocab, states, self.get_lm_head(), true_ids, loss_weight=weight,
+                return sampled_next_token_loss(self.Pos, self.Embed, self.Vocab, states, head, true_ids, loss_weight=weight,
                                                step=step, candidates=cfg.ss_candidates, stage_ends=cfg.ss_stage_ends, key=k_s, dtype=loss_dtype, **kw)
-            return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, states, self.get_lm_head(), true_ids, loss_weight=weight, dtype=loss_dtype, **kw), {}
+            return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, states, head, true_ids, loss_weight=weight, dtype=loss_dtype, **kw), {}
 
-        ntp, stats = head_loss(h, example.tokens, example.loss_weight, k_s1)
+        ntp, stats = head_loss(h, self.get_lm_head(), example.tokens, example.loss_weight, k_s1)
         loss = ntp
         metrics = {"ntp_loss": Metric.from_value(_scalar(ntp), ReductionType.MEAN)}
-        if cfg.mtp_weight > 0:
+        if cfg.od_weight > 0:
             Pos = self.Pos
-            e_next = hax.roll(e, -1, Pos)  # embedding of x_{t+1}
-            u = hax.concatenate("mtp_in", [cast(hnn.RmsNorm, self.mtp_norm_h)(h).rename({self.Embed.name: "mtp_in"}),
-                                           cast(hnn.RmsNorm, self.mtp_norm_e)(e_next).rename({self.Embed.name: "mtp_in"})])
-            u = cast(hnn.Linear, self.mtp_proj)(u)
-            u = cast(LlamaDecoderLayer, self.mtp_layer)(u, example.attn_mask, key=k_mtp)
-            h2 = cast(hnn.RmsNorm, self.mtp_norm_out)(u)
-            # h2_t predicts x_{t+2}: pass x_{t+1} as the "input ids" (the loss shifts once more) and drop positions whose
-            # x_{t+1} or x_{t+2} is past the window or in another document, on top of the example's own weights.
+            h2 = cast(hnn.Linear, self.od_proj)(h.rename({self.Embed.name: "od_in"}))  # W_2 h_t
+            # z_2 = x_{t+2}: pass x_{t+1} as the "input ids" (the loss shifts once more) and drop positions whose x_{t+1} or
+            # x_{t+2} is past the window or in another document, on top of the example's own weights.
             pos = hax.arange(Pos)
             ok = pos < Pos.size - 2
             seg = _segment_ids(example.attn_mask)
             if seg is not None:
                 ok = ok & (hax.roll(seg, -1, Pos) == seg) & (hax.roll(seg, -2, Pos) == seg)
             w = example.loss_weight * hax.roll(example.loss_weight, -1, Pos) * ok.astype(example.loss_weight.dtype)
-            mtp, mtp_stats = head_loss(h2, hax.roll(example.tokens, -1, Pos), w, k_s2)
-            loss = loss + cfg.mtp_weight * mtp
-            metrics["mtp_loss"] = Metric.from_value(_scalar(mtp), ReductionType.MEAN)
-            stats.update({"mtp_" + name: v for name, v in mtp_stats.items()})
+            od, od_stats = head_loss(h2, cast(hnn.Linear, self.od_lm_head).weight, hax.roll(example.tokens, -1, Pos), w, k_s2)
+            loss = loss + cfg.od_weight * od
+            metrics["od_loss"] = Metric.from_value(_scalar(od), ReductionType.MEAN)
+            stats.update({"od_" + name: v for name, v in od_stats.items()})
         metrics.update(stats)
         return loss, metrics
 
