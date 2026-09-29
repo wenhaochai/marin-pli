@@ -105,6 +105,10 @@ baseline. Restored on della-vis1:
 
 ## Changelog
 
+* 2026-09-29 07:37: 300m done (chain 14666494-6). ss macro 3.8032 vs the 4-run 300m baseline pool 3.8132 (-0.0100,
+  t -1.39, p 0.26; lowest of the five runs), c4_en bpb +0.0002 (t 0.58): no quality cost. Equal steps: 243.5 vs 276.5
+  min of training steps, 1.14x (1247 / 1272 / 1333 / 1457 ms per stage vs 1450 ms). Nominal-only domain moves:
+  subreddits -0.017 (t -6.6, below the Bonferroni bar 9.3), manosphere, 4chan; code -0.017 (the 130m +0.07 did not recur).
 * 2026-09-29 01:50: user call -- no more 130m seeds (pair2/pair3 cancelled); run the size ladder with ss seed 0 against
   the existing baselines: 300m chain 14666494-6 (2h segments), 520m chain 14666513-19 (3h), 1_2b chain 14666546-8
   (23h55). 520m/1_2b run two microbatches per step, the first use of the sampled loss under microbatching.
