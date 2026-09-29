@@ -7,9 +7,11 @@ Through most of training each device's cross-entropy normalises over a shared ca
 the whole vocabulary: every class that is a target somewhere in the device's microbatch, plus enough negatives to
 reach P, taken from a golden-ratio stride sweep of the vocabulary (a permutation, since the stride is coprime with the
 vocabulary size) that starts at an offset drawn from the step key and staggered per device. The lm_head rows of the
-candidates are gathered and the baseline's fused cross-entropy kernel runs on that [Embed, P] head with each target
-replaced by its position in the set, so the logits GEMM, the CE pass and both gradient GEMMs shrink by V / P. The
-lm_head gradient is dense over the vocabulary with zeros outside the set.
+candidates are gathered and the cross-entropy runs on that [Embed, P] head with each target replaced by its position in
+the set, so the logits GEMM, the CE pass and both gradient GEMMs shrink by V / P. The candidate head goes through the
+row-tiled kernel that levanter's H100 dispatch already uses for the full 128K vocabulary (levanter would send a head
+narrower than 65,536 to its vocab-streaming kernel, which measured 18-27% slower at P = 24,576-36,864). The lm_head
+gradient is dense over the vocabulary with zeros outside the set.
 
 The loss is biased (its normaliser misses the non-candidate mass), so P ramps up in stages and the run ends on the
 full softmax. Stages follow the trainer's step (``levanter.trainer.current_train_step``): stage i covers steps
@@ -22,7 +24,7 @@ while a stage is active: it sits below the full-softmax loss and steps up at eac
 
 import math
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Optional, cast
 
 import jax
@@ -36,6 +38,10 @@ from haliax import NamedArray
 from haliax.core import flatten_all_axes_but
 from haliax.partitioning import _get_mesh, current_thread_local_mapping, pspec_for, shard_map
 from levanter.kernels.pallas.fused_cross_entropy_loss import fused_cross_entropy_loss_and_logsumexp_penalty as fused_ce
+from levanter.kernels.pallas.fused_cross_entropy_loss.batched_xla import (
+    _backward_b_tiled_from_lse,
+    _linear_softmax_cross_entropy_loss_full_vocab_b_tiled,
+)
 from levanter.metrics import Metric, ReductionType
 from levanter.models.lm_model import LmConfig, LmExample, split_activations
 from levanter.models.loss import next_token_loss_weight
@@ -119,6 +125,32 @@ def stride_sweep(vocab_size: int) -> np.ndarray:
     return ((np.arange(vocab_size, dtype=np.int64) * stride) % vocab_size).astype(np.int32)
 
 
+def row_block(num_rows: int, num_candidates: int, vocab_size: int) -> int:
+    """Rows per block of the candidate CE: the full-vocabulary path's 8,192-row block, grown by the largest power of two
+    that keeps the block's fp32 logits within the full path's footprint (8,192 x V)."""
+    return min(num_rows, 8192 * (1 << max(0, int(math.log2(vocab_size / num_candidates)))))
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(3, 4, 5))
+def row_tiled_cross_entropy(x: jax.Array, labels: jax.Array, w: jax.Array, block: int, dtype, logit_soft_cap) -> jax.Array:
+    """Per-example CE of x @ w, logits materialised block by block (levanter's full-vocabulary H100 kernel pair)."""
+    return _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(x, labels, w, b_block_size=block, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=None)[0]
+
+
+def _row_tiled_fwd(x, labels, w, block, dtype, logit_soft_cap):
+    loss, lse = _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(x, labels, w, b_block_size=block, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=None)
+    return loss, (x, labels, w, lse)
+
+
+def _row_tiled_bwd(block, dtype, logit_soft_cap, residuals, g_loss):
+    x, labels, w, lse = residuals
+    grad_x, grad_w = _backward_b_tiled_from_lse(x, labels, w, lse, g_loss, jnp.zeros_like(g_loss), b_block_size=block, logit_soft_cap=logit_soft_cap, precision=None)
+    return grad_x, None, grad_w
+
+
+row_tiled_cross_entropy.defvjp(_row_tiled_fwd, _row_tiled_bwd)
+
+
 def build_candidates(present: jax.Array, num_present: jax.Array, num_candidates: int, offset: jax.Array, sweep: jax.Array) -> jax.Array:
     """Ascending ids of the P candidates: every present class plus the first P - num_present absent classes of the sweep
     read from ``offset``. Needs num_present <= P (the caller falls back to the full softmax otherwise)."""
@@ -159,7 +191,8 @@ def sampled_cross_entropy(
             cand = build_candidates(present, num_present, num_candidates, offset, sweep)
             position = jnp.zeros((vocab_size,), jnp.int32).at[cand].set(jnp.arange(num_candidates, dtype=jnp.int32), unique_indices=True)
             w_cand = jnp.take(w, cand, axis=1, unique_indices=True, indices_are_sorted=True)
-            return fused_ce(x, position[labels], w_cand, reduction=None, weight=None, **kernel_kw)
+            block = row_block(x.shape[0], num_candidates, vocab_size)
+            return row_tiled_cross_entropy(x, position[labels], w_cand, block, kernel_kw["dtype"], kernel_kw["logit_soft_cap"])
 
         return run
 
