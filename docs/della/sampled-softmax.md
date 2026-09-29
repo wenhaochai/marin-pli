@@ -105,6 +105,11 @@ baseline. Restored on della-vis1:
 
 ## Changelog
 
+* 2026-09-29 01:06: pair1 done. Seed 0, n=1 vs the 8-run pool: ss macro 4.1802 vs pool 4.1865 (-0.0063, t -1.02,
+  p 0.34), c4_en bpb +0.00006 (t 0.16); the step-1000 gap (+0.12 macro) closed by the end. Restore baseline 4.1820,
+  inside the pool (t -0.73): the data restore reproduces the pool. Same node, equal steps: ss 40.6 min vs 52.8 min of
+  training steps, 1.30x (465 / 486 / 535 / 639 ms per stage vs 639 ms). Nominal-only domain moves (no Bonferroni):
+  social domains -0.03, code +0.07 (t 1.94). Seeds 1-3 pending (pair2, pair3).
 * 2026-09-28 22:55: smoke passed (14653414); full runs 14658326-8 submitted.
 * 2026-09-28: fineweb-edu-10B cache re-downloaded (it was deleted with the 09-24 store cleanup; 10,000,000,738 tokens,
   matches the recorded count). Implementation + CPU tests, commit 209e8d1a9d. Smoke 14652357 submitted.
