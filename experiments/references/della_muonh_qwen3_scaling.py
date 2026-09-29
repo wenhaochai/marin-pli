@@ -15,7 +15,9 @@ fixed passes) with everything else unchanged; its run ids end in ``-fbt2``. VARI
 auxiliary objectives of experiments.references.objective_qwen3 (Twin-Networks state matching, successor-representation
 TD head); run ids end in ``-twin<w>`` / ``-sr<gamma>w<w>``. VARIANT=ss trains with the sampled softmax of
 experiments.references.sampled_softmax_qwen3 (per-device candidate sets, full softmax at the end, full-softmax eval);
-SS_SCHEDULE sets its stages and the run id ends in ``-ss<P/1024>k<fraction>...``.
+SS_SCHEDULE sets its stages and the run id ends in ``-ss<P/1024>k<fraction>...``. VARIANT=ov is the Over-Tokenized
+Transformer's OT configuration (experiments.references.over_vocab_qwen3: over-encoding with hashed 2-/3-gram input
+embeddings, OV_M rows per table, plus MTP-DS at weight OV_MTP_W); VARIANT=ovss adds the sampled softmax to both heads.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -48,6 +50,8 @@ from experiments.datasets.prebuilt_caches import fineweb_edu_10B_dataset
 from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
+from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
+from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
 from experiments.references.sampled_softmax_qwen3 import SampledSoftmaxQwen3Config
 
 # With a local MARIN_PREFIX the temporary checkpoint base comes back as a file:// URL, which the tensorstore
@@ -153,7 +157,11 @@ RUN_TAG = os.environ.get("RUN_TAG", "")
 # 0.19, 0.29, 0.51 against its 0.20, 0.28, 0.49) and of training (0.57, 0.81, 0.93). MFU keeps the full-vocabulary FLOP
 # count, so it reads as baseline-equivalent throughput.
 SS_SCHEDULE = tuple((float(f), int(p)) for f, p in (st.split(":") for st in os.environ.get("SS_SCHEDULE", "0.57:24576,0.81:36864,0.93:65536").split(",")))
-if VARIANT not in ("baseline", "fbt", "ss", *OBJECTIVE_VARIANTS):
+# VARIANT=ov | ovss: OT-12.8M of arXiv 2501.16975 (n = 3, k from d_model / (n k) ~ 256, MTP-DS depth 1). OV_M = rows per
+# hashed n-gram table, OV_MTP_W = MTP-DS loss weight (0 turns it off). ovss also applies SS_SCHEDULE to both heads.
+OV_M = int(float(os.environ.get("OV_M", "12.8e6")))
+OV_MTP_W = float(os.environ.get("OV_MTP_W", "0.1"))
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -198,7 +206,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-mtpk{MTP_K}w{MTP_W:g}"
     if VARIANT == "swap":
         variant_tags += f"-sww{SWAP_W:g}" + (f"n{SWAP_SPANS}" if SWAP_SPANS != 1 else "") + (f"l{SWAP_MIN}-{SWAP_MAX}" if (SWAP_MIN, SWAP_MAX) != (16, 128) else "")
-    if VARIANT == "ss":
+    if VARIANT in ("ov", "ovss"):
+        variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"mtp{OV_MTP_W:g}" if OV_MTP_W != 0.1 else "")
+    if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
         variant_tags += f"-dnr{EBM_RHO:g}w{DENOISE_W or 0.1:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"k{EBM_STEPS}" if EBM_STEPS != 1 else "")
@@ -270,6 +280,14 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_candidates=tuple(p for _, p in SS_SCHEDULE),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE),
         )
+    elif VARIANT in ("ov", "ovss"):
+        num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
+        model_cls, model_extra = OverVocabQwen3Config, dict(
+            oe_m=OV_M,
+            mtp_weight=OV_MTP_W,
+            ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
+            ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
+        )
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
@@ -314,7 +332,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
                     tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
@@ -334,7 +352,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     compute_mapping={
                         "token": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
                         "token_repeat": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
+                        # ov: the hashed n-gram tables stay row-sharded in compute too (never all-gathered)
+                        **({OV_ROWS: ResourceAxis.DATA} if VARIANT in ("ov", "ovss") else {}),
                     },
+                    **({"param_mapping": {"embed": "data", OV_ROWS: "data"}} if VARIANT in ("ov", "ovss") else {}),
                 ),
                 seed=SEED,
                 model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,
