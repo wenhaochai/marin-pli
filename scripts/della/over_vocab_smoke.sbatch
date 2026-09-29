@@ -11,9 +11,9 @@
 #SBATCH --time=01:01:00
 #SBATCH --output=logs/slurm/%x_%j.out
 
-# OV (over-encoding + MTP-DS) H100 smoke: for each SIZE in SIZES (default 130m 300m) and VARIANT in ov ovss, SMOKE_STEPS
+# OV (over-encoding + over-decoding) H100 smoke: for each SIZE in SIZES (default 130m 300m) and VARIANT in ov ovss, SMOKE_STEPS
 # steps (default 60, so every ovss stage runs) at the real batch plus a one-batch eval. A SUMMARY line per run gives the
-# exit code, the peak GPU memory (nvidia-smi, sampled every 2 s), the mean step time, the ntp/mtp losses and the eval loss.
+# exit code, the peak GPU memory (nvidia-smi, sampled every 2 s), the mean step time, the ntp/od losses and the eval loss.
 set -uo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
 module load proxy/default  # wandb only
@@ -45,7 +45,7 @@ try:
     run = wandb.Api(timeout=60).run(f"marin-della/{run_id}")
     s = run.summary
     d = [r["throughput/duration"] for r in run.scan_history(keys=["_step", "throughput/duration"]) if r["_step"] >= 3]
-    print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} step_ms={np.mean(d) * 1e3:.0f}(n={len(d)}) ntp={s.get('train/ntp_loss')} mtp={s.get('train/mtp_loss')} "
+    print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} step_ms={np.mean(d) * 1e3:.0f}(n={len(d)}) ntp={s.get('train/ntp_loss')} od={s.get('train/od_loss')} "
           f"loss={s.get('train/loss')} eval_loss={s.get('eval/loss')} eval_macro={s.get('eval/paloma/macro_loss')} err='{err}'", flush=True)
 except Exception as e:
     print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} wandb_error={str(e)[:160]} err='{err}'", flush=True)
