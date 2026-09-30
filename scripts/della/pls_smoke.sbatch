@@ -28,7 +28,7 @@ export SMOKE_STEPS=${SMOKE_STEPS:-40}
 export VARIANT=pls
 nvidia-smi -L
 
-for cfg in ${CONFIGS:-130m:1 130m:0 300m:1 300m:0}; do
+for cfg in ${CONFIGS:-130m:1 300m:1}; do
   export SIZE=${cfg%%:*} PLS_W=${cfg##*:}
   log=logs/slurm/pls-smoke_${SLURM_JOB_ID}_${SIZE}_pls${PLS_W}.log
   echo "SMOKE $cfg START $(date +%H:%M:%S)"

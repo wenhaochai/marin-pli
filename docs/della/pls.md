@@ -1,7 +1,7 @@
 # pls：kaiyue baseline 上的逐层 LM 监督（dense、每层、全程）
 
 **状态（2026-09-29）**：已实现（`VARIANT=pls`，分支 `pls`，worktree `project/marin-pls`）；CPU 测试全过；独立审计与
-H100 smoke 进行中；正式 run（130m、300m 各 pls1 / pls0）尚未提交，没有任何结果。
+H100 smoke 进行中；正式 run（130m、300m 各一个 pls1）尚未提交，没有任何结果。
 
 ## 是什么
 
@@ -23,7 +23,7 @@ h_k 是第 k 层 block 输出的残差流；k = L−1 那一项就是原来的 N
   与模型。一次 `scan_via` 取出每层输出；训练返回每层 CE 作为 `train/pls/L{k}`（`train/loss` 在 pls1 下是总和，
   与 baseline 比较用 `train/pls/L{L-1}`）。
 - `PLS_W=0`（pls0）：训练与 baseline 逐位相同的计算，每层读出只在每 16 个位置取 1 个、全程 stop-gradient，给出
-  baseline 自己的 logit-lens 曲线作参照。
+  baseline 自己的 logit-lens 曲线。已实现并测过，但按用户决定（2026-09-29："baseline 我已经跑完了"）不跑。
 - 逐层 eval：`ReadoutTaggedEvaluator` 一次前向解码所有层，统计量与 levanter `TaggedEvaluator` 完全一致，只多一个
   读出维度；在主 eval 的节奏下记 `eval/L{k}/{loss,macro_loss,bpb,macro_bpb,paloma/<ds>/{loss,bpb},...}`。
   `eval/L{L-1}/*` 必须等于主 eval（run 内自检）。
@@ -46,18 +46,17 @@ pls0 的监控只加约 2%。逐层 eval 每次约为主 eval 的 4–5 倍（13
 | arm | 130m | 300m |
 |---|---|---|
 | pls1（每层权重 1，全程） | 1 run | 1 run |
-| pls0（baseline 训练 + 逐层监控/eval） | 1 run | 1 run |
 
-- 最终层对照：130m 用已有 8 个 baseline run 的池（c4_en bpb 均值 1.16327、sd 0.00035；macro sd 0.007–0.010），
-  pls0 是第 9 个样本；300m 只有 1 个 baseline（c4_en 1.05626、macro 3.80874），pls0 是第 2 个。
-- 逐层对照：pls1 的 `eval/L{k}` 对 pls0 的 `eval/L{k}`（同一数据、同一 eval），训练中 `train/pls/L{k}` 同样对照。
+- 最终层对照：130m 用已有 8 个 baseline run 的池（c4_en bpb 均值 1.16327、sd 0.00035；macro sd 0.007–0.010）；
+  300m 用已有的 1 个 baseline（c4_en 1.05626、macro 3.80874）。
+- 逐层：pls1 的 `eval/L{k}` 与 `train/pls/L{k}` 给出每层读出随训练的变化；baseline 没有逐层指标（不另跑 pls0）。
 - 这是第一轮"看情况"的实验（n = 1）；大效应（> 0.003 bpb）单 run 可判，小效应要按 hill-climb 规则补到每臂 n ≥ 4。
 
 ## 跑之前写下的预测（2026-09-29）
 
 1. pls1 的最终层变差，且明显超出噪声：130m c4_en bpb 比 baseline 池差 0.01–0.05，macro 同向。理由：每层权重 1 时
    总 loss 被浅层的高 CE 主导，共享的 final norm / lm_head 要同时服务所有层，残差流被迫在每一层都"可直接解码"。
-2. pls1 的中间层读出远好于 pls0 的 logit-lens（浅层 CE 下降以 nats 计），且逐层单调。
+2. pls1 的中间层读出逐层单调变好，浅层读出的 CE 远低于未受监督模型的 logit-lens 典型值。
 3. 300m（12 层）上最终层的代价不小于 130m。
 若 1 不成立（最终层持平或变好），那就是本项目要追的现象。
 
