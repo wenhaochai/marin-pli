@@ -27,17 +27,19 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jrandom
 import jmp
 import numpy as np
 from jax.sharding import NamedSharding, PartitionSpec as P
 from tqdm_loggable.auto import tqdm
 
 import haliax as hax
+import haliax.nn as hnn
 from haliax import NamedArray
 from haliax.jax_utils import maybe_rng_split
 
@@ -67,6 +69,11 @@ class PerLayerQwen3Config(Qwen3Config):
     # Intermediate layers' LM losses train the trunk only: their gradients do not reach the shared final norm or the
     # lm_head, which are then trained by the final layer's NTP loss alone. The forward pass is unchanged.
     pls_detach_head: bool = False
+    # Every intermediate layer gets its own readout: its own RMSNorm and its own lm_head (initialised like the model's),
+    # trained by that layer's loss alone; the final layer keeps the model's norm and lm_head, which then get the final
+    # layer's gradient alone. Per-layer eval reads each layer through its own head. The heads are ``aux_lm_heads`` (AdamH,
+    # like lm_head) and ``aux_norms`` (Adam, like the final norm). New parameters: (L-1) x (vocab x hidden + hidden).
+    pls_separate_heads: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -74,6 +81,10 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError(f"pls_weight must be >= 0, got {self.pls_weight}")
         if not self.scan_layers:
             raise ValueError("pls reads every layer's output through Stacked.scan_via, so scan_layers must be True")
+        if self.pls_separate_heads and self.pls_weight <= 0:
+            raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
+        if self.pls_separate_heads and self.pls_detach_head:
+            raise ValueError("pls_separate_heads and pls_detach_head are exclusive: detaching separate heads leaves them untrained")
         if self.pls_monitor_stride < 1 or self.max_seq_len % self.pls_monitor_stride:
             raise ValueError(f"pls_monitor_stride must be >= 1 and divide max_seq_len={self.max_seq_len}, got {self.pls_monitor_stride}")
 
@@ -103,10 +114,19 @@ def _scalar(x):
 
 
 class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
+    aux_norms: Optional[tuple] = None  # pls_separate_heads: one RMSNorm per intermediate layer
+    aux_lm_heads: Optional[tuple] = None  # pls_separate_heads: one Embed -> Vocab head per intermediate layer
+
     @classmethod
     def init(cls, Vocab, config: PerLayerQwen3Config, *, key):  # type: ignore[override]
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)  # the baseline's parameters and initialisation, unchanged
-        return cls(base.transformer, base.embeddings, base.lm_head)
+        aux_norms = aux_lm_heads = None
+        if config.pls_separate_heads:
+            # Own key stream, so the baseline parameters above stay byte-identical to Qwen3LMHeadModel.init(key).
+            keys = jrandom.split(jrandom.fold_in(key, 0x9A), config.num_layers - 1)
+            aux_norms = tuple(config.mk_LayerNorm(config.Embed) for _ in range(config.num_layers - 1))
+            aux_lm_heads = tuple(hnn.Linear.init(In=config.Embed, Out=Vocab, key=k, use_bias=False, out_first=True) for k in keys)
+        return cls(base.transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads)
 
     def layer_outputs(self, input_ids: NamedArray, attn_mask, *, key=None) -> NamedArray:
         """The residual stream after every layer, stacked on the layer axis; the last entry is the final pre-norm state
@@ -122,14 +142,17 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         _, outs = tr.layers.scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
         return outs
 
+    def _separate(self, k: int) -> bool:
+        return self.aux_lm_heads is not None and k < self.config.num_layers - 1
+
     def _layer(self, outs: NamedArray, k: int, *, detach_head: bool = False) -> NamedArray:
-        norm = self.transformer.norm
+        norm = cast(Any, self.aux_norms)[k] if self._separate(k) else self.transformer.norm
         if detach_head:  # same values; no gradient into the norm's parameters (the input still gets its gradient)
             norm = jax.tree_util.tree_map(lambda a: jax.lax.stop_gradient(a) if eqx.is_array(a) else a, norm)
         return norm(outs[self.transformer.layers.Block.name, k])
 
     def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, **kw) -> NamedArray:
-        lm_head = self.get_lm_head()
+        lm_head = cast(Any, self.aux_lm_heads)[k].weight if self._separate(k) else self.get_lm_head()
         if detach_head:
             lm_head = jax.lax.stop_gradient(lm_head)
         return maybe_fused_next_token_loss(

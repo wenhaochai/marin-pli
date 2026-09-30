@@ -37,6 +37,7 @@ from levanter.eval import TaggedEvaluator, _default_lm_eval_loss_fn  # noqa: E40
 from levanter.layers.attention import AttentionBackend, AttentionMask  # noqa: E402
 from levanter.models.lm_model import LmExample  # noqa: E402
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel  # noqa: E402
+from levanter.optim.muonh import MuonHConfig  # noqa: E402
 from levanter.testing.helpers import use_test_mesh  # noqa: E402
 from levanter.trainer import TrainerConfig  # noqa: E402
 from levanter.utils.mesh import MeshConfig  # noqa: E402
@@ -97,8 +98,8 @@ y = np.roll(tok, -1, axis=1)
 w_next = lw * (np.arange(T) < T - 1)[None]
 
 
-def ref_hidden(m):
-    """Normed residual stream after every layer, by applying each layer on its own (no scan)."""
+def ref_raw(m):
+    """Residual stream after every layer (pre-norm), by applying each layer on its own (no scan)."""
     tr = m.transformer
     Block = tr.layers.Block
     x = m.embeddings.embed(tokens)
@@ -106,8 +107,13 @@ def ref_hidden(m):
     for k in range(L):
         layer = hax.tree_util.tree_map(lambda a, k=k: a[Block.name, k], tr.layers.stacked)
         x = layer(x, mask=ex.attn_mask, key=None, pos_ids=None)
-        out.append(tr.norm(x).array)
+        out.append(x)
     return out
+
+
+def ref_hidden(m):
+    """Normed (final norm) residual stream after every layer."""
+    return [m.transformer.norm(x).array for x in ref_raw(m)]
 
 
 def ref_ce_per_pos(h, W):
@@ -197,6 +203,49 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
     dh_diff = float(jnp.max(jnp.abs(head_1[0].weight.array - head_b[0].weight.array)))
     assert dh_diff > 1e-6, "w=1 must differ from the baseline on the lm_head gradient, else this check is vacuous"
     print(f"3b. detach_head: loss/stats == w=1; trunk grads == w=1; final norm + lm_head grads == baseline (w=1 differs there by up to {dh_diff:.2e})")
+
+    # 3c. pls_separate_heads: every intermediate layer reads out through its own norm + lm_head
+    cfg_sep = PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_separate_heads=True)
+    m_sep = PerLayerQwen3LMHeadModel.init(Vocab, cfg_sep, key=key0)
+    close(eqx.tree_at(lambda m: (m.aux_norms, m.aux_lm_heads), m_sep, replace=(None, None)), base, "sep init (baseline part) vs baseline", rtol=0, atol=0)
+    assert len(m_sep.aux_lm_heads) == L - 1 and len(m_sep.aux_norms) == L - 1
+    assert not np.allclose(np.asarray(m_sep.aux_lm_heads[0].weight.array), np.asarray(m_sep.lm_head.weight.array))
+
+    def ref_sep(mm):
+        out = []
+        for k, x in enumerate(ref_raw(mm)):
+            if k < L - 1:
+                h, W = mm.aux_norms[k](x).array, mm.aux_lm_heads[k].weight.rearrange((mm.Embed, Vocab)).array
+            else:
+                h, W = mm.transformer.norm(x).array, mm.get_lm_head().rearrange((mm.Embed, Vocab)).array
+            wt = jnp.asarray(w_next)
+            out.append(jnp.sum(ref_ce_per_pos(h, W) * wt) / jnp.sum(wt))
+        return out[L - 1] + sum(out[: L - 1]), out
+
+    loss_s, stats_s, g_s = step_fn(hax.shard(m_sep, tc.parameter_axis_mapping), es, key)
+    (rl_s, rper_s), rg_s = eqx.filter_value_and_grad(ref_sep, has_aux=True)(m_sep)
+    np.testing.assert_allclose(float(loss_s), float(rl_s), rtol=1e-5)
+    for k in range(L):
+        np.testing.assert_allclose(float(stats_s[f"pls/L{k}"]), float(rper_s[k]), rtol=1e-5)
+    close(g_s, rg_s, "sep grad vs reference")
+    close((g_s.lm_head, g_s.transformer.norm), (gb.lm_head, gb.transformer.norm), "sep main head/norm grad vs baseline", rtol=1e-5)
+    per_s = eqx.filter_jit(lambda mm, e_: mm.readout_losses(e_, tuple(range(L))))(hax.shard(m_sep, tc.parameter_axis_mapping), es)
+    xs = ref_raw(m_sep)
+    for k in range(L - 1):
+        W = m_sep.aux_lm_heads[k].weight.rearrange((m_sep.Embed, Vocab)).array
+        np.testing.assert_allclose(np.asarray(per_s.array[k]) * w_next, np.asarray(ref_ce_per_pos(m_sep.aux_norms[k](xs[k]).array, W)) * w_next, rtol=1e-5, atol=1e-5)
+    labels_s = MuonHConfig().create_mask(m_sep)
+    assert all(l == "adamh" for l in labels_s.aux_lm_heads), labels_s.aux_lm_heads
+    assert all(n.weight == "adam" for n in labels_s.aux_norms), labels_s.aux_norms
+    assert labels_s.lm_head == "adamh"
+    for bad in (dict(pls_weight=0.0, pls_separate_heads=True), dict(pls_weight=1.0, pls_separate_heads=True, pls_detach_head=True)):
+        try:
+            PerLayerQwen3Config(**common, **bad)
+            raise AssertionError(f"{bad} must be rejected")
+        except ValueError:
+            pass
+    print(f"3c. separate heads: baseline part of init == baseline; loss/stats/all grads == per-layer-head reference {[round(float(r), 4) for r in rper_s]}; "
+          "main head/norm grads == baseline; eval readouts use each layer's own head; MuonH: aux heads adamh, aux norms adam; bad combos rejected")
 
     # 4. readout losses per position
     m1 = models[1.0]
