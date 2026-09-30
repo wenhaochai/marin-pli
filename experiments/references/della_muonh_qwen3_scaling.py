@@ -74,7 +74,11 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
 
 VERSION = "2026.09.13"
-NUM_GPUS = 4
+# NUM_GPUS (default 4, the baselines' count) and PDP (sequences per device per microbatch) change only the data-parallel
+# layout, not the training math: the global batch is fixed, so fewer sequences per microbatch means more gradient
+# accumulation. Used by OV at 520m/1_2b, whose hashed n-gram tables need the memory. Run ids carry della{NUM_GPUS}x.
+NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
+PDP = int(os.environ["PDP"]) if os.environ.get("PDP") else None
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
@@ -225,7 +229,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-ema{EMA_BETA:g}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
-    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     if VARIANT == "fbt":
@@ -334,7 +338,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,
@@ -343,7 +347,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # embeddings, norms, attention softmax and the loss stay in the bf16/f32 policy above.
                 quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
-                per_device_parallelism=PER_DEVICE_PARALLELISM.get(size, -1),
+                per_device_parallelism=PDP or PER_DEVICE_PARALLELISM.get(size, -1),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
