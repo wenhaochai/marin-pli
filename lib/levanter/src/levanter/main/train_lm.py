@@ -371,6 +371,21 @@ def main(config: TrainLmConfig):
             )
             trainer.add_hook(cb, every=config.trainer.steps_per_eval)
 
+            # A model config may contribute evaluators of its own (e.g. per-layer readouts), run on the same datasets
+            # at the same cadence as the eval above.
+            extra_eval_callbacks = getattr(config.model, "extra_eval_callbacks", None)
+            if extra_eval_callbacks is not None:
+                for extra_cb in extra_eval_callbacks(
+                    EvalBatch,
+                    tagged_eval_datasets,
+                    tokenizer,
+                    trainer.device_mesh,
+                    compute_axis_mapping,
+                    max_eval_examples_per_ds,
+                    mp=config.trainer.mp,
+                ):
+                    trainer.add_hook(extra_cb, every=config.trainer.steps_per_eval)
+
         if config.labeled_eval is not None:
             add_labeled_lm_eval_callbacks(
                 trainer,

@@ -18,7 +18,9 @@ experiments.references.sampled_softmax_qwen3 (per-device candidate sets, full so
 SS_SCHEDULE sets its stages and the run id ends in ``-ss<P/1024>k<fraction>...``. VARIANT=ov is the Over-Tokenized
 Transformer's over-encoding + over-decoding (experiments.references.over_vocab_qwen3: hashed 2-/3-gram input embeddings,
 OV_M rows per table; a 2-gram output vocabulary in the paper's product decomposition, weight OV_OD_W); VARIANT=ovss adds
-the sampled softmax to both output heads.
+the sampled softmax to both output heads. VARIANT=pls adds every layer's LM loss through the shared final norm and lm_head
+(experiments.references.per_layer_qwen3), weight PLS_W, and evaluates every layer's readout (eval/L{k}/...); PLS_W=0 is
+the baseline's training with per-layer monitoring. Run ids end in ``-pls<w>``.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -53,6 +55,7 @@ from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
 from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
+from experiments.references.per_layer_qwen3 import PerLayerQwen3Config
 from experiments.references.sampled_softmax_qwen3 import SampledSoftmaxQwen3Config
 
 # With a local MARIN_PREFIX the temporary checkpoint base comes back as a file:// URL, which the tensorstore
@@ -77,7 +80,7 @@ VERSION = "2026.09.13"
 NUM_GPUS = 4
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
-VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
+VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | ov | ovss | pls | twin | sr | twinsr | ...
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
 PRECISION = os.environ.get("PRECISION", "bf16")  # bf16 | fp8
@@ -162,7 +165,13 @@ SS_SCHEDULE = tuple((float(f), int(p)) for f, p in (st.split(":") for st in os.e
 # hashed n-gram table, OV_OD_W = lambda_2 of over-decoding (0 turns it off). ovss also applies SS_SCHEDULE to both heads.
 OV_M = int(float(os.environ.get("OV_M", "12.8e6")))
 OV_OD_W = float(os.environ.get("OV_OD_W", "0.1"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", *OBJECTIVE_VARIANTS):
+# VARIANT=pls: every layer's residual stream decoded by the shared final norm + lm_head and trained on NTP, all the time.
+# PLS_W = weight of each intermediate layer's LM loss (the final layer's is 1); 0 = baseline training with stop-gradient
+# per-layer readouts on every PLS_MON-th position for monitoring. PLS_EVAL=0 turns off the per-layer eval (eval/L{k}/...).
+PLS_W = float(os.environ.get("PLS_W", "1"))
+PLS_MON = int(os.environ.get("PLS_MON", "16"))
+PLS_EVAL = os.environ.get("PLS_EVAL", "1") == "1"
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "pls", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -209,6 +218,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-sww{SWAP_W:g}" + (f"n{SWAP_SPANS}" if SWAP_SPANS != 1 else "") + (f"l{SWAP_MIN}-{SWAP_MAX}" if (SWAP_MIN, SWAP_MAX) != (16, 128) else "")
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
+    if VARIANT == "pls":
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("" if PLS_EVAL else "-noev")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -289,6 +300,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
+    elif VARIANT == "pls":
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL)
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
@@ -333,7 +346,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-pls-della" if VARIANT == "pls" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
                     tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
