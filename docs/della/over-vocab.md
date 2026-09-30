@@ -12,8 +12,10 @@ Over-Tokenized Transformer (Huang et al. 2025, arXiv 2501.16975), both halves, o
 * **Over-encoding (OE-12.8M):** input embedding = token embedding + hashed 2-gram and 3-gram embeddings (12.8M rows
   per table, `(x_t + x_{t-1} V + x_{t-2} V^2) mod m`, exact in int32), each projected to d_model, the sum divided by
   1 + k(n-1). k from d_model/(n k) ~ 256 (k = 1 here; table width 170 at 130m since 512/3 is not an integer, 256 at
-  300m). Zero tokens before the window and across documents. Per-table moduli m + 4t (the paper's "m + 2" trick,
-  kept divisible by 4 for row sharding). Tables are row-sharded over the 4 GPUs for parameters and compute.
+  300m). Zero tokens before the window and across documents. Per-table moduli m + 4t (the paper's "m + 2" trick).
+  Tables are row-sharded over the data axis for parameters and compute; their rows are padded to a multiple of 64
+  (`ROW_ALIGN`, since 2026-09-30) so any device count up to 64 divides them. Rows >= m are never indexed, so the
+  padding leaves the hash and the model unchanged; the 130m/300m runs predate it (rows = m on 4 GPUs).
 * **Over-decoding (n = 2):** the paper's product decomposition of a 2-gram output vocabulary, L = CE(h E_1, x_{t+1}) +
   lambda_2 CE(W_2 h E_2, x_{t+2}); E_1 = lm_head, E_2 = new `od_lm_head`, W_2 d x d, lambda_2 = 0.1. Not MTP-DS (user
   call, 2026-09-29): the paper's final OT model uses MTP-DS, this uses its OD formulation.
@@ -73,3 +75,17 @@ as the paper's log-linear law would put it for a fixed table against a growing m
 
 * 130m: ov 14711157 (COMPLETED), ovss 14711158 (COMPLETED)
 * 300m: ov 14711159 -> 14711160 (COMPLETED), ovss 14711162 -> 14711163 (COMPLETED)
+
+### 520m and 1.2B on 8 GPUs
+
+User call (2026-09-30): both sizes run OV and ovss on 8xH100. At 4 GPUs the OE tables alone would take ~35 GB (520m)
+and ~70 GB (1.2B) per device in fp32 parameters + Adam state + gradients. Quality is compared with the 4-GPU
+baselines (same data, steps and global batch; only the data-parallel layout differs); speed is compared only among the
+8-GPU runs, since there is no 8-GPU baseline. Launcher overrides: `NUM_GPUS=8` (run ids `della8xh100`) and, at 1.2B,
+`PDP=16` sequences per device per microbatch, which keeps the baseline's 128 sequences per microbatch.
+
+* First 8-GPU smoke (14768821, 520m): `IndivisibleError`, a 12,800,004-row table over 8 devices; fixed by the row
+  padding above (1604abd2e2), CPU tests re-passed.
+* 520m smoke (14775297, 60 steps): ov 3779 ms/step, ovss 3350 ms/step, rc 0 for both.
+* 1.2B smoke (PDP=16): 14775298 on pli-short cancelled after 5 h in the queue; resubmitted on pli-cp as 14793357.
+* 520m runs: ov 14779674 (13:30 h), ovss 14779675 (12:30 h), single resumable jobs on pli-short.
