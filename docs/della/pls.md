@@ -98,6 +98,23 @@ scan_via 与 fold 的融合差异）。曲线：`pls_figs/130m_*.png`。吞吐�
 **300m（进行中，截至 step 8000/11444）**：c4_en bpb +0.0385、macro +0.173（对 1 个 baseline），同样随训练扩大（step 2000
 +0.019 → 8000 +0.039）；逐层 macro L8 4.136、L9–L11 4.134——最后 4 层合计贡献约 0.002 nats。
 
-**预测检验**：预测 1（最终层差 0.01–0.05 bpb）成立，落在上沿；预测 3（300m 代价不小于 130m）到目前为止成立。预测 2 的
-对照（baseline 自己的逐层 logit-lens）在跑：用 130m baseline 最终 checkpoint 做逐层 eval（`scripts/della/pls_readout_eval.sbatch`，
-job 14767382，不训练任何一步）。
+**baseline 自己的逐层读出（logit lens，同一个 final norm + lm_head）**：用 130m baseline（restore run）的最终 checkpoint
+做逐层 eval（`scripts/della/pls_readout_eval.sbatch`，job 14767382）。日志 "Resuming training from step 4959"、train/loss 0，
+没有训练任何一步；主 eval 与原 run 终值逐位相同（c4_en bpb 1.163219928741455，macro 4.181971549987793）。
+
+| 层 | baseline 读出 macro | pls1 读出 macro |
+|---|---|---|
+| L0 | 9.329 | 5.621 |
+| L1 | 8.784 | 4.750 |
+| L2 | 7.898 | 4.479 |
+| L3 | 7.406 | 4.408 |
+| L4 | 5.351 | 4.381 |
+| L5（最终层） | **4.182** | **4.372** |
+
+baseline 的预测在最后两层才形成：L3→L5 降 3.22 nats，其中 L4→L5 一层就降 1.17。pls1 把预测提前到了浅层：L2 已经是 4.479
+（比 baseline 的 L4 还好 0.87），但 L3→L5 只降 0.036，最终层反而比 baseline 差 0.19。逐层监督让每一层都成了近似的最终
+预测器，代价是丢掉了 baseline 靠顶层完成的最后那段精修。300m 在 step 9000 同样如此：L8→L11 只降 0.005（macro 4.074 →
+4.069）。
+
+**预测检验**：预测 1（最终层差 0.01–0.05 bpb）成立，落在上沿；预测 2（中间层读出远好于未受监督的 logit lens、且逐层
+单调）成立，L0 好 3.7 nats；预测 3（300m 代价不小于 130m）到目前为止成立。
