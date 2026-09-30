@@ -1,7 +1,8 @@
 # Over-vocabulary (OV) on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-09-30 00:10):** at 130m (n=1, same data/steps/optimizer) OV lowers Paloma macro by 0.048 (4.1384 vs the
-8-run pool's 4.1865, t -7.9) and c4_en bpb by 0.0195 (t -56), at 1.38x the step time; 300m and the ovss arms are running.
+**Status (2026-09-30):** OV (over-encoding + over-decoding) beats the baseline at 130m and 300m on the same data and steps,
+and with the sampled softmax on both heads it does so at baseline speed: Paloma macro -0.066 at 130m (t -10.8 vs the
+8-run pool) and -0.038 at 300m (t -5.3 vs the 4-run pool), 1.04x / 1.03x faster than the baseline. n = 1 per arm.
 
 ## What it is
 
@@ -50,7 +51,25 @@ wikitext_103 -0.057, gab -0.073); code +0.031 (t 0.85, ns). The gap is already t
 pool's ~4.884) and widens to the end. Step time 890 ms vs 640 (1.38x): 73.9 min of training steps vs 53. Final train
 losses: ntp 3.129, od (x_{t+2}) 4.925. Not yet separated: how much comes from OE and how much from OD.
 
+**All arms (seed 0).** Training time = summed throughput/duration over all steps; deltas vs the same-seed baseline
+(130m: the restore baseline, same node as ss) and, in brackets, vs the pool mean with the one-vs-sample t:
+
+| size | arm | training time | vs baseline | Paloma macro | c4_en bpb |
+|---|---|---|---|---|---|
+| 130m | baseline | 52.8 min | 1.00x | 4.1820 | 1.1632 |
+| 130m | ss | 40.6 min | 1.30x faster | -0.0018 (-0.006, t -1.0) | +0.0001 |
+| 130m | ov | 74.1 min | 1.40x slower | -0.0436 (-0.048, t -7.9) | -0.0194 |
+| 130m | ovss | 50.6 min | 1.04x faster | -0.0616 (-0.066, t -10.8) | -0.0196 |
+| 300m | baseline | 276.7 min | 1.00x | 3.8087 | 1.0563 |
+| 300m | ss | 243.8 min | 1.13x faster | -0.0055 (-0.010, t -1.4) | +0.0004 |
+| 300m | ov | 336.8 min | 1.22x slower | -0.0360 (-0.040, t -5.7) | -0.0114 |
+| 300m | ovss | 269.7 min | 1.03x faster | -0.0335 (-0.038, t -5.3) | -0.0103 |
+
+300m per domain: both OV arms lower all 16 domains; 6 clear the Bonferroni bar (c4_100_domains, c4_en, falcon,
+subreddits, m2d2_wikipedia, mc4). The gain shrinks from 130m to 300m (macro -0.066 -> -0.038, c4_en -0.020 -> -0.010),
+as the paper's log-linear law would put it for a fixed table against a growing model. Open: OE vs OD attribution; 520m.
+
 ## Runs (seed 0, compared with the existing baseline pools)
 
-* 130m: ov 14711157, ovss 14711158
-* 300m: ov 14711159 -> 14711160 (4 h segments), ovss 14711162 -> 14711163 (3 h segments)
+* 130m: ov 14711157 (COMPLETED), ovss 14711158 (COMPLETED)
+* 300m: ov 14711159 -> 14711160 (COMPLETED), ovss 14711162 -> 14711163 (COMPLETED)

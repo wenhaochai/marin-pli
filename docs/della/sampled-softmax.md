@@ -105,6 +105,9 @@ baseline. Restored on della-vis1:
 
 ## Changelog
 
+* 2026-09-30 08:00: 520m done (chain 14666513-19). ss macro 3.5683 vs the single 520m baseline's 3.5726 (-0.0043),
+  c4_en bpb -0.0003; 1042.5 vs 1115.8 min of training steps, 1.07x. Ladder so far: 1.30x / 1.13x / 1.07x at
+  130m / 300m / 520m with no quality cost at any size; 1.2B still training.
 * 2026-09-29 07:37: 300m done (chain 14666494-6). ss macro 3.8032 vs the 4-run 300m baseline pool 3.8132 (-0.0100,
   t -1.39, p 0.26; lowest of the five runs), c4_en bpb +0.0002 (t 0.58): no quality cost. Equal steps: 243.5 vs 276.5
   min of training steps, 1.14x (1247 / 1272 / 1333 / 1457 ms per stage vs 1450 ms). Nominal-only domain moves:
