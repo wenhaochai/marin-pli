@@ -1,7 +1,7 @@
 # Over-vocabulary (OV) on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-09-29):** implemented (`VARIANT=ov`, `VARIANT=ovss`, branch `sampled-softmax`), CPU tests pass, H100 smoke
-passes at 130m and 300m; seed-0 runs at 130m and 300m submitted. No quality verdict yet.
+**Status (2026-09-30 00:10):** at 130m (n=1, same data/steps/optimizer) OV lowers Paloma macro by 0.048 (4.1384 vs the
+8-run pool's 4.1865, t -7.9) and c4_en bpb by 0.0195 (t -56), at 1.38x the step time; 300m and the ovss arms are running.
 
 ## What it is
 
@@ -40,6 +40,15 @@ Over-Tokenized Transformer (Huang et al. 2025, arXiv 2501.16975), both halves, o
 
   OV's cost is mostly the second full-vocabulary output head; the sampled softmax on both heads more than pays for
   OE + OD. Peak memory is not measurable from nvidia-smi (JAX preallocates 90%); no OOM at either size.
+
+## Results
+
+**130m ov (14711157), n=1 vs the 8-run pool, 4959 steps:** macro_loss 4.13839 vs 4.18646 (-0.04807, t -7.85, p 1e-4),
+macro_bpb -0.01615 (t -7.08), c4_en bpb 1.14378 (-0.01948, t -55.6). 13 of 16 domains lower; 7 clear the Bonferroni
+bar (c4_100_domains -0.070, c4_en -0.063, falcon -0.069, m2d2_wikipedia -0.084, m2d2_s2orc -0.041, mc4 -0.052,
+wikitext_103 -0.057, gab -0.073); code +0.031 (t 0.85, ns). The gap is already there at step 1000 (4.840 vs the
+pool's ~4.884) and widens to the end. Step time 890 ms vs 640 (1.38x): 73.9 min of training steps vs 53. Final train
+losses: ntp 3.129, od (x_{t+2}) 4.925. Not yet separated: how much comes from OE and how much from OD.
 
 ## Runs (seed 0, compared with the existing baseline pools)
 
