@@ -74,6 +74,7 @@ common = dict(max_seq_len=T, hidden_dim=48, intermediate_dim=64, num_layers=2, n
 cfg = OverVocabQwen3Config(**common, oe_m=M, oe_k=2, od_weight=0.1)   # k = 2: two tables per order, 8 dims each
 model = OverVocabQwen3LMHeadModel.init(Vocab, cfg, key=jrandom.PRNGKey(0))
 assert len(model.oe_tables) == 4 and cfg.table_dim == 8 and [m for _, m in cfg.moduli()] == [M, M + 4, M + 8, M + 12]
+assert all(tb.axis_size(ROWS) % 64 == 0 and tb.axis_size(ROWS) >= m for tb, (_, m) in zip(model.oe_tables, cfg.moduli()))
 
 
 def embed_ref(m_):

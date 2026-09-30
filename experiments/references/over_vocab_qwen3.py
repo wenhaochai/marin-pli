@@ -49,6 +49,7 @@ from levanter.trainer import current_train_step
 from experiments.references.sampled_softmax_qwen3 import sampled_next_token_loss
 
 ROWS = "oe_rows"  # the tables' row axis: sharded over the data axis for both parameters and compute (launcher)
+ROW_ALIGN = 64  # table rows are padded to a multiple of this so any data-axis size up to 64 divides them; rows >= m are never indexed
 
 
 @LmConfig.register_subclass("qwen3_over_vocab")
@@ -138,7 +139,8 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
         tables, projs = [], []
         for t, (_, m) in enumerate(config.moduli()):
             # Same initialisation as the token embedding table (hnn.Embedding.init).
-            tables.append(hnn.Embedding.init(hax.Axis(ROWS, m), Dim, key=jrandom.fold_in(k_t, t)).weight)
+            rows = -(-m // ROW_ALIGN) * ROW_ALIGN
+            tables.append(hnn.Embedding.init(hax.Axis(ROWS, rows), Dim, key=jrandom.fold_in(k_t, t)).weight)
             projs.append(hnn.Linear.init(In=Dim, Out=config.Embed, key=jrandom.fold_in(k_p, t), use_bias=False, out_first=True))
         od = config.od_weight > 0
         return cls(
