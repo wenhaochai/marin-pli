@@ -143,9 +143,11 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
     step_fn = eqx.filter_jit(train_step)
 
     # 2. trained readouts, weights 1 and 0.3
+    trained = {}
     for w in (1.0, 0.3):
         ms = hax.shard(models[w], tc.parameter_axis_mapping)
         loss, stats, g = step_fn(ms, es, key)
+        trained[w] = (loss, stats, g)
 
         def ref_total(mm, w=w):
             per = ref_losses(mm)
@@ -173,6 +175,28 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
         np.testing.assert_allclose(float(stats0[f"pls/L{k}"]), float(rmon[k]), rtol=1e-5)
     np.testing.assert_allclose(float(stats0[f"pls/L{L - 1}"]), float(rfull[L - 1]), rtol=1e-5)
     print(f"3. w=0: loss and all grads == baseline training step; monitor CEs == reference on every {S}th position {[round(float(r), 4) for r in rmon[:-1]]}")
+
+    # 3b. pls_detach_head: same forward as w=1; the trunk's gradient is w=1's (stopping the head's gradient does not change
+    # dCE_k/dh_k), and the final norm / lm_head get the final layer's gradient alone, i.e. the baseline's.
+    m_dh = PerLayerQwen3LMHeadModel.init(Vocab, PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_detach_head=True), key=key0)
+    close(m_dh, base, "detach init vs baseline", rtol=0, atol=0)
+    loss_dh, stats_dh, g_dh = step_fn(hax.shard(m_dh, tc.parameter_axis_mapping), es, key)
+    loss1, stats1, g1 = trained[1.0]
+    np.testing.assert_allclose(float(loss_dh), float(loss1), rtol=1e-6)
+    for k in range(L):
+        np.testing.assert_allclose(float(stats_dh[f"pls/L{k}"]), float(stats1[f"pls/L{k}"]), rtol=1e-6)
+
+    def split(g_):
+        return eqx.tree_at(lambda m: (m.lm_head, m.transformer.norm), g_, replace=(None, None)), (g_.lm_head, g_.transformer.norm)
+
+    trunk_dh, head_dh = split(g_dh)
+    trunk_1, head_1 = split(g1)
+    trunk_b, head_b = split(gb)
+    close(trunk_dh, trunk_1, "detach trunk grad vs w=1", rtol=1e-5)
+    close(head_dh, head_b, "detach head/norm grad vs baseline", rtol=1e-5)
+    dh_diff = float(jnp.max(jnp.abs(head_1[0].weight.array - head_b[0].weight.array)))
+    assert dh_diff > 1e-6, "w=1 must differ from the baseline on the lm_head gradient, else this check is vacuous"
+    print(f"3b. detach_head: loss/stats == w=1; trunk grads == w=1; final norm + lm_head grads == baseline (w=1 differs there by up to {dh_diff:.2e})")
 
     # 4. readout losses per position
     m1 = models[1.0]

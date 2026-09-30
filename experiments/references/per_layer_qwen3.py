@@ -11,8 +11,9 @@ MoE layer of an MoE model for a short early window. This is the dense, every-lay
 
 where h_k is the residual stream after layer k and the k = L-1 term is the ordinary NTP loss, so pls_weight = 1 gives
 every layer's LM loss the final loss's weight. There are no new parameters: the readouts share the final norm and the
-lm_head, and their gradients flow into both. Data, batch, schedule and optimizer stay the baseline's, and evaluation
-(``key=None``) runs the baseline's loss unchanged, so eval/paloma numbers are directly comparable.
+lm_head, and their gradients flow into both (``pls_detach_head=True``: the intermediate losses train the trunk only, and
+the final norm and lm_head get the final layer's gradient alone). Data, batch, schedule and optimizer stay the baseline's,
+and evaluation (``key=None``) runs the baseline's loss unchanged, so eval/paloma numbers are directly comparable.
 
 Monitoring. Training returns every layer's CE as ``train/pls/L{k}`` (k = L-1 is the NTP loss, which ``train/loss`` no
 longer equals once pls_weight > 0). With pls_weight = 0 the model trains exactly as the baseline and the per-layer CEs are
@@ -28,6 +29,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Optional, cast
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jmp
@@ -62,6 +64,9 @@ class PerLayerQwen3Config(Qwen3Config):
     pls_monitor_stride: int = 16
     # Per-layer evaluation (eval/L{k}/...) at the main eval's cadence.
     pls_eval: bool = True
+    # Intermediate layers' LM losses train the trunk only: their gradients do not reach the shared final norm or the
+    # lm_head, which are then trained by the final layer's NTP loss alone. The forward pass is unchanged.
+    pls_detach_head: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -117,12 +122,18 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         _, outs = tr.layers.scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
         return outs
 
-    def _layer(self, outs: NamedArray, k: int) -> NamedArray:
-        return self.transformer.norm(outs[self.transformer.layers.Block.name, k])
+    def _layer(self, outs: NamedArray, k: int, *, detach_head: bool = False) -> NamedArray:
+        norm = self.transformer.norm
+        if detach_head:  # same values; no gradient into the norm's parameters (the input still gets its gradient)
+            norm = jax.tree_util.tree_map(lambda a: jax.lax.stop_gradient(a) if eqx.is_array(a) else a, norm)
+        return norm(outs[self.transformer.layers.Block.name, k])
 
-    def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, **kw) -> NamedArray:
+    def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, **kw) -> NamedArray:
+        lm_head = self.get_lm_head()
+        if detach_head:
+            lm_head = jax.lax.stop_gradient(lm_head)
         return maybe_fused_next_token_loss(
-            self.Pos, self.Embed, self.Vocab, self._layer(outs, k), self.get_lm_head(), example.tokens, loss_weight=example.loss_weight, **kw
+            self.Pos, self.Embed, self.Vocab, self._layer(outs, k, detach_head=detach_head), lm_head, example.tokens, loss_weight=example.loss_weight, **kw
         )
 
     def _monitor_ce(self, outs: NamedArray, k: int, example: LmExample, *, logit_soft_cap) -> jax.Array:
@@ -183,7 +194,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         per_layer = {L - 1: _scalar(loss)}
         for k in range(L - 1):
             if cfg.pls_weight > 0:
-                ce = self._readout_ce(outs, k, example, **kw)
+                ce = self._readout_ce(outs, k, example, detach_head=cfg.pls_detach_head, **kw)
                 loss = loss + cfg.pls_weight * ce
                 per_layer[k] = _scalar(ce)
             else:
