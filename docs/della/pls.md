@@ -1,7 +1,7 @@
 # pls：kaiyue baseline 上的逐层 LM 监督（dense、每层、全程）
 
-**状态（2026-09-29）**：已实现（`VARIANT=pls`，分支 `pls`，worktree `project/marin-pls`）；CPU 测试全过；独立审计与
-H100 smoke 进行中；正式 run（130m、300m 各一个 pls1）尚未提交，没有任何结果。
+**状态（2026-09-30）**：已实现（`VARIANT=pls`，分支 `pls`，worktree `project/marin-pls`）；CPU 测试全过；独立审计无
+BLOCKER / MAJOR，4 个 MINOR 已修；H100 smoke 排队中；正式 run（130m、300m 各一个 pls1）尚未提交，没有任何结果。
 
 ## 是什么
 
@@ -22,11 +22,11 @@ h_k 是第 k 层 block 输出的残差流；k = L−1 那一项就是原来的 N
 - `experiments/references/per_layer_qwen3.py`：`PerLayerQwen3Config`（`pls_weight`、`pls_monitor_stride`、`pls_eval`）
   与模型。一次 `scan_via` 取出每层输出；训练返回每层 CE 作为 `train/pls/L{k}`（`train/loss` 在 pls1 下是总和，
   与 baseline 比较用 `train/pls/L{L-1}`）。
-- `PLS_W=0`（pls0）：训练与 baseline 逐位相同的计算，每层读出只在每 16 个位置取 1 个、全程 stop-gradient，给出
+- `PLS_W=0`（pls0）：训练与 baseline 相同的计算（CPU 上 loss 与梯度逐位相同），每层读出只在每 16 个位置取 1 个、全程 stop-gradient，给出
   baseline 自己的 logit-lens 曲线。已实现并测过，但按用户决定（2026-09-29："baseline 我已经跑完了"）不跑。
 - 逐层 eval：`ReadoutTaggedEvaluator` 一次前向解码所有层，统计量与 levanter `TaggedEvaluator` 完全一致，只多一个
   读出维度；在主 eval 的节奏下记 `eval/L{k}/{loss,macro_loss,bpb,macro_bpb,paloma/<ds>/{loss,bpb},...}`。
-  `eval/L{L-1}/*` 必须等于主 eval（run 内自检）。
+  `eval/L{L-1}/*` 必须等于主 eval（run 内自检；CPU f32 逐位相同，GPU bf16 端到端相对差 ≤ 2e-7，比较要带容差）。
 - `lib/levanter/src/levanter/main/train_lm.py`：通用钩子，model config 若有 `extra_eval_callbacks` 就按主 eval 节奏挂上。
 - 启动：`scripts/della/pls_h100x4.sbatch`（`--export=ALL,SIZE=130m,PLS_W=1`），`scripts/della/pls_env.sh` 让 worktree
   自己的 `lib/*/src` 排在共享 venv 的 editable 安装之前（那些 .pth 指向 speedrun 在用的 `project/marin`）。
@@ -39,7 +39,9 @@ h_k 是第 k 层 block 输出的残差流；k = L−1 那一项就是原来的 N
 
 每个中间层多一次 lm_head（前向 + 反向）。130m 的 lm_head 约占训练 FLOPs 的 58%：pls1 每步约 3.9× baseline（300m 约
 4.9×）。baseline 墙钟 130m ≈ 57 min、300m ≈ 4.6 h（4×H100），pls1 预计约 3.7 h 与 22 h（以 smoke 实测为准）。
-pls0 的监控只加约 2%。逐层 eval 每次约为主 eval 的 4–5 倍（130m 主 eval 约 22 s）。
+pls0 的监控按代码记账约加 6%（130m）/ 8%（300m）训练 FLOPs（不跑）。逐层 eval 每次约为主 eval 的 4–5 倍（130m 主 eval
+约 22 s）。显存（CPU 上按真实每卡形状编译、memory_analysis）：300m 训练 22.0 → 30.9 GiB，130m 13.2 → 15.9 GiB，300m eval
+5.5 → 8.8 GiB，80 GB 卡上余量充足。
 
 ## 实验与判据
 
@@ -51,6 +53,21 @@ pls0 的监控只加约 2%。逐层 eval 每次约为主 eval 的 4–5 倍（13
   300m 用已有的 1 个 baseline（c4_en 1.05626、macro 3.80874）。
 - 逐层：pls1 的 `eval/L{k}` 与 `train/pls/L{k}` 给出每层读出随训练的变化；baseline 没有逐层指标（不另跑 pls0）。
 - 这是第一轮"看情况"的实验（n = 1）；大效应（> 0.003 bpb）单 run 可判，小效应要按 hill-climb 规则补到每臂 n ≥ 4。
+
+## 审计（2026-09-29/30，用户要求"严格审计"）
+
+独立审计 agent（报告 `tmp/pls/audit/AUDIT.md`）结论：无 BLOCKER / MAJOR。它在不经过 pls 代码的参考上复核了 loss、逐层
+stats 与梯度（f32 逐位；bf16 策略下 loss/stats 逐位、梯度在 bf16 噪声内；2 个 microbatch 的梯度累积等于两份参考的平均），
+监控的 roll-再抽样没有 off-by-one、stop-gradient 无泄漏，`train_lm.main` 端到端（bf16、microbatch、真实数据集类型、不满的
+最后一个 eval batch、marin tokenizer 的 bpb）`eval/L{L-1}/*` 与主 eval 的键全部相等、同 step 触发，续跑正常；对原 CPU 测试
+做 9 个定向变异，全部被杀掉。4 个 MINOR 已修：`scan_layers=False` 时拒绝（BlockSeq 的 scan_via 不按层切 key）；训练
+sbatch 写死 `VARIANT=pls`、`SIZE` 必须显式给、清掉会改变 run 的 launcher 旋钮（TOTAL_STEPS、INIT_FROM、TIE、PRECISION、
+EMA_BETA、SMOKE_STEPS…）；smoke 的 run id 带 `-j<jobid>` 且取自 launcher 的 dry run，并清理其临时 checkpoint；
+`pls_report.py` 默认只读 `-pls1`。另：worktree 用自己的 venv 副本（`.venv`，复制自共享 venv），另一个会话的 `uv sync`
+不会在 300m 续跑链中途换掉底层版本。
+
+解读注意：pls1 的逐层梯度相加后，`clip_by_global_norm(1.0)` 会比 baseline 更常触发（`grad/norm/total` 与裁剪率要一起看），
+这是处理的一部分，不是 bug。
 
 ## 跑之前写下的预测（2026-09-29）
 

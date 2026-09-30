@@ -67,6 +67,8 @@ class PerLayerQwen3Config(Qwen3Config):
         super().__post_init__()
         if self.pls_weight < 0:
             raise ValueError(f"pls_weight must be >= 0, got {self.pls_weight}")
+        if not self.scan_layers:
+            raise ValueError("pls reads every layer's output through Stacked.scan_via, so scan_layers must be True")
         if self.pls_monitor_stride < 1 or self.max_seq_len % self.pls_monitor_stride:
             raise ValueError(f"pls_monitor_stride must be >= 1 and divide max_seq_len={self.max_seq_len}, got {self.pls_monitor_stride}")
 

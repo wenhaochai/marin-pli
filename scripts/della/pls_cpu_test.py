@@ -236,5 +236,10 @@ c1, c0 = PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S), Pe
 fb = Qwen3Config(**common).flops_per_token(V, T)
 assert abs(c1.flops_per_token(V, T) - (fb + (L - 1) * 2 * 48 * V)) < 1e-6
 assert abs(c0.flops_per_token(V, T) - (fb + (L - 1) * 2 * 48 * V / (3 * S))) < 1e-6
-print("6. flops_per_token: + (L-1) lm_head (trained) / + (L-1) lm_head / (3 stride) (monitor)")
+try:
+    PerLayerQwen3Config(**common, scan_layers=False)
+    raise AssertionError("scan_layers=False must be rejected")
+except ValueError:
+    pass
+print("6. flops_per_token: + (L-1) lm_head (trained) / + (L-1) lm_head / (3 stride) (monitor); scan_layers=False rejected")
 print("ALL PLS CPU TESTS PASSED")

@@ -1,7 +1,7 @@
 """Per-layer report for the pls runs (VARIANT=pls): the last per-layer eval of each run side by side, the in-run check that
 the last layer's readout equals the main eval, and per-layer curves (train/pls/L{k} and eval/L{k}/...).
 
-    python scripts/della/pls_report.py --size=130m --suffixes=-pls1,-pls0 [--out=docs/della/pls_figs] [--smoke=40]
+    python scripts/della/pls_report.py --size=130m [--suffixes=-pls1[,...]] [--out=docs/della/pls_figs] [--smoke=40]
 
 Final-layer comparisons against the baseline pool go through scripts/della/objective_compare.py (its guards: finished runs
 only, same budget, Welch with df). This script reads per-layer keys only, which the baseline runs do not have.
@@ -30,7 +30,7 @@ def fmt(x) -> str:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--size", default="130m")
-    p.add_argument("--suffixes", default="-pls1,-pls0")
+    p.add_argument("--suffixes", default="-pls1")
     p.add_argument("--smoke", default="", help="SMOKE_STEPS of smoke runs to read (run ids end in -smoke<N>)")
     p.add_argument("--out", default="", help="directory for per-layer curve PNGs (omit to skip plots)")
     a = p.parse_args()
