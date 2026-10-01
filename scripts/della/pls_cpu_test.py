@@ -13,6 +13,12 @@ Run from the worktree on a vis node (fake 4-device mesh):
    equals levanter's TaggedEvaluator run on that readout alone, readout L-1 equals the baseline evaluator, and the
    log keys are eval/L{k}/<main eval keys>.
 6. flops_per_token adds one lm_head per intermediate layer (trained) or 1/(3 stride) of it (monitor).
+7. Weight schedule (pls_off_start/end, traced train step): before the ramp the step equals the always-on step, inside
+   it the loss and grads equal the reference at the ramp's weight, after it the loss and every grad equal the baseline's
+   and train/pls/L{k} is the stride monitor (through each layer's own head with separate heads, whose grads are zero).
+8. Probe: training is unchanged; cos_L{k}, gratio_L{k}, cos_aux equal cosines / norm ratios of per-loss gradients from
+   the dense reference restricted to the trunk (embeddings + blocks 0..k), and icl_L{k} equals the reference late-minus-
+   early CE, for the shared head (w=1 and w=0) and for separate heads.
 """
 import os
 
@@ -39,7 +45,7 @@ from levanter.models.lm_model import LmExample  # noqa: E402
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel  # noqa: E402
 from levanter.optim.muonh import MuonHConfig  # noqa: E402
 from levanter.testing.helpers import use_test_mesh  # noqa: E402
-from levanter.trainer import TrainerConfig  # noqa: E402
+from levanter.trainer import _TRACED_TRAIN_STEP, TrainerConfig  # noqa: E402
 from levanter.utils.mesh import MeshConfig  # noqa: E402
 
 import experiments.references.per_layer_qwen3 as pls  # noqa: E402
@@ -247,6 +253,130 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
     print(f"3c. separate heads: baseline part of init == baseline; loss/stats/all grads == per-layer-head reference {[round(float(r), 4) for r in rper_s]}; "
           "main head/norm grads == baseline; eval readouts use each layer's own head; MuonH: aux heads adamh, aux norms adam; bad combos rejected")
 
+    # 7. weight schedule on the traced train step
+    def train_step_at(m_, example, k, step):
+        token = _TRACED_TRAIN_STEP.set(step)
+        try:
+            return train_step(m_, example, k)
+        finally:
+            _TRACED_TRAIN_STEP.reset(token)
+
+    step_at = eqx.filter_jit(train_step_at)
+    loss1, stats1, g1 = trained[1.0]
+    m_sched = PerLayerQwen3LMHeadModel.init(Vocab, PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_off_start=2, pls_off_end=4), key=key0)
+    ms_sched = hax.shard(m_sched, tc.parameter_axis_mapping)
+    for st_, w_ in ((0, 1.0), (2, 1.0), (3, 0.5)):
+        l_, s_, g_ = step_at(ms_sched, es, key, jnp.int32(st_))
+        assert float(s_["pls/weight"]) == w_, (st_, float(s_["pls/weight"]))
+
+        def ref_w(mm, w_=w_):
+            per_ = ref_losses(mm)
+            return per_[L - 1] + w_ * sum(per_[: L - 1]), per_
+
+        (rl, rper_w), rg = eqx.filter_value_and_grad(ref_w, has_aux=True)(m_sched)
+        np.testing.assert_allclose(float(l_), float(rl), rtol=1e-5)
+        close(g_, rg, f"schedule step {st_} grad vs reference at w={w_}")
+        for k in range(L):
+            np.testing.assert_allclose(float(s_[f"pls/L{k}"]), float(rper_w[k]), rtol=1e-5)
+        if w_ == 1.0:
+            np.testing.assert_allclose(float(l_), float(loss1), rtol=1e-6)
+            close(g_, g1, f"schedule step {st_} grad vs always-on", rtol=1e-5)
+    for st_ in (4, 9):
+        l_, s_, g_ = step_at(ms_sched, es, key, jnp.int32(st_))
+        assert float(s_["pls/weight"]) == 0.0
+        np.testing.assert_allclose(float(l_), float(lossb), rtol=1e-6)
+        close(g_, gb, f"schedule step {st_} grad vs baseline", rtol=1e-5)
+        for k in range(L - 1):
+            np.testing.assert_allclose(float(s_[f"pls/L{k}"]), float(rmon[k]), rtol=1e-5)
+    m_sw = hax.shard(PerLayerQwen3LMHeadModel.init(Vocab, PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_off_start=3, pls_off_end=3), key=key0), tc.parameter_axis_mapping)
+    l_on, _, _ = step_at(m_sw, es, key, jnp.int32(2))
+    l_off, _, _ = step_at(m_sw, es, key, jnp.int32(3))
+    np.testing.assert_allclose(float(l_on), float(loss1), rtol=1e-6)
+    np.testing.assert_allclose(float(l_off), float(lossb), rtol=1e-6)
+    # separate heads switched off: baseline step for the main model, zero grads for the aux heads, monitor through own heads
+    m_ss = PerLayerQwen3LMHeadModel.init(Vocab, PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_separate_heads=True, pls_off_start=1, pls_off_end=1), key=key0)
+    l_, s_, g_ = step_at(hax.shard(m_ss, tc.parameter_axis_mapping), es, key, jnp.int32(5))
+    np.testing.assert_allclose(float(l_), float(lossb), rtol=1e-6)
+    close(eqx.tree_at(lambda m: (m.aux_norms, m.aux_lm_heads), g_, replace=(None, None)), gb, "sep switched off grad vs baseline", rtol=1e-5)
+    assert all(float(jnp.abs(x).max()) == 0.0 for x in jax.tree.leaves(eqx.filter((g_.aux_norms, g_.aux_lm_heads), eqx.is_array)))
+    xs_ss = ref_raw(m_ss)
+    for k in range(L - 1):
+        W = m_ss.aux_lm_heads[k].weight.rearrange((m_ss.Embed, Vocab)).array
+        wt = jnp.asarray(w_next * stride_mask)
+        want = jnp.sum(ref_ce_per_pos(m_ss.aux_norms[k](xs_ss[k]).array, W) * wt) / jnp.sum(wt)
+        np.testing.assert_allclose(float(s_[f"pls/L{k}"]), float(want), rtol=1e-5)
+    for bad in (dict(pls_weight=0.0, pls_off_end=3), dict(pls_weight=1.0, pls_off_start=4, pls_off_end=3), dict(pls_weight=1.0, pls_off_start=2)):
+        try:
+            PerLayerQwen3Config(**common, **bad)
+            raise AssertionError(f"{bad} must be rejected")
+        except ValueError:
+            pass
+    print("7. schedule: steps before the ramp == always-on step; ramp step == reference at w=0.5; after it loss and all grads == baseline, "
+          "train/pls/L{k} == stride monitor; a switch flips at its step; separate heads off: aux grads 0, monitor through own heads; bad schedules rejected")
+
+    # 8. probe: per-loss gradient alignment on the trunk and in-context scores, against the dense reference
+    def trunk_vec(g, upto):
+        Bn = g.transformer.layers.Block.name
+        lay = [a[Bn, : upto + 1].array.ravel() for a in jax.tree.leaves(g.transformer.layers, is_leaf=lambda x: isinstance(x, hax.NamedArray)) if isinstance(a, hax.NamedArray)]
+        emb = [a.array.ravel() for a in jax.tree.leaves(g.embeddings, is_leaf=lambda x: isinstance(x, hax.NamedArray)) if isinstance(a, hax.NamedArray)]
+        return jnp.concatenate([*emb, *lay]).astype(jnp.float32)
+
+    late_mask = ((np.arange(T) >= T // 2) & ((np.arange(T) - T // 2) % S == 0)).astype(np.float32)[None]
+    early_mask = ((np.arange(T) >= 2) & (np.arange(T) < 6)).astype(np.float32)[None]
+
+    def probe_reference(mm, per_layer_hw):
+        """per_layer_hw(mm) -> list of (normed hidden, head matrix) per readout, from the no-scan reference."""
+        def ce_k(m_, k):
+            h, W = per_layer_hw(m_)[k]
+            wt = jnp.asarray(w_next)
+            return jnp.sum(ref_ce_per_pos(h, W) * wt) / jnp.sum(wt)
+
+        grads = [eqx.filter_grad(lambda m_, k=k: ce_k(m_, k))(mm) for k in range(L)]
+        want = {}
+        for k in range(L - 1):
+            a, b = trunk_vec(grads[k], k), trunk_vec(grads[L - 1], k)
+            want[f"pls_probe/cos_L{k}"] = float(a @ b / jnp.sqrt((a @ a) * (b @ b)))
+            want[f"pls_probe/gratio_L{k}"] = float(jnp.sqrt((a @ a) / (b @ b)))
+        a = sum(trunk_vec(grads[k], L - 1) for k in range(L - 1))
+        b = trunk_vec(grads[L - 1], L - 1)
+        want["pls_probe/cos_aux"] = float(a @ b / jnp.sqrt((a @ a) * (b @ b)))
+        for k, (h, W) in enumerate(per_layer_hw(mm)):
+            ce = ref_ce_per_pos(h, W)
+            late = jnp.sum(ce * w_next * late_mask) / jnp.sum(w_next * late_mask)
+            early = jnp.sum(ce * w_next * early_mask) / jnp.sum(w_next * early_mask)
+            want[f"pls_probe/icl_L{k}"] = float(late - early)
+        return want
+
+    def shared_hw(m_):
+        W = m_.get_lm_head().rearrange((m_.Embed, Vocab)).array
+        return [(h, W) for h in ref_hidden(m_)]
+
+    def sep_hw(m_):
+        xs_ = ref_raw(m_)
+        return [(m_.aux_norms[k](xs_[k]).array, m_.aux_lm_heads[k].weight.rearrange((m_.Embed, Vocab)).array) for k in range(L - 1)] + [
+            (m_.transformer.norm(xs_[L - 1]).array, m_.get_lm_head().rearrange((m_.Embed, Vocab)).array)]
+
+    for name, extra, hw, (want_loss, want_grad) in (
+        ("w=1", dict(pls_weight=1.0), shared_hw, (loss1, g1)),
+        ("w=0", dict(pls_weight=0.0), shared_hw, (lossb, gb)),
+        ("sep", dict(pls_weight=1.0, pls_separate_heads=True), sep_hw, (loss_s, g_s)),
+    ):
+        m_p = PerLayerQwen3LMHeadModel.init(Vocab, PerLayerQwen3Config(**common, pls_monitor_stride=S, pls_probe=True, pls_probe_early=(2, 6), **extra), key=key0)
+        l_, s_, g_ = step_fn(hax.shard(m_p, tc.parameter_axis_mapping), es, key)
+        np.testing.assert_allclose(float(l_), float(want_loss), rtol=1e-6)
+        close(g_, want_grad, f"probe {name}: grads vs the same run without the probe", rtol=1e-5)
+        want = probe_reference(m_p, hw)
+        got = {k_: float(v) for k_, v in s_.items() if k_.startswith("pls_probe/")}
+        assert sorted(got) == sorted(want), (sorted(got), sorted(want))
+        for k_ in want:
+            np.testing.assert_allclose(got[k_], want[k_], rtol=2e-4, atol=2e-6, err_msg=f"probe {name} {k_}")
+        print(f"8. probe {name}: training unchanged; " + " ".join(f"{k_.split('/')[1]}={got[k_]:+.3f}" for k_ in sorted(got)) + " == reference")
+    try:
+        PerLayerQwen3Config(**common, pls_probe=True, pls_probe_early=(2, 20))
+        raise AssertionError("an early window past max_seq_len/2 must be rejected")
+    except ValueError:
+        pass
+
     # 4. readout losses per position
     m1 = models[1.0]
     per = eqx.filter_jit(lambda mm, e_: mm.readout_losses(e_, tuple(range(L))))(hax.shard(m1, tc.parameter_axis_mapping), es)
@@ -309,6 +439,8 @@ c1, c0 = PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S), Pe
 fb = Qwen3Config(**common).flops_per_token(V, T)
 assert abs(c1.flops_per_token(V, T) - (fb + (L - 1) * 2 * 48 * V)) < 1e-6
 assert abs(c0.flops_per_token(V, T) - (fb + (L - 1) * 2 * 48 * V / (3 * S))) < 1e-6
+c_sched = PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_off_start=2, pls_off_end=4)
+assert abs(c_sched.flops_per_token(V, T) - c0.flops_per_token(V, T)) < 1e-6
 try:
     PerLayerQwen3Config(**common, scan_layers=False)
     raise AssertionError("scan_layers=False must be rejected")

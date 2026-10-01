@@ -20,6 +20,13 @@ longer equals once pls_weight > 0). With pls_weight = 0 the model trains exactly
 stop-gradient readouts on every ``pls_monitor_stride``-th position: a logit-lens reference run. ``extra_eval_callbacks``
 adds an evaluator that decodes every layer in one forward pass at the main eval's cadence and logs ``eval/L{k}/...``
 with the main eval's keys (loss, macro_loss, per-dataset loss and bpb); ``eval/L{L-1}/...`` equals the main eval.
+
+Schedule (``pls_off_start``/``pls_off_end``): the intermediate weight holds at pls_weight, falls linearly to 0 between the
+two steps and stays 0 after, when the readouts are skipped (a ``lax.cond`` on the traced train step) and train/pls/L{k}
+falls back to the stride-sampled monitor. Probe (``pls_probe``, diagnostic runs): every train step, the cosine between
+each intermediate loss's gradient and the final loss's gradient on the trunk they share, their norm ratio, and every
+readout's in-context score (late-position minus early-position CE), all stop-gradient: the candidate signals for a
+metric-driven schedule.
 """
 
 import dataclasses
@@ -50,6 +57,7 @@ from levanter.metrics import Metric, ReductionType
 from levanter.models.lm_model import LmConfig, LmExample
 from levanter.models.loss import fused_cross_entropy_loss_and_logsumexp_penalty, maybe_fused_next_token_loss, next_token_loss_weight
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
+from levanter.trainer import current_train_step
 from levanter.utils.logging import LoadingTimeTrackerIterator
 from levanter.utils.tree_utils import inference_mode
 
@@ -74,6 +82,15 @@ class PerLayerQwen3Config(Qwen3Config):
     # layer's gradient alone. Per-layer eval reads each layer through its own head. The heads are ``aux_lm_heads`` (AdamH,
     # like lm_head) and ``aux_norms`` (Adam, like the final norm). New parameters: (L-1) x (vocab x hidden + hidden).
     pls_separate_heads: bool = False
+    # Weight schedule: pls_weight until step pls_off_start, linear to 0 at step pls_off_end (start == end: a switch), 0
+    # after, with the readouts skipped. pls_off_end = 0: always on.
+    pls_off_start: int = 0
+    pls_off_end: int = 0
+    # Diagnostic: per-layer gradient alignment and in-context scores every train step (no effect on training; one extra
+    # forward and L backward passes per step). In-context score = CE on every pls_monitor_stride-th position of the
+    # second half of the sequence minus CE on positions [pls_probe_early[0], pls_probe_early[1]).
+    pls_probe: bool = False
+    pls_probe_early: tuple[int, int] = (32, 64)
 
     def __post_init__(self):
         super().__post_init__()
@@ -87,6 +104,14 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("pls_separate_heads and pls_detach_head are exclusive: detaching separate heads leaves them untrained")
         if self.pls_monitor_stride < 1 or self.max_seq_len % self.pls_monitor_stride:
             raise ValueError(f"pls_monitor_stride must be >= 1 and divide max_seq_len={self.max_seq_len}, got {self.pls_monitor_stride}")
+        if self.pls_off_end and not (0 <= self.pls_off_start <= self.pls_off_end and self.pls_weight > 0):
+            raise ValueError(f"a weight schedule needs 0 <= pls_off_start <= pls_off_end and pls_weight > 0, got {self.pls_off_start}, {self.pls_off_end}, {self.pls_weight}")
+        if not self.pls_off_end and self.pls_off_start:
+            raise ValueError("pls_off_start without pls_off_end")
+        half = self.max_seq_len // 2
+        a, b = self.pls_probe_early
+        if self.pls_probe and (half % self.pls_monitor_stride or not 0 <= a < b <= half):
+            raise ValueError(f"pls_probe needs pls_monitor_stride | max_seq_len/2 and 0 <= early start < end <= max_seq_len/2, got stride {self.pls_monitor_stride}, early {self.pls_probe_early}")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -95,10 +120,11 @@ class PerLayerQwen3Config(Qwen3Config):
     def flops_per_token(self, vocab_size: int, context_length: int):
         # Each readout is one more lm_head matmul (2 * hidden * vocab forward FLOPs per token, as the base counts the head).
         # Monitoring readouts run forward only on 1/stride of the positions, i.e. 1/(3 * stride) of a trained readout.
+        # With a weight schedule the count is the monitor's (after the window, i.e. most of training). The probe is not counted.
         base = super().flops_per_token(vocab_size, context_length)
         if base is None:
             return None
-        share = 1.0 if self.pls_weight > 0 else 1.0 / (3 * self.pls_monitor_stride)
+        share = 1.0 if self.pls_weight > 0 and not self.pls_off_end else 1.0 / (3 * self.pls_monitor_stride)
         return base + (self.num_layers - 1) * 2 * self.hidden_dim * vocab_size * share
 
     def extra_eval_callbacks(self, EvalBatch, tagged_eval_sets, tokenizer, device_mesh, axis_mapping, max_examples_per_dataset, *, mp):
@@ -111,6 +137,14 @@ class PerLayerQwen3Config(Qwen3Config):
 
 def _scalar(x):
     return x.array if isinstance(x, NamedArray) else x
+
+
+def _every(x: NamedArray, axis_name: str, stride: int, start: int) -> NamedArray:
+    """x at positions start, start + stride, ... of axis axis_name (stride must divide the axis size minus start)."""
+    if start:
+        x = x[axis_name, start:]
+    ax = x.resolve_axis(axis_name)
+    return x.unflatten_axis(ax, (hax.Axis("pls_chunk", ax.size // stride), hax.Axis("pls_stride", stride)))["pls_stride", 0]
 
 
 class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
@@ -151,42 +185,111 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             norm = jax.tree_util.tree_map(lambda a: jax.lax.stop_gradient(a) if eqx.is_array(a) else a, norm)
         return norm(outs[self.transformer.layers.Block.name, k])
 
+    def _head(self, k: int) -> NamedArray:
+        """Layer k's readout head: its own with pls_separate_heads (k < L-1), else the model's lm_head."""
+        return cast(Any, self.aux_lm_heads)[k].weight if self._separate(k) else self.get_lm_head()
+
     def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, **kw) -> NamedArray:
-        lm_head = cast(Any, self.aux_lm_heads)[k].weight if self._separate(k) else self.get_lm_head()
+        lm_head = self._head(k)
         if detach_head:
             lm_head = jax.lax.stop_gradient(lm_head)
         return maybe_fused_next_token_loss(
             self.Pos, self.Embed, self.Vocab, self._layer(outs, k, detach_head=detach_head), lm_head, example.tokens, loss_weight=example.loss_weight, **kw
         )
 
-    def _monitor_ce(self, outs: NamedArray, k: int, example: LmExample, *, logit_soft_cap) -> jax.Array:
-        """Stop-gradient CE of layer k's readout on every pls_monitor_stride-th position (targets x_{t+1}, the baseline's
-        next-token weights); a weighted mean over the sampled positions, like the training loss over all of them."""
-        s = self.config.pls_monitor_stride
+    def _subset_ce(self, outs: NamedArray, k: int, example: LmExample, select, *, logit_soft_cap) -> jax.Array:
+        """Stop-gradient CE of layer k's readout on the positions ``select`` keeps (targets x_{t+1}, the baseline's
+        next-token weights); a weighted mean over those positions, like the training loss over all of them."""
         Pos = example.tokens.resolve_axis(self.Pos.name)
-        Chunk, Stride = hax.Axis("pls_chunk", Pos.size // s), hax.Axis("pls_stride", s)
-
-        def strided(x: NamedArray) -> NamedArray:
-            return x.unflatten_axis(Pos, (Chunk, Stride))[Stride.name, 0]
-
         h = jax.lax.stop_gradient(self._layer(outs, k))
-        lm_head = jax.lax.stop_gradient(self.get_lm_head())
+        lm_head = jax.lax.stop_gradient(self._head(k))
         target = hax.roll(example.tokens, -1, Pos)
         weight = next_token_loss_weight(Pos, example.loss_weight)
         ce = fused_cross_entropy_loss_and_logsumexp_penalty(
-            strided(h),
+            select(h),
             lm_head,
             Contract=self.Embed,
             Label=self.Vocab,
-            target_y=strided(target),
+            target_y=select(target),
             reduction=hax.mean,
             reduction_axis=None,
-            weight=strided(weight),
+            weight=select(weight),
             logsumexp_weight=None,
             dtype=weight.dtype,
             logit_soft_cap=logit_soft_cap,
         )
         return _scalar(ce)
+
+    def _monitor_ce(self, outs: NamedArray, k: int, example: LmExample, *, logit_soft_cap) -> jax.Array:
+        """Stop-gradient CE of layer k's readout on every pls_monitor_stride-th position."""
+        s = self.config.pls_monitor_stride
+        return self._subset_ce(outs, k, example, lambda x: _every(x, self.Pos.name, s, 0), logit_soft_cap=logit_soft_cap)
+
+    def _icl_score(self, outs: NamedArray, k: int, example: LmExample, *, logit_soft_cap) -> jax.Array:
+        """In-context score of layer k's readout: CE on every stride-th position of the sequence's second half minus CE
+        on the early window pls_probe_early (negative once the readout uses context)."""
+        cfg = cast(PerLayerQwen3Config, self.config)
+        Pos = example.tokens.resolve_axis(self.Pos.name)
+        a, b = cfg.pls_probe_early
+        half = Pos.size // 2
+        late = self._subset_ce(outs, k, example, lambda x: _every(x, Pos.name, cfg.pls_monitor_stride, half), logit_soft_cap=logit_soft_cap)
+        early = self._subset_ce(outs, k, example, lambda x: x[Pos.name, a:b], logit_soft_cap=logit_soft_cap)
+        return late - early
+
+    def _probe_stats(self, outs: NamedArray, example: LmExample, *, key, kw: dict) -> dict[str, jax.Array]:
+        """Gradient alignment of every intermediate loss with the final loss, on the trunk both depend on (embeddings and
+        blocks 0..k; heads and norms excluded), from one VJP of all readout CEs at the current parameters:
+        cos_L{k} = cos(grad CE_k, grad CE_{L-1}), gratio_L{k} = |grad CE_k| / |grad CE_{L-1}| (on embeddings + blocks
+        0..k), cos_aux = cos(grad sum_{k<L-1} CE_k, grad CE_{L-1}) on the whole trunk; plus icl_L{k} for every readout.
+        Everything is stop-gradient: training is unchanged."""
+        cfg = cast(PerLayerQwen3Config, self.config)
+        L = cfg.num_layers
+        Block = self.transformer.layers.Block.name
+        pkw = dict(kw, reduction=hax.mean, reduction_axis=None)
+        frozen = jax.tree_util.tree_map(lambda a: jax.lax.stop_gradient(a) if eqx.is_array(a) else a, self)
+        # One trunk forward; each readout's CE differentiated only back to the layer outputs; then one trunk backward per
+        # gradient (a VJP of all readouts at once would run every readout's backward for every one-hot cotangent).
+        o, trunk_vjp = eqx.filter_vjp(lambda m: m.layer_outputs(example.tokens, example.attn_mask, key=key), frozen)
+        cots = [jax.grad(lambda o_, k=k: jnp.asarray(_scalar(frozen._readout_ce(o_, k, example, **pkw)), jnp.float32))(o) for k in range(L)]
+
+        def trunk_grad(cot):
+            g = trunk_vjp(cot)[0]
+            return g.embeddings, g.transformer.layers
+
+        def named_leaves(t):
+            return [x for x in jax.tree_util.tree_leaves(t, is_leaf=lambda x: isinstance(x, NamedArray)) if isinstance(x, NamedArray)]
+
+        def dots(g, h):
+            """(per-block dot products, shape (L,); embedding dot product) of two trunk gradients."""
+            per_block = jnp.zeros((L,), jnp.float32)
+            for a_, b_ in zip(named_leaves(g[1]), named_leaves(h[1])):
+                assert any(ax.name == Block for ax in a_.axes), a_.axes
+                per_block = per_block + hax.sum(a_ * b_, axis=tuple(ax for ax in a_.axes if ax.name != Block)).rearrange((Block,)).array.astype(jnp.float32)
+            emb = sum(jnp.sum((a_ * b_).array.astype(jnp.float32)) for a_, b_ in zip(named_leaves(g[0]), named_leaves(h[0])))
+            return per_block, emb
+
+        g_final = trunk_grad(cots[L - 1])
+        f_blocks, f_emb = dots(g_final, g_final)
+        out = {}
+        for k in range(L - 1):
+            g_k = trunk_grad(cots[k])  # zero on blocks above k
+            d_blocks, d_emb = dots(g_k, g_final)
+            n_blocks, n_emb = dots(g_k, g_k)
+            dot = jnp.sum(d_blocks[: k + 1]) + d_emb
+            n_k = jnp.sum(n_blocks[: k + 1]) + n_emb
+            n_f = jnp.sum(f_blocks[: k + 1]) + f_emb
+            out[f"pls_probe/cos_L{k}"] = dot / jnp.sqrt(n_k * n_f)
+            out[f"pls_probe/gratio_L{k}"] = jnp.sqrt(n_k / n_f)
+        cot_aux = cots[0]
+        for c in cots[1 : L - 1]:
+            cot_aux = cot_aux + c
+        g_aux = trunk_grad(cot_aux)
+        a_blocks, a_emb = dots(g_aux, g_final)
+        na_blocks, na_emb = dots(g_aux, g_aux)
+        out["pls_probe/cos_aux"] = (jnp.sum(a_blocks) + a_emb) / jnp.sqrt((jnp.sum(na_blocks) + na_emb) * (jnp.sum(f_blocks) + f_emb))
+        for k in range(L):
+            out[f"pls_probe/icl_L{k}"] = self._icl_score(outs, k, example, logit_soft_cap=kw.get("logit_soft_cap"))
+        return out
 
     def compute_next_token_loss(  # type: ignore[override]
         self,
@@ -213,16 +316,38 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         L = cfg.num_layers
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
         outs = self.layer_outputs(example.tokens, example.attn_mask, key=key)
-        loss = self._readout_ce(outs, L - 1, example, **kw)
-        per_layer = {L - 1: _scalar(loss)}
-        for k in range(L - 1):
-            if cfg.pls_weight > 0:
+        final = self._readout_ce(outs, L - 1, example, **kw)
+
+        def supervised(w):
+            loss, per = final, []
+            for k in range(L - 1):
                 ce = self._readout_ce(outs, k, example, detach_head=cfg.pls_detach_head, **kw)
-                loss = loss + cfg.pls_weight * ce
-                per_layer[k] = _scalar(ce)
-            else:
-                per_layer[k] = self._monitor_ce(outs, k, example, logit_soft_cap=logit_soft_cap)
-        stats = {f"pls/L{k}": Metric.from_value(jnp.asarray(v, jnp.float32), ReductionType.MEAN) for k, v in sorted(per_layer.items())}
+                loss = loss + ce * w  # NamedArray on the left: w may be a traced scalar
+                per.append(jnp.asarray(_scalar(ce), jnp.float32))
+            return loss, jnp.stack(per)
+
+        def monitored():
+            return final, jnp.stack([jnp.asarray(self._monitor_ce(outs, k, example, logit_soft_cap=logit_soft_cap), jnp.float32) for k in range(L - 1)])
+
+        weight = None
+        if cfg.pls_weight == 0:
+            loss, per = monitored()
+        elif not cfg.pls_off_end:
+            loss, per = supervised(cfg.pls_weight)
+        else:
+            step = current_train_step()
+            if step is None:
+                raise RuntimeError("the pls weight schedule follows the train step, but levanter.trainer.current_train_step() is None")
+            ramp = max(cfg.pls_off_end - cfg.pls_off_start, 1)
+            weight = cfg.pls_weight * jnp.clip((cfg.pls_off_end - jnp.asarray(step, jnp.float32)) / ramp, 0.0, 1.0)
+            loss, per = jax.lax.cond(jnp.asarray(step) < cfg.pls_off_end, lambda: supervised(weight), monitored)
+        values = {f"pls/L{k}": per[k] for k in range(L - 1)}
+        values[f"pls/L{L - 1}"] = jnp.asarray(_scalar(final), jnp.float32)
+        if weight is not None:
+            values["pls/weight"] = weight
+        if cfg.pls_probe:
+            values.update(self._probe_stats(outs, example, key=key, kw=kw))
+        stats = {k: Metric.from_value(jnp.asarray(v, jnp.float32), ReductionType.MEAN) for k, v in sorted(values.items())}
         return loss, stats
 
     def readout_losses(self, example: LmExample, readouts: Sequence[int]) -> NamedArray:
