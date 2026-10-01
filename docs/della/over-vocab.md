@@ -94,6 +94,12 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
 * 1.2B runs: ov 14794354 -> 14812270 (23:55 h + 15:00 h), ovss 14794356 -> 14794357 (23:55 h + 9:30 h), pli-short
   chains submitted before the smoke result so they accrue queue age; second segments sized from the smoke (~33.6 h
   and ~29.9 h of work including evals and hourly checkpoint stalls).
+* **1.2B OOMs under the default BFC allocator (2026-10-01).** Persistent state is ~27 GiB per device (tables,
+  their Adam state, the model) and every train step allocates one contiguous temp buffer of 30.18 GiB (ov) or
+  25.08 GiB (ovss), most of it the tables' gradient and its microbatch accumulator. ovss died at step ~130 and ov at
+  step ~1,290 with ~44 GiB free but the largest free block ~0.7 GiB short of the temp: a long-lived small block had
+  landed beside the temp region. Allocator diagnosis 14824921 (bfc / cuda_async / vmm); ovss resubmitted with
+  cuda_async (14824631 -> 14824632); ov's second segment resumes from step 678 under BFC.
 * Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
   (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
   96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
