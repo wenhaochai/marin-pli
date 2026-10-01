@@ -1,9 +1,9 @@
 # Sampled softmax on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-09-28):** implemented (`VARIANT=ss`, branch `sampled-softmax`); CPU tests pass; on H100 the candidate
-CE is 5.2x cheaper than the full-vocabulary CE at P = 24,576 (41 vs 215 ms per device-step); the 60-step 130m smoke
-runs every stage cleanly, 1.36x faster per step than the baseline on the same node in the first stage (~1.29x over
-the whole schedule). Full 130m runs (4 ss seeds + 2 restore baselines, jobs 14658326-8) queued; no quality verdict yet.
+**Status (2026-10-01, done):** the nanoGPT record-#92 sampled softmax trains the muonh_qwen3 baseline 1.30x / 1.13x /
+1.07x / 1.08x faster (summed step time) at 130m / 300m / 520m / 1.2B with no Paloma cost (macro -0.002 / -0.006 /
+-0.004 / -0.001 vs the same-seed baseline; seed 0, one run per size); the gain is largest at 130m and levels off near
+1.07-1.08x from 520m on.
 
 ## What it is
 
@@ -105,6 +105,9 @@ baseline. Restored on della-vis1:
 
 ## Changelog
 
+* 2026-10-01 17:27: 1.2B done (chain 14666546-8). ss macro 3.3598 vs the single 1.2B baseline's 3.3609 (-0.0011),
+  c4_en bpb +0.0004, 7/16 domains lower (4chan -0.099 .. twitterAAE +0.042, the noisy small domains); 2903.8 vs
+  3138.4 min of training steps, 1.08x. Ladder complete: 1.30x / 1.13x / 1.07x / 1.08x with no quality cost.
 * 2026-09-30 08:00: 520m done (chain 14666513-19). ss macro 3.5683 vs the single 520m baseline's 3.5726 (-0.0043),
   c4_en bpb -0.0003; 1042.5 vs 1115.8 min of training steps, 1.07x. Ladder so far: 1.30x / 1.13x / 1.07x at
   130m / 300m / 520m with no quality cost at any size; 1.2B still training.
