@@ -351,7 +351,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
-                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
+                # OV checkpoints carry the n-gram tables with their Adam state (79 GB at 300m, 112 GB at 520m, ~227 GB at
+                # 1_2b), so OV variants (a) keep no step-interval checkpoints (the GROUP fileset was 96% full on
+                # 2026-09-30) and (b) save the temporary (resume) checkpoint hourly: a save stalls training while it stages
+                # to host (300m ov: ~70 s per save, ~11% of wall-clock at the 10-minute interval). The final checkpoint is
+                # unchanged and training is unaffected; a killed job loses at most an hour.
+                checkpointer=CheckpointerConfig(
+                    save_interval=timedelta(minutes=60 if VARIANT in ("ov", "ovss") else 10),
+                    keep=[] if VARIANT in ("ov", "ovss") else [dict(every=10000)],
+                ),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
                     compute_mapping={
