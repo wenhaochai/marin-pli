@@ -87,10 +87,13 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
 * First 8-GPU smoke (14768821, 520m): `IndivisibleError`, a 12,800,004-row table over 8 devices; fixed by the row
   padding above (1604abd2e2), CPU tests re-passed.
 * 520m smoke (14775297, 60 steps): ov 3779 ms/step, ovss 3350 ms/step, rc 0 for both.
-* 1.2B smoke (PDP=16): 14775298 on pli-short cancelled after 5 h in the queue; resubmitted on pli-cp as 14793357.
+* 1.2B smoke (PDP=16, 14793357 on pli-cp after 14775298 sat 5 h on pli-short): ov 4998 ms/step, ovss 4313 ms/step
+  (a 60-step smoke passes through all four ss stages in the run's proportions, so this is the run average), rc 0 for
+  both; the 210 GiB final checkpoint saved in 122 s.
 * 520m runs: ov 14779674 (13:30 h), ovss 14779675 (12:30 h), single resumable jobs on pli-short.
-* 1.2B runs: ov 14794354 -> 14794355, ovss 14794356 -> 14794357 (23:55 h + 12:00 h chains on pli-short), submitted
-  before the smoke result so they accrue queue age.
+* 1.2B runs: ov 14794354 -> 14812270 (23:55 h + 15:00 h), ovss 14794356 -> 14794357 (23:55 h + 9:30 h), pli-short
+  chains submitted before the smoke result so they accrue queue age; second segments sized from the smoke (~33.6 h
+  and ~29.9 h of work including evals and hourly checkpoint stalls).
 * Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
   (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
   96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
