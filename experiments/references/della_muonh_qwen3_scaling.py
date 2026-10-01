@@ -27,6 +27,18 @@ import dataclasses
 import os
 from datetime import timedelta
 
+# 1_2b OV on 8 GPUs dies under XLA's default BFC allocator: ~27 GiB of persistent state plus one contiguous 25-30 GiB
+# temp buffer per step, and a long-lived small block lands beside the temp until no contiguous block is left (ovss at
+# step ~120 every time, ov at ~1,290). scripts/della/ov_alloc_diag.sbatch (job 14824921, 1.2B ovss, 300 steps): BFC
+# OOMs at step 119; cuda_async with a preallocated pool runs through at +1.4% step time in the first stage (+4% over
+# the run); cuda_async without preallocation +30%; vmm +17%. So unless the job set an allocator itself, 1_2b OV uses
+# cuda_async with a pool sized to its temp (ov 30.2 GiB -> 0.8, ovss 25.1 GiB -> 0.75). It must run before JAX
+# initialises its backend, which reads these variables once.
+if os.environ.get("VARIANT") in ("ov", "ovss") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75"}[os.environ["VARIANT"]]
+    print(f"1_2b OV allocator: cuda_async, memory fraction {os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']}", flush=True)
+
 import jmp
 from fray.cluster import ResourceConfig
 from haliax.partitioning import ResourceAxis
