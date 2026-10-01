@@ -89,3 +89,11 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
 * 520m smoke (14775297, 60 steps): ov 3779 ms/step, ovss 3350 ms/step, rc 0 for both.
 * 1.2B smoke (PDP=16): 14775298 on pli-short cancelled after 5 h in the queue; resubmitted on pli-cp as 14793357.
 * 520m runs: ov 14779674 (13:30 h), ovss 14779675 (12:30 h), single resumable jobs on pli-short.
+* 1.2B runs: ov 14794354 -> 14794355, ovss 14794356 -> 14794357 (23:55 h + 12:00 h chains on pli-short), submitted
+  before the smoke result so they accrue queue age.
+* Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
+  (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
+  96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
+  while it stages to host: at 300m ov, ~70 s per save, ~11% of wall-clock. The reported speeds are summed step times,
+  which exclude checkpoint stalls for every arm, so the 130m/300m OV wall-clock was ~11% longer than its step-time
+  total. Training itself is unchanged.
