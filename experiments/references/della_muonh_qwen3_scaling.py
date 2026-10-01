@@ -400,7 +400,30 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
 
 
+def _start_memstats_thread(every: int) -> None:
+    """Diagnostic (MEMSTATS_EVERY=<seconds>): print device 0's allocator stats every `every` seconds. The first read
+    waits one period so the trainer brings the backend up first."""
+    import threading
+    import time
+
+    import jax
+
+    def loop():
+        while True:
+            time.sleep(every)
+            try:
+                st = jax.devices()[0].memory_stats() or {}
+                gib = {k: st.get(k, 0) / 2**30 for k in ("bytes_in_use", "peak_bytes_in_use", "largest_alloc_size", "largest_free_block_bytes", "bytes_limit")}
+                print("MEMSTATS dev0 " + " ".join(f"{k}={v:.2f}" for k, v in gib.items()) + " GiB", flush=True)
+            except Exception as e:  # diagnostics must never take the run down
+                print(f"MEMSTATS error {e!r}", flush=True)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 if __name__ == "__main__":
+    if int(os.environ.get("MEMSTATS_EVERY", "0")) > 0:
+        _start_memstats_thread(int(os.environ["MEMSTATS_EVERY"]))
     step = muonh_qwen3_run(os.environ["SIZE"])
     if os.environ.get("DRY_RUN") == "1":
         spec = lower(step)

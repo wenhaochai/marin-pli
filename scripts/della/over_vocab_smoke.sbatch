@@ -20,18 +20,18 @@ module load proxy/default  # wandb only
 export MARIN_PREFIX=/scratch/gpfs/GROUP/USER/marin_store_big
 export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}  # XLA_PYTHON_CLIENT_ALLOCATOR passes through
 export SMOKE_STEPS=${SMOKE_STEPS:-60} RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
 for SIZE in ${SIZES:-130m 300m}; do
-  for VARIANT in ov ovss; do
+  for VARIANT in ${VARIANTS:-ov ovss}; do
     export SIZE VARIANT
     run_id=$(DRY_RUN=1 .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p')
     log=logs/slurm/ov-smoke_${SLURM_JOB_ID}_${run_id}.log
     echo "SMOKE $run_id START $(date +%H:%M:%S)"
     nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -l 2 > $log.mem &
     mpid=$!
-    timeout --signal=TERM 20m .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
+    timeout --signal=TERM ${RUN_TIMEOUT:-20m} .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
     rc=$?
     kill $mpid
     peak=$(sort -n $log.mem | tail -1)
