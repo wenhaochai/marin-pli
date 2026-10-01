@@ -108,8 +108,19 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
   their Adam state, the model) and every train step allocates one contiguous temp buffer of 30.18 GiB (ov) or
   25.08 GiB (ovss), most of it the tables' gradient and its microbatch accumulator. ovss died at step ~130 and ov at
   step ~1,290 with ~44 GiB free but the largest free block ~0.7 GiB short of the temp: a long-lived small block had
-  landed beside the temp region. Allocator diagnosis 14824921 (bfc / cuda_async / vmm); ovss resubmitted with
-  cuda_async (14824631 -> 14824632); ov's second segment resumes from step 678 under BFC.
+  landed beside the temp region. Allocator diagnosis 14824921 (1.2B ovss, 300 steps, `scripts/della/ov_alloc_diag.sbatch`):
+
+  | allocator | outcome | stage-1 ms/step | over the run |
+  |---|---|---|---|
+  | BFC, fraction 0.9 (default) | OOM at step 119, as in production | 4253 | |
+  | cuda_async 0.9, no preallocation | 300 steps | 5509 (+30%) | 5688 ms |
+  | **cuda_async 0.75, preallocated** | **300 steps** | **4312 (+1.4%)** | **4491 ms (+4%)** |
+  | vmm 0.9 | 300 steps | 4985 (+17%) | 5138 ms |
+
+  Since 83270354c5 the launcher gives 1.2B OV runs cuda_async with a preallocated pool unless the job chose an allocator:
+  0.8 for ov (30.2 GiB temp; 63.3 GiB pool), 0.75 for ovss (25.1 GiB temp; 59.4 GiB pool). The cuda_async process
+  can abort at exit (rc 134 after the step succeeded); the run itself is unaffected. Runs: ovss 14824631 -> 14824632
+  (started 10-01 16:43); ov's queued second segment 14812270 resumes from step 678 and picks the allocator up at start.
 * Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
   (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
   96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
