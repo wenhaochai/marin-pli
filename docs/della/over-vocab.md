@@ -1,8 +1,10 @@
 # Over-vocabulary (OV) on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-09-30):** OV (over-encoding + over-decoding) beats the baseline at 130m and 300m on the same data and steps,
-and with the sampled softmax on both heads it does so at baseline speed: Paloma macro -0.066 at 130m (t -10.8 vs the
-8-run pool) and -0.038 at 300m (t -5.3 vs the 4-run pool), 1.04x / 1.03x faster than the baseline. n = 1 per arm.
+**Status (2026-10-01):** OV (over-encoding + over-decoding) beats the baseline at 130m, 300m and 520m on the same data
+and steps, and with the sampled softmax on both heads it does so at about baseline speed: Paloma macro -0.066 at 130m
+(t -10.8 vs the 8-run pool), -0.038 at 300m (t -5.3 vs the 4-run pool) and -0.029 at 520m (one baseline run, all 16
+domains lower); 1.04x / 1.03x faster than the baseline at 130m / 300m, and 1.13x faster than OV alone at 520m (8 GPUs,
+no 8-GPU baseline). n = 1 per arm. 1.2B is running.
 
 ## What it is
 
@@ -66,10 +68,18 @@ losses: ntp 3.129, od (x_{t+2}) 4.925. Not yet separated: how much comes from OE
 | 300m | ss | 243.8 min | 1.13x faster | -0.0055 (-0.010, t -1.4) | +0.0004 |
 | 300m | ov | 336.8 min | 1.22x slower | -0.0360 (-0.040, t -5.7) | -0.0114 |
 | 300m | ovss | 269.7 min | 1.03x faster | -0.0335 (-0.038, t -5.3) | -0.0103 |
+| 520m | baseline (4 GPU) | 1115.8 min | 1.00x | 3.5726 | 0.9883 |
+| 520m | ss (4 GPU) | 1042.5 min | 1.07x faster | -0.0043 | -0.0003 |
+| 520m | ov (8 GPU) | 630.5 min | (8 GPU) | -0.0361 | -0.0093 |
+| 520m | ovss (8 GPU) | 557.7 min | 1.13x faster than ov | -0.0287 | -0.0083 |
 
 300m per domain: both OV arms lower all 16 domains; 6 clear the Bonferroni bar (c4_100_domains, c4_en, falcon,
 subreddits, m2d2_wikipedia, mc4). The gain shrinks from 130m to 300m (macro -0.066 -> -0.038, c4_en -0.020 -> -0.010),
-as the paper's log-linear law would put it for a fixed table against a growing model. Open: OE vs OD attribution; 520m.
+as the paper's log-linear law would put it for a fixed table against a growing model. At 520m (one baseline run, so no
+t statistic; the 300m pool's seed sd was ~0.006) both OV arms again lower all 16 domains, ov by -0.036 macro (the same
+as at 300m) and ovss by -0.029; the ovss - ov gap (+0.007) is within one seed sd. The 520m OV arms ran on 8 GPUs, so
+their training time is comparable only with each other: a perfectly scaling 8-GPU baseline would take ~558 min, about
+ovss's 557.7. Open: OE vs OD attribution; 1.2B.
 
 ## Runs (seed 0, compared with the existing baseline pools)
 
