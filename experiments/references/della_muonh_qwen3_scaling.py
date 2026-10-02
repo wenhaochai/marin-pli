@@ -178,6 +178,8 @@ PLS_EVAL = os.environ.get("PLS_EVAL", "1") == "1"
 PLS_DETACH = os.environ.get("PLS_DETACH", "0") == "1"
 # PLS_SEP=1: every intermediate layer gets its own RMSNorm + lm_head, trained by its own loss only. Tag -sep.
 PLS_SEP = os.environ.get("PLS_SEP", "0") == "1"
+# PLS_DETACH_BB=1 (with PLS_SEP=1): the per-layer losses train their own heads only, the backbone trains as the baseline. Tag -bbfrozen.
+PLS_DETACH_BB = os.environ.get("PLS_DETACH_BB", "0") == "1"
 # PLS_OFF=E or S:E: the intermediate weight holds until step S, falls linearly to 0 at step E (E alone: a switch at E) and
 # is 0 after, with the readouts skipped. Tag -off{E} or -off{S}-{E}.
 PLS_OFF = os.environ.get("PLS_OFF", "")
@@ -233,7 +235,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -317,7 +319,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_probe=PLS_PROBE)
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_probe=PLS_PROBE)
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:

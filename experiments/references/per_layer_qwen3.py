@@ -82,6 +82,10 @@ class PerLayerQwen3Config(Qwen3Config):
     # layer's gradient alone. Per-layer eval reads each layer through its own head. The heads are ``aux_lm_heads`` (AdamH,
     # like lm_head) and ``aux_norms`` (Adam, like the final norm). New parameters: (L-1) x (vocab x hidden + hidden).
     pls_separate_heads: bool = False
+    # With separate heads: the intermediate losses train their own heads only; their gradient stops at the layer's
+    # output, so the backbone and the main head train exactly as the baseline (online tuned-lens probes of an
+    # undisturbed model).
+    pls_detach_backbone: bool = False
     # Weight schedule: pls_weight until step pls_off_start, linear to 0 at step pls_off_end (start == end: a switch), 0
     # after, with the readouts skipped. pls_off_end = 0: always on.
     pls_off_start: int = 0
@@ -100,6 +104,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("pls reads every layer's output through Stacked.scan_via, so scan_layers must be True")
         if self.pls_separate_heads and self.pls_weight <= 0:
             raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
+        if self.pls_detach_backbone and not self.pls_separate_heads:
+            raise ValueError("pls_detach_backbone needs pls_separate_heads: with the shared head the loss would train the baseline's lm_head")
         if self.pls_separate_heads and self.pls_detach_head:
             raise ValueError("pls_separate_heads and pls_detach_head are exclusive: detaching separate heads leaves them untrained")
         if self.pls_monitor_stride < 1 or self.max_seq_len % self.pls_monitor_stride:
@@ -179,22 +185,25 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
     def _separate(self, k: int) -> bool:
         return self.aux_lm_heads is not None and k < self.config.num_layers - 1
 
-    def _layer(self, outs: NamedArray, k: int, *, detach_head: bool = False) -> NamedArray:
+    def _layer(self, outs: NamedArray, k: int, *, detach_head: bool = False, detach_input: bool = False) -> NamedArray:
         norm = cast(Any, self.aux_norms)[k] if self._separate(k) else self.transformer.norm
         if detach_head:  # same values; no gradient into the norm's parameters (the input still gets its gradient)
             norm = jax.tree_util.tree_map(lambda a: jax.lax.stop_gradient(a) if eqx.is_array(a) else a, norm)
-        return norm(outs[self.transformer.layers.Block.name, k])
+        h = outs[self.transformer.layers.Block.name, k]
+        if detach_input:  # no gradient from this readout into the backbone
+            h = jax.lax.stop_gradient(h)
+        return norm(h)
 
     def _head(self, k: int) -> NamedArray:
         """Layer k's readout head: its own with pls_separate_heads (k < L-1), else the model's lm_head."""
         return cast(Any, self.aux_lm_heads)[k].weight if self._separate(k) else self.get_lm_head()
 
-    def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, **kw) -> NamedArray:
+    def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, detach_input: bool = False, **kw) -> NamedArray:
         lm_head = self._head(k)
         if detach_head:
             lm_head = jax.lax.stop_gradient(lm_head)
         return maybe_fused_next_token_loss(
-            self.Pos, self.Embed, self.Vocab, self._layer(outs, k, detach_head=detach_head), lm_head, example.tokens, loss_weight=example.loss_weight, **kw
+            self.Pos, self.Embed, self.Vocab, self._layer(outs, k, detach_head=detach_head, detach_input=detach_input), lm_head, example.tokens, loss_weight=example.loss_weight, **kw
         )
 
     def _subset_ce(self, outs: NamedArray, k: int, example: LmExample, select, *, logit_soft_cap) -> jax.Array:
@@ -321,7 +330,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         def supervised(w):
             loss, per = final, []
             for k in range(L - 1):
-                ce = self._readout_ce(outs, k, example, detach_head=cfg.pls_detach_head, **kw)
+                ce = self._readout_ce(outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
                 loss = loss + ce * w  # NamedArray on the left: w may be a traced scalar
                 per.append(jnp.asarray(_scalar(ce), jnp.float32))
             return loss, jnp.stack(per)

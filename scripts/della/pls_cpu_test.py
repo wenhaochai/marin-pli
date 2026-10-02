@@ -253,6 +253,24 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
     print(f"3c. separate heads: baseline part of init == baseline; loss/stats/all grads == per-layer-head reference {[round(float(r), 4) for r in rper_s]}; "
           "main head/norm grads == baseline; eval readouts use each layer's own head; MuonH: aux heads adamh, aux norms adam; bad combos rejected")
 
+    # 3d. separate heads with the backbone detached: same forward and per-layer CEs as 3c; the backbone, embeddings, main
+    # norm and lm_head get the baseline's gradient; each aux head gets 3c's gradient (it sees the same h_k)
+    m_bb = PerLayerQwen3LMHeadModel.init(Vocab, PerLayerQwen3Config(**common, pls_weight=1.0, pls_monitor_stride=S, pls_separate_heads=True, pls_detach_backbone=True), key=key0)
+    loss_bb, stats_bb, g_bb = step_fn(hax.shard(m_bb, tc.parameter_axis_mapping), es, key)
+    np.testing.assert_allclose(float(loss_bb), float(loss_s), rtol=1e-6)
+    for k in range(L):
+        np.testing.assert_allclose(float(stats_bb[f"pls/L{k}"]), float(stats_s[f"pls/L{k}"]), rtol=1e-6)
+    close(eqx.tree_at(lambda m: (m.aux_norms, m.aux_lm_heads), g_bb, replace=(None, None)), gb, "detach-backbone main grads vs baseline", rtol=1e-5)
+    close((g_bb.aux_norms, g_bb.aux_lm_heads), (g_s.aux_norms, g_s.aux_lm_heads), "detach-backbone aux head grads vs separate heads", rtol=1e-5)
+    bb_diff = float(jnp.max(jnp.abs(g_s.embeddings.token_embeddings.weight.array - gb.embeddings.token_embeddings.weight.array)))
+    assert bb_diff > 1e-7, "separate heads must differ from the baseline on the backbone, else this check is vacuous"
+    try:
+        PerLayerQwen3Config(**common, pls_weight=1.0, pls_detach_backbone=True)
+        raise AssertionError("pls_detach_backbone without separate heads must be rejected")
+    except ValueError:
+        pass
+    print(f"3d. separate heads, backbone detached: loss/stats == 3c; backbone + main head grads == baseline (3c differs by up to {bb_diff:.2e}); aux head grads == 3c")
+
     # 7. weight schedule on the traced train step
     def train_step_at(m_, example, k, step):
         token = _TRACED_TRAIN_STEP.set(step)

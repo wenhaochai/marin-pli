@@ -29,7 +29,7 @@ export WANDB_PROJECT=marin-della
 export VARIANT=pls
 export SIZE=${SIZE:?set SIZE (130m|300m|520m|1_2b)}
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
-echo "pls knobs: SIZE=$SIZE PLS_W=${PLS_W:-1} PLS_DETACH=${PLS_DETACH:-0} PLS_SEP=${PLS_SEP:-0} PLS_OFF=${PLS_OFF:-} PLS_PROBE=${PLS_PROBE:-0} PLS_MON=${PLS_MON:-16} PLS_EVAL=${PLS_EVAL:-1} SEED=${SEED:-0} RUN_TAG=${RUN_TAG:-} PY=$PY"
+echo "pls knobs: SIZE=$SIZE PLS_W=${PLS_W:-1} PLS_DETACH=${PLS_DETACH:-0} PLS_SEP=${PLS_SEP:-0} PLS_DETACH_BB=${PLS_DETACH_BB:-0} PLS_OFF=${PLS_OFF:-} PLS_PROBE=${PLS_PROBE:-0} PLS_MON=${PLS_MON:-16} PLS_EVAL=${PLS_EVAL:-1} SEED=${SEED:-0} RUN_TAG=${RUN_TAG:-} PY=$PY"
 
 nvidia-smi -L
 $PY -c 'import jax, levanter; print("jax", jax.__version__, "devices", jax.devices(), "levanter", levanter.__file__)'
