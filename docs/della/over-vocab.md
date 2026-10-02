@@ -82,6 +82,17 @@ their training time is comparable only with each other: a perfectly scaling 8-GP
 ovss's 557.7. Not planned (user, 2026-10-01): extra seeds, 8-GPU baselines, the OE vs OD split. 1.2B is the last
 run; the blog follows it.
 
+## Focal loss + OV (2026-10-02, running)
+
+User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
+and 1, at 130m, seed 0, same data/steps/batch as the baseline. Per-token cross-entropy l becomes (1 - e^-l)^gamma * l
+with the full-softmax p (gradient through both factors), reduced as the baseline's loss, so gamma 0 is the baseline
+exactly; eval stays plain cross-entropy (`experiments/references/focal_qwen3.py`, CPU tests
+`scripts/della/focal_cpu_test.py`). The 2 x 2 {baseline, OV} x {CE, focal} separates focal's own effect from its
+interaction with OV. Prior (MiLe, arXiv 2310.19531): gamma >= 1 raises Pile perplexity, gamma 0.5 about neutral, so the
+expected Paloma result is at best neutral. Go to 300m only if ovfocal beats OV by more than 0.012 macro (~2 seed sd).
+Jobs: smoke 14885494, ovfocal pair 14885495, focal pair 14885496.
+
 ## Runs (seed 0, compared with the existing baseline pools)
 
 * 130m: ov 14711157 (COMPLETED), ovss 14711158 (COMPLETED)
