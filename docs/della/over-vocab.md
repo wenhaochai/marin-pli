@@ -79,7 +79,8 @@ as the paper's log-linear law would put it for a fixed table against a growing m
 t statistic; the 300m pool's seed sd was ~0.006) both OV arms again lower all 16 domains, ov by -0.036 macro (the same
 as at 300m) and ovss by -0.029; the ovss - ov gap (+0.007) is within one seed sd. The 520m OV arms ran on 8 GPUs, so
 their training time is comparable only with each other: a perfectly scaling 8-GPU baseline would take ~558 min, about
-ovss's 557.7. Open: OE vs OD attribution; 1.2B.
+ovss's 557.7. Not planned (user, 2026-10-01): extra seeds, 8-GPU baselines, the OE vs OD split. 1.2B is the last
+run; the blog follows it.
 
 ## Runs (seed 0, compared with the existing baseline pools)
 
