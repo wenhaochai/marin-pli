@@ -1,0 +1,52 @@
+{
+  "executor_version": "step_runner",
+  "name": "speedrun/muonh-qwen3-130m-della4xh100-pls1-off0-150",
+  "fn_name": "<function _lower.<locals>.fn at 0x13a1ec2845e0>",
+  "config": {
+    "fingerprint": "9313bb0f",
+    "version": "2026.09.13",
+    "result_type": "marin.training.training.LevanterCheckpoint",
+    "deps": [
+      "fineweb-edu-10B@2026.06.28",
+      "paloma/4chan-marin-tokenizer@2026.06.28",
+      "paloma/c4_100_domains-marin-tokenizer@2026.06.28",
+      "paloma/c4_en-marin-tokenizer@2026.06.28",
+      "paloma/dolma-v1_5-marin-tokenizer@2026.06.28",
+      "paloma/dolma_100_programing_languages-marin-tokenizer@2026.06.28",
+      "paloma/dolma_100_subreddits-marin-tokenizer@2026.06.28",
+      "paloma/falcon-refinedweb-marin-tokenizer@2026.06.28",
+      "paloma/gab-marin-tokenizer@2026.06.28",
+      "paloma/m2d2_s2orc_unsplit-marin-tokenizer@2026.06.28",
+      "paloma/m2d2_wikipedia_unsplit-marin-tokenizer@2026.06.28",
+      "paloma/manosphere_meta_sep-marin-tokenizer@2026.06.28",
+      "paloma/mc4-marin-tokenizer@2026.06.28",
+      "paloma/ptb-marin-tokenizer@2026.06.28",
+      "paloma/redpajama-marin-tokenizer@2026.06.28",
+      "paloma/twitterAAE_HELM_fixed-marin-tokenizer@2026.06.28",
+      "paloma/wikitext_103-marin-tokenizer@2026.06.28"
+    ]
+  },
+  "description": null,
+  "override_output_path": "speedrun/muonh-qwen3-130m-della4xh100-pls1-off0-150/2026.09.13",
+  "version": {},
+  "dependencies": [
+    "/scratch/gpfs/GROUP/USER/marin_store_big/fineweb-edu-10B/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/4chan-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/c4_100_domains-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/c4_en-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma-v1_5-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma_100_programing_languages-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma_100_subreddits-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/falcon-refinedweb-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/gab-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/m2d2_s2orc_unsplit-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/m2d2_wikipedia_unsplit-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/manosphere_meta_sep-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/mc4-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/ptb-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/redpajama-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/twitterAAE_HELM_fixed-marin-tokenizer/2026.06.28",
+    "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/wikitext_103-marin-tokenizer/2026.06.28"
+  ],
+  "output_path": "/scratch/gpfs/GROUP/USER/marin_store_big/speedrun/muonh-qwen3-130m-della4xh100-pls1-off0-150/2026.09.13"
+}

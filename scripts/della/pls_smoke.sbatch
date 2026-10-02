@@ -59,6 +59,6 @@ except Exception as e:
     print(f"SUMMARY {cfg} {run_id} rc={rc} err='{err}' wandb_error={e!r}", flush=True)
 PYEOF
   rm -rf "$MARIN_PREFIX/speedrun/$run_id"
-  find "$MARIN_PREFIX/tmp/checkpoints-temp" -maxdepth 4 -type d -name "*${run_id}*" -prune -exec rm -rf {} + 2>/dev/null
+  rm -rf "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$run_id"  # levanter mirrors the absolute output path under the temp root
 done
 echo "SMOKE DONE $(date +%H:%M:%S)"

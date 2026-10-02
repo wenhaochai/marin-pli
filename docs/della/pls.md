@@ -1,6 +1,6 @@
-# pls：kaiyue baseline 上的逐层 LM 监督（dense、每层、全程）
+# pls：kaiyue baseline 上的逐层 LM 监督（dense、每层、全程）——已结题（2026-10-01）
 
-**一句话（2026-10-01 20:5x）**：在 kaiyue 的 dense MuonH baseline 上，给每一层加 next-token loss 要么伤最终层（全程开：
+**一句话**：在 kaiyue 的 dense MuonH baseline 上，给每一层加 next-token loss 要么伤最终层（全程开：
 130m 三种读出 +0.034–0.044 bpb、300m +0.043，因为每层都成了预测器、需要多层配合的 in-context 电路形成被推迟、顶层闲置），
 要么什么也不改变（在模型开始用上下文之前关掉——第 80 步、第 140 步、或 LLAL 式 0–150 步线性退火——130m 终值与 8 个
 baseline run 的池差 ≤ 0.0006 bpb）；它在前 ~3% 训练里带来的 n-gram 加速从不转成持久收益，所以按动态指标调 schedule 在
@@ -258,9 +258,19 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
   的上限就是 baseline——没有值得做的控制器。三者 c4 都略正（均值 +0.0005，约 1.5 个池 sd），可能是早期监督的一点残余代价，
   但 macro 均值 ≈ 0，n = 1/臂，不下结论。
 
-**还能问的问题（未做，待用户定）**：
+**没做的问题（用户 2026-10-01 决定结题，留作记录）**：
 1. 更深的模型：LLAL 救的是 32 层 MoE 的第一层；6 层的 130m 可能太浅、浅层不缺信号。520m（24 层）上"在 in-context 起点前关掉"
    能否留下收益（一次约 18 h × 4 卡，需同配置 baseline）。
 2. 换掉 MuonH：LLAL 的失效模式（AdamW eps 封顶的更新 + weight decay 把浅层范数压塌）在 MuonH 下结构上不可能；在会塌的
    AdamW dense baseline 上重做，检验 LLAL 的收益是否依赖这种塌缩。
 3. 收工：把上面这句话作为本项目的结论。
+
+## 结题（2026-10-01，用户："结题吧，把所有东西上传，ckpt删掉"）
+
+- 代码、文档、过程材料全部在分支 `pls`，推到私有仓库 archive（wenhaochai/marin-objective-hillclimb）；过程材料目录见
+  `pls_archive/README.md`，每个训练 run 的评估记录与运行配置在 `pls_runs/`。
+- 指标全部在 W&B `reself/marin-della`（group `muonh-qwen3-pls-della`；诊断 run 的 run id 带 `-probe-j<jobid>`）。
+- checkpoint 已删除：`marin_store_big/speedrun/` 下 8 个 pls run 目录（约 21.6 GB）与临时 checkpoint 目录下 10 个 pls 目录
+  （约 8.8 GB，其中 3 个是诊断 run 的残留——`pls_probe.sbatch` / `pls_smoke.sbatch` 的清理只查了临时目录的浅层，而 levanter
+  把临时 checkpoint 存在镜像绝对路径的深层；两个脚本已改成直接删那条路径）。
+- 原始基线的 checkpoint（不带 pls 的 run）未动。

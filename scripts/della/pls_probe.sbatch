@@ -43,5 +43,5 @@ timeout --signal=TERM ${PROBE_MIN}m $PY -m experiments.references.della_muonh_qw
 rc=$?
 echo "PROBE $run_id END rc=$rc $(date +%H:%M:%S) (124 = stopped by the time budget, expected)"
 rm -rf "$MARIN_PREFIX/speedrun/$run_id"
-find "$MARIN_PREFIX/tmp/checkpoints-temp" -maxdepth 4 -type d -name "*${run_id}*" -prune -exec rm -rf {} + 2>/dev/null
+rm -rf "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$run_id"  # levanter mirrors the absolute output path under the temp root
 echo "PROBE DONE $(date +%H:%M:%S)"

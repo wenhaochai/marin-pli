@@ -1,0 +1,371 @@
+<title>逐层监督梯度流</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* Layout: one column — mode switch, the diagram (trunk left, shared head middle, per-layer losses right), then what changes and the numbers */
+:root {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --soft: #e7ecf2;
+  --fg: #17202b;
+  --muted: #5c6776;
+  --line: #c5ced9;
+  --c0: #7c3aed;
+  --c1: #4f46e5;
+  --c2: #0277b5;
+  --c3: #0c8a7f;
+  --c4: #5b8a0c;
+  --c5: #dc4a22;
+  --font: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #151c25; --soft: #1d2631; --fg: #e4e9f0; --muted: #98a4b4; --line: #2e3947;
+    --c0: #a78bfa; --c1: #8f96fb; --c2: #45b8f5; --c3: #34d1bd; --c4: #a6e03a; --c5: #ff7b52;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #151c25; --soft: #1d2631; --fg: #e4e9f0; --muted: #98a4b4; --line: #2e3947;
+  --c0: #a78bfa; --c1: #8f96fb; --c2: #45b8f5; --c3: #34d1bd; --c4: #a6e03a; --c5: #ff7b52;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font); line-height: 1.6; }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 48px; display: grid; gap: 20px; }
+h1 { font-size: 1.6rem; font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
+h2 { font-size: 1.12rem; font-weight: 700; margin: 0; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.seg button { font: inherit; font-size: 0.95rem; padding: 8px 16px; border: 0; background: transparent; color: var(--fg); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); font-weight: 600; }
+.play { font: inherit; font-size: 0.9rem; padding: 7px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--c2); outline-offset: 2px; }
+.figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding-block: 12px; padding-inline: 8px; }
+.scroll { overflow-x: auto; }
+#fig { display: block; width: 100%; min-width: 620px; height: auto; }
+.figure figcaption { color: var(--muted); font-size: 0.86rem; padding-inline: 10px; padding-block: 8px 2px; }
+.key { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--c5); border-radius: 10px; padding: 12px 16px; font-weight: 500; }
+.explain { display: grid; gap: 10px; }
+.explain ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 70ch; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0; }
+.card[data-active="true"] { border-color: var(--fg); box-shadow: 0 0 0 1px var(--fg) inset; }
+.card .name { font-weight: 700; }
+.card .num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 1.05rem; }
+.card .sub { color: var(--muted); font-size: 0.86rem; }
+.bad { color: var(--c5); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--muted); font-size: 0.86rem; align-items: center; }
+.sw { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); }
+.sw i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.note { color: var(--muted); font-size: 0.86rem; margin: 0; }
+/* diagram parts (inline SVG styled from the page) */
+.t { font-family: var(--font); fill: var(--fg); font-size: 13px; }
+.tm { font-family: var(--mono); fill: var(--fg); font-size: 13px; font-weight: 600; }
+.ts { font-family: var(--font); fill: var(--muted); font-size: 11px; }
+.tsm { font-family: var(--mono); fill: var(--muted); font-size: 11px; }
+.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.head { fill: var(--soft); stroke: var(--fg); stroke-width: 1.4; }
+.chip { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.fwd { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+.arrowhead { fill: var(--muted); }
+.slot { fill: none; stroke: var(--line); stroke-width: 1.2; }
+.ghost { opacity: 0.28; }
+.gpath { fill: none; stroke-width: 1.6; stroke-dasharray: 3 5; opacity: 0.55; }
+@media (prefers-reduced-motion: reduce) { .play { display: none; } }
+</style>
+
+<main class="wrap">
+  <header>
+    <h1>逐层监督的梯度流</h1>
+    <p class="lede">130m 模型有 6 层，L0 在最底，L5 在最顶。灰色箭头是前向；彩色小点是反传的梯度，颜色表示它来自哪一层的 loss。</p>
+  </header>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="选择方案">
+      <button type="button" id="m-base" data-mode="base" aria-pressed="false">Baseline</button>
+      <button type="button" id="m-pls1" data-mode="pls1" aria-pressed="true">pls1 · 已跑完</button>
+      <button type="button" id="m-c" data-mode="c" aria-pressed="false">C · 排队中</button>
+    </div>
+    <button type="button" class="play" id="play">暂停动画</button>
+  </div>
+
+  <figure class="figure">
+    <div class="scroll">
+      <svg id="fig" viewBox="0 0 764 570" role="img" aria-label="六层模型的梯度流示意：主干在左，共享输出头在中间，每层的 loss 在右。"></svg>
+    </div>
+    <figcaption id="caption">每条彩色虚线是一个 loss 的梯度路线：从右边的 loss 出发，穿过输出头，回到对应的那一层，再沿残差流一路往下。圆环表示梯度在这里改了输出头的参数。</figcaption>
+  </figure>
+
+  <div class="key">pls1 和 C 只差一件事：CE₀–CE₄ 反传时要不要改输出头的参数。主干收到的梯度两者完全一样。</div>
+
+  <section class="explain" aria-live="polite">
+    <h2 id="mode-title"></h2>
+    <ul id="mode-points"></ul>
+  </section>
+
+  <section class="cards" aria-label="130m 最终结果">
+    <div class="card" data-card="base">
+      <span class="name">Baseline</span>
+      <span class="num">c4_en bpb 1.1633</span>
+      <span class="sub">± 0.0003，8 个 run 的平均；Paloma macro 4.1865</span>
+    </div>
+    <div class="card" data-card="pls1">
+      <span class="name">pls1</span>
+      <span class="num">c4_en bpb 1.2042 <span class="bad">+0.041</span></span>
+      <span class="sub">Paloma macro 4.3715（+0.185），差距随训练扩大</span>
+    </div>
+    <div class="card" data-card="c">
+      <span class="name">C</span>
+      <span class="num">排队中</span>
+      <span class="sub">130m 约 2.5 小时，300m 约 14 小时</span>
+    </div>
+  </section>
+
+  <div class="legend" aria-label="图例">
+    <span class="sw"><i style="background:var(--c0)"></i>CE₀</span>
+    <span class="sw"><i style="background:var(--c1)"></i>CE₁</span>
+    <span class="sw"><i style="background:var(--c2)"></i>CE₂</span>
+    <span class="sw"><i style="background:var(--c3)"></i>CE₃</span>
+    <span class="sw"><i style="background:var(--c4)"></i>CE₄</span>
+    <span class="sw"><i style="background:var(--c5)"></i>CE₅（原 NTP）</span>
+  </div>
+  <p class="note">每层方框右下角的 6 个小圆表示这一层的参数收到哪些 loss 的梯度，实心就是收到了。输出头下方的色条表示输出头参数的梯度来自哪些 loss。</p>
+</main>
+
+<script>
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("fig");
+  const SUB = ["₀", "₁", "₂", "₃", "₄", "₅"];
+  const ROW = [460, 394, 328, 262, 196, 130];          // centre y of L0..L5
+  const LANE = k => 130 + 12 * k;                       // where CE_k's gradient runs down the trunk
+  const HEAD_X = 490, EMB_Y = 530;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const MODES = {
+    base: {
+      losses: [5], updatesHead: [5],
+      title: "Baseline：只有最后一层算 loss",
+      points: [
+        "只有 CE₅，也就是原来的 NTP loss。",
+        "它的梯度先改输出头的参数，再沿残差流往下，从 L5 一直传到 L0 和 embedding。",
+        "输出头和每一层都只收到这 1 路梯度。"
+      ]
+    },
+    pls1: {
+      losses: [0, 1, 2, 3, 4, 5], updatesHead: [0, 1, 2, 3, 4, 5],
+      title: "pls1：6 层都用同一个输出头算 loss，权重都是 1",
+      points: [
+        "每一层的输出都送进同一个输出头（final norm + lm_head），各算一个 CE，一共 6 个 loss。",
+        "反传时 6 个 loss 都会改输出头的参数，其中 5 个来自浅层；这个头同时被 6 个方向拉。",
+        "往下传时，越底的层收到越多：L0 收到 6 路梯度（CE₀ 到 CE₅），L5 只收到 1 路。",
+        "结果：最终层 c4_en bpb 1.2042，比 baseline 差 0.041；L3 到 L5 几乎不再贡献。"
+      ]
+    },
+    c: {
+      losses: [0, 1, 2, 3, 4, 5], updatesHead: [5],
+      title: "C：前向一样，只是中间层的 loss 不改输出头",
+      points: [
+        "前向、6 个 loss 和它们的权重，都和 pls1 完全一样。",
+        "反传时，CE₀ 到 CE₄ 的梯度穿过输出头但不改它的参数，只继续传给对应的层，用来训练主干。输出头只被 CE₅ 改，这一点和 baseline 一样。",
+        "主干收到的梯度和 pls1 完全一样：L0 仍然收到 6 路。",
+        "看结果就能区分伤害的来源：C 接近 baseline，说明问题出在输出头被浅层拉偏；C 仍然和 pls1 一样差，说明问题出在主干被迫每一层都要能直接解码。"
+      ]
+    }
+  };
+
+  function el(tag, attrs, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // ---- static drawing ----
+  const defs = el("defs", {});
+  const mk = el("marker", { id: "arr", viewBox: "0 0 8 8", refX: "7", refY: "4", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" });
+  mk.appendChild(el("path", { d: "M0,0 L8,4 L0,8 z", class: "arrowhead" }));
+  defs.appendChild(mk);
+  svg.appendChild(defs);
+
+  const gStatic = el("g", {}); svg.appendChild(gStatic);
+  const gPaths = el("g", {}); svg.appendChild(gPaths);
+  const gFx = el("g", {}); svg.appendChild(gFx);
+  const gDots = el("g", {}); svg.appendChild(gDots);
+
+  // trunk label
+  const side = el("text", { class: "ts", x: 20, y: 300, transform: "rotate(-90 20 300)", "text-anchor": "middle" }, "主干：残差流，前向从下往上");
+  gStatic.appendChild(side);
+
+  // embedding
+  gStatic.appendChild(el("rect", { class: "box", x: 40, y: 510, width: 262, height: 40, rx: 8 }));
+  gStatic.appendChild(el("text", { class: "t", x: 56, y: 535 }, "Embedding"));
+  gStatic.appendChild(el("line", { class: "fwd", x1: 76, y1: 510, x2: 76, y2: ROW[0] + 24, "marker-end": "url(#arr)" }));
+
+  const slots = [];     // per layer: 6 slot circles
+  const badges = [], readouts = [], aux = [];
+  for (let k = 0; k < 6; k++) {
+    const y = ROW[k];
+    gStatic.appendChild(el("rect", { class: "box", x: 40, y: y - 22, width: 262, height: 44, rx: 8 }));
+    gStatic.appendChild(el("text", { class: "tm", x: 54, y: y + 5 }, "L" + k));
+    if (k === 5) gStatic.appendChild(el("text", { class: "ts", x: 54, y: y + 19 }, "最后一层"));
+    if (k < 5) gStatic.appendChild(el("line", { class: "fwd", x1: 76, y1: y - 22, x2: 76, y2: ROW[k + 1] + 24, "marker-end": "url(#arr)" }));
+    gStatic.appendChild(el("text", { class: "ts", x: 214, y: y + 15 }, "收到"));
+    const row = [];
+    for (let j = 0; j < 6; j++) {
+      const c = el("circle", { class: "slot", cx: 244 + 10 * j, cy: y + 11, r: 3.6 });
+      gDots.appendChild(c); row.push(c);
+    }
+    slots.push(row);
+    // readout: layer -> head -> loss
+    const r1 = el("line", { class: "fwd", x1: 302, y1: y, x2: 416, y2: y, "marker-end": "url(#arr)" });
+    const r1t = el("text", { class: "tsm", x: 352, y: y - 7, "text-anchor": "middle" }, "h" + SUB[k]);
+    const r2 = el("line", { class: "fwd", x1: 560, y1: y, x2: 594, y2: y, "marker-end": "url(#arr)" });
+    gStatic.append(r1, r1t, r2);
+    readouts.push([r1, r1t, r2]);
+    // loss badge
+    const b = el("g", {});
+    b.appendChild(el("rect", { class: "box", x: 598, y: y - 17, width: 156, height: 34, rx: 8 }));
+    b.appendChild(el("text", { class: "tm", x: 610, y: y + 5 }, "CE" + SUB[k]));
+    const sub = el("text", { class: "ts", x: 646, y: y + 4 }, k === 5 ? "原 NTP，权重 1" : "权重 1");
+    b.appendChild(sub);
+    gStatic.appendChild(b);
+    badges.push({ g: b, sub });
+  }
+
+  // shared head
+  gStatic.appendChild(el("text", { class: "t", x: HEAD_X, y: 70, "text-anchor": "middle", "font-weight": "700" }, "共享输出头"));
+  gStatic.appendChild(el("text", { class: "tsm", x: HEAD_X, y: 88, "text-anchor": "middle" }, "final norm + lm_head"));
+  gStatic.appendChild(el("rect", { class: "head", x: 420, y: 100, width: 140, height: 392, rx: 12 }));
+  for (let k = 0; k < 6; k++) {
+    const y = ROW[k];
+    gStatic.appendChild(el("rect", { class: "chip", x: 462, y: y - 11, width: 56, height: 22, rx: 6 }));
+    gStatic.appendChild(el("text", { class: "ts", x: HEAD_X, y: y + 4, "text-anchor": "middle" }, "解码"));
+    const a = el("text", { class: "ts", x: HEAD_X, y: y + 25, "text-anchor": "middle" }, "只传梯度，不改参数");
+    gStatic.appendChild(a); aux.push(a);
+  }
+  gStatic.appendChild(el("text", { class: "ts", x: HEAD_X, y: 511, "text-anchor": "middle" }, "输出头参数的梯度来自"));
+  const meter = el("g", {}); gStatic.appendChild(meter);
+
+  // gradient route of CE_k: loss -> head -> h_k -> layer k -> down to embedding
+  function route(k) {
+    const y = ROW[k];
+    return [[598, y], [560, y], [HEAD_X, y], [420, y], [302, y], [LANE(k), y], [LANE(k), EMB_Y]];
+  }
+  function lengths(pts) {
+    const seg = []; let tot = 0;
+    for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(d); tot += d; }
+    return { seg, tot };
+  }
+  function at(pts, L, s) {
+    let i = 0;
+    while (i < L.seg.length && s > L.seg[i]) { s -= L.seg[i]; i++; }
+    if (i >= L.seg.length) return pts[pts.length - 1];
+    const f = L.seg[i] ? s / L.seg[i] : 0;
+    return [pts[i][0] + f * (pts[i + 1][0] - pts[i][0]), pts[i][1] + f * (pts[i + 1][1] - pts[i][1])];
+  }
+  const ROUTES = [0, 1, 2, 3, 4, 5].map(k => { const p = route(k); return { p, L: lengths(p), headAt: (598 - 560) + (560 - HEAD_X) }; });
+
+  // ---- mode ----
+  let mode = "pls1";
+  function setMode(m) {
+    mode = m;
+    const M = MODES[m];
+    for (const b of document.querySelectorAll(".seg button")) b.setAttribute("aria-pressed", String(b.dataset.mode === m));
+    for (const c of document.querySelectorAll(".card")) c.dataset.active = String(c.dataset.card === m);
+    document.getElementById("mode-title").textContent = M.title;
+    const ul = document.getElementById("mode-points"); ul.textContent = "";
+    for (const t of M.points) { const li = document.createElement("li"); li.textContent = t; ul.appendChild(li); }
+    // which losses exist
+    for (let k = 0; k < 6; k++) {
+      const on = M.losses.includes(k);
+      badges[k].g.classList.toggle("ghost", !on);
+      badges[k].sub.textContent = on ? (k === 5 ? "原 NTP，权重 1" : "权重 1") : "不存在";
+      for (const e of readouts[k]) e.classList.toggle("ghost", !on && k !== 5);
+      aux[k].style.display = (on && !M.updatesHead.includes(k)) ? "" : "none";
+    }
+    // gradient routes
+    gPaths.textContent = "";
+    for (const k of M.losses) {
+      const pl = el("polyline", { class: "gpath", points: ROUTES[k].p.map(q => q.join(",")).join(" ") });
+      pl.style.stroke = "var(--c" + k + ")";
+      gPaths.appendChild(pl);
+    }
+    // which gradients each layer receives: CE_j reaches layers 0..j
+    for (let k = 0; k < 6; k++) for (let j = 0; j < 6; j++) {
+      const got = M.losses.includes(j) && j >= k;
+      const c = slots[k][j];
+      c.style.fill = got ? "var(--c" + j + ")" : "none";
+      c.style.stroke = got ? "var(--c" + j + ")" : "var(--line)";
+    }
+    // head parameter meter
+    meter.textContent = "";
+    const n = M.updatesHead.length, w = 140 / n;
+    M.updatesHead.forEach((k, i) => {
+      const r = el("rect", { x: 420 + i * w, y: 518, width: w, height: 12, rx: 2 });
+      r.style.fill = "var(--c" + k + ")"; r.dataset.k = k;
+      meter.appendChild(r);
+    });
+    meter.appendChild(el("rect", { x: 420, y: 518, width: 140, height: 12, rx: 2, fill: "none", class: "slot" }));
+    for (const p of parts) p.el.remove();
+    parts.length = 0;
+  }
+
+  // ---- particles ----
+  const parts = [];
+  let running = !reduce, last = null, clock = 0;
+  const nextEmit = [0, 180, 360, 540, 720, 900];
+  const SPEED = 150, PERIOD = 1100;
+  function ripple(k) {
+    const c = el("circle", { cx: HEAD_X, cy: ROW[k], r: 6, fill: "none", "stroke-width": 2 });
+    c.style.stroke = "var(--c" + k + ")";
+    gFx.appendChild(c);
+    const t0 = performance.now();
+    (function grow(now) {
+      const f = Math.min(1, (now - t0) / 650);
+      c.setAttribute("r", 6 + 20 * f); c.setAttribute("opacity", String(0.9 * (1 - f)));
+      if (f < 1) requestAnimationFrame(grow); else c.remove();
+    })(t0);
+    for (const r of meter.querySelectorAll("rect[data-k]")) if (+r.dataset.k === k) {
+      r.animate ? r.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 400 }) : null;
+    }
+  }
+  function tick(now) {
+    if (last === null) last = now;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (running) {
+      clock += dt * 1000;
+      const M = MODES[mode];
+      for (const k of M.losses) {
+        if (clock >= nextEmit[k]) {
+          nextEmit[k] = clock + PERIOD;
+          const c = el("circle", { r: 4.3 });
+          c.style.fill = "var(--c" + k + ")";
+          gFx.appendChild(c);
+          parts.push({ k, s: 0, el: c, dep: false });
+        }
+      }
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const q = parts[i], R = ROUTES[q.k];
+        q.s += SPEED * dt;
+        if (!q.dep && q.s >= R.headAt) { q.dep = true; if (M.updatesHead.includes(q.k)) ripple(q.k); }
+        if (q.s >= R.L.tot) { q.el.remove(); parts.splice(i, 1); continue; }
+        const [x, y] = at(R.p, R.L, q.s);
+        q.el.setAttribute("cx", x.toFixed(1)); q.el.setAttribute("cy", y.toFixed(1));
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => setMode(b.dataset.mode));
+  const play = document.getElementById("play");
+  play.addEventListener("click", () => { running = !running; play.textContent = running ? "暂停动画" : "继续动画"; });
+
+  setMode("pls1");
+  if (!reduce) requestAnimationFrame(tick);
+})();
+</script>

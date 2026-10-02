@@ -1,0 +1,694 @@
+{
+  "name": "speedrun/muonh-qwen3-130m-della4xh100-pls1",
+  "version": "2026.09.13",
+  "fingerprint": "080f6859",
+  "result_type": "marin.training.training.LevanterCheckpoint",
+  "output_path": "/scratch/gpfs/GROUP/USER/marin_store_big/speedrun/muonh-qwen3-130m-della4xh100-pls1/2026.09.13",
+  "deps": [
+    "fineweb-edu-10B@2026.06.28",
+    "paloma/4chan-marin-tokenizer@2026.06.28",
+    "paloma/c4_100_domains-marin-tokenizer@2026.06.28",
+    "paloma/c4_en-marin-tokenizer@2026.06.28",
+    "paloma/dolma-v1_5-marin-tokenizer@2026.06.28",
+    "paloma/dolma_100_programing_languages-marin-tokenizer@2026.06.28",
+    "paloma/dolma_100_subreddits-marin-tokenizer@2026.06.28",
+    "paloma/falcon-refinedweb-marin-tokenizer@2026.06.28",
+    "paloma/gab-marin-tokenizer@2026.06.28",
+    "paloma/m2d2_s2orc_unsplit-marin-tokenizer@2026.06.28",
+    "paloma/m2d2_wikipedia_unsplit-marin-tokenizer@2026.06.28",
+    "paloma/manosphere_meta_sep-marin-tokenizer@2026.06.28",
+    "paloma/mc4-marin-tokenizer@2026.06.28",
+    "paloma/ptb-marin-tokenizer@2026.06.28",
+    "paloma/redpajama-marin-tokenizer@2026.06.28",
+    "paloma/twitterAAE_HELM_fixed-marin-tokenizer@2026.06.28",
+    "paloma/wikitext_103-marin-tokenizer@2026.06.28"
+  ],
+  "dep_paths": [],
+  "config": {
+    "auto_build_caches": false,
+    "env_vars": {
+      "RUN_ID": "muonh-qwen3-130m-della4xh100-pls1"
+    },
+    "output_path": "/scratch/gpfs/GROUP/USER/marin_store_big/speedrun/muonh-qwen3-130m-della4xh100-pls1/2026.09.13",
+    "resources": {
+      "cpu": 1,
+      "device": {
+        "count": 4,
+        "kind": "gpu",
+        "variant": "H100"
+      },
+      "device_alternatives": null,
+      "disk": "64g",
+      "image": null,
+      "preemptible": true,
+      "ram": "4g",
+      "regions": null,
+      "replicas": 1,
+      "target_cluster": null,
+      "zone": null
+    },
+    "train_config": {
+      "adapter": {},
+      "data": {
+        "auto_build_caches": true,
+        "block_cross_document_attention": true,
+        "cache_catalog": null,
+        "cache_dir": null,
+        "cache_options": {
+          "batch_size": 128
+        },
+        "chat_template": null,
+        "components": {
+          "fineweb-edu-10B": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/fineweb-edu-10B/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/fineweb-edu-10B/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/4chan-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/4chan-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/4chan-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/c4_100_domains-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/c4_100_domains-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/c4_100_domains-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/c4_en-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/c4_en-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/c4_en-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/dolma-v1_5-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma-v1_5-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma-v1_5-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/dolma_100_programing_languages-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma_100_programing_languages-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma_100_programing_languages-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/dolma_100_subreddits-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma_100_subreddits-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/dolma_100_subreddits-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/falcon-refinedweb-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/falcon-refinedweb-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/falcon-refinedweb-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/gab-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/gab-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/gab-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/m2d2_s2orc_unsplit-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/m2d2_s2orc_unsplit-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/m2d2_s2orc_unsplit-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/m2d2_wikipedia_unsplit-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/m2d2_wikipedia_unsplit-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/m2d2_wikipedia_unsplit-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/manosphere_meta_sep-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/manosphere_meta_sep-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/manosphere_meta_sep-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/mc4-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/mc4-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/mc4-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/ptb-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/ptb-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/ptb-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/redpajama-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/redpajama-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/redpajama-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/twitterAAE_HELM_fixed-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/twitterAAE_HELM_fixed-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/twitterAAE_HELM_fixed-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          },
+          "paloma/wikitext_103-marin-tokenizer": {
+            "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/wikitext_103-marin-tokenizer/2026.06.28",
+            "flat_cache": false,
+            "format": {
+              "text_key": "text"
+            },
+            "pack": null,
+            "source": {
+              "cache_dir": "/scratch/gpfs/GROUP/USER/marin_store_big/paloma/wikitext_103-marin-tokenizer/2026.06.28",
+              "format": {
+                "text_key": "text"
+              },
+              "tags": [],
+              "train_urls": [],
+              "validation_urls": []
+            },
+            "split": "validation",
+            "tags": []
+          }
+        },
+        "enforce_eos": true,
+        "experiment_budget": null,
+        "max_train_batches": null,
+        "mixture_block_size": 2048,
+        "num_validation_sequences": null,
+        "permutation_type": "linear",
+        "shuffle": true,
+        "shuffle_before_trainval_split": true,
+        "stop_strategy": "restart",
+        "target_budget": null,
+        "tokenizer": "marin-community/marin-tokenizer",
+        "train_weights": {
+          "fineweb-edu-10B": 1.0,
+          "paloma/4chan-marin-tokenizer": 0.0,
+          "paloma/c4_100_domains-marin-tokenizer": 0.0,
+          "paloma/c4_en-marin-tokenizer": 0.0,
+          "paloma/dolma-v1_5-marin-tokenizer": 0.0,
+          "paloma/dolma_100_programing_languages-marin-tokenizer": 0.0,
+          "paloma/dolma_100_subreddits-marin-tokenizer": 0.0,
+          "paloma/falcon-refinedweb-marin-tokenizer": 0.0,
+          "paloma/gab-marin-tokenizer": 0.0,
+          "paloma/m2d2_s2orc_unsplit-marin-tokenizer": 0.0,
+          "paloma/m2d2_wikipedia_unsplit-marin-tokenizer": 0.0,
+          "paloma/manosphere_meta_sep-marin-tokenizer": 0.0,
+          "paloma/mc4-marin-tokenizer": 0.0,
+          "paloma/ptb-marin-tokenizer": 0.0,
+          "paloma/redpajama-marin-tokenizer": 0.0,
+          "paloma/twitterAAE_HELM_fixed-marin-tokenizer": 0.0,
+          "paloma/wikitext_103-marin-tokenizer": 0.0
+        },
+        "vocab_size": null
+      },
+      "data_seed": 42,
+      "eval_harness": null,
+      "eval_harness_steps": 10000,
+      "hf_generation_eos_token_ids": null,
+      "hf_save_dtype": null,
+      "hf_save_path": null,
+      "hf_save_steps": null,
+      "hf_upload": null,
+      "initialize_from_checkpoint_path": null,
+      "initialize_from_hf": false,
+      "initialize_model_from_checkpoint_path": null,
+      "labeled_eval": null,
+      "log_entropy": false,
+      "merged_hf_save_path": null,
+      "merged_hf_upload": null,
+      "model": {
+        "activation_function": "silu",
+        "attn_backend": "jax_flash",
+        "flash_attention_block_size": null,
+        "gradient_checkpointing": true,
+        "head_dim": null,
+        "hidden_dim": 512,
+        "hybrid_norm": true,
+        "initializer_range": 0.02,
+        "input_embedding_norm": false,
+        "intermediate_dim": 1792,
+        "layer_norm_epsilon": 0.00001,
+        "max_seq_len": 4096,
+        "num_heads": 8,
+        "num_kv_heads": 8,
+        "num_layers": 6,
+        "pls_eval": true,
+        "pls_monitor_stride": 16,
+        "pls_weight": 1.0,
+        "reference_checkpoint": "Qwen/Qwen3-0.6B",
+        "rope": {
+          "factor": 1.0,
+          "theta": 10000
+        },
+        "scan_layers": true,
+        "sliding_window": 4096,
+        "tie_word_embeddings": false,
+        "tokenizer": null,
+        "upcast_attn": false,
+        "use_bias": false,
+        "use_layer_norm_weight": true,
+        "use_qk_norm": false,
+        "use_sliding_window": false
+      },
+      "optimizer": {
+        "adam_lr": 0.008,
+        "backend_steps": 5,
+        "beta1": 0.9,
+        "beta2": 0.98,
+        "coefficient_type": "simple",
+        "cooldown": null,
+        "cycle_length": null,
+        "cycles": null,
+        "decay": 0.8,
+        "default_weight_decay_mask": null,
+        "epsilon": 1e-20,
+        "haps": null,
+        "learning_rate": 0.02,
+        "lr_schedule": "linear",
+        "max_grad_norm": 1.0,
+        "min_lr_ratio": 0.0,
+        "momentum": 0.95,
+        "muon_epsilon": 0.00001,
+        "nesterov": true,
+        "rewarmup": 0.0,
+        "warmup": 0,
+        "weight_decay": 0.1,
+        "weight_decay_modules": null
+      },
+      "pad_tokenizer_to_match_model": false,
+      "peft_hf_upload": null,
+      "peft_save_path": null,
+      "train_seq_len": 4096,
+      "trainer": {
+        "allow_nondivisible_batch_size": true,
+        "allow_partial_checkpoint": false,
+        "checkpointer": {
+          "append_run_id_to_base_path": true,
+          "base_path": "checkpoints/",
+          "debug": {
+            "dump_stacks_after": null,
+            "enabled": false,
+            "flush_logs": true,
+            "force_gc_before_serialize": true,
+            "log_interval": 60.0,
+            "top_allocations": 8,
+            "tracemalloc_frames": 25
+          },
+          "delete_old_temp_checkpoints": true,
+          "keep": [
+            {
+              "every": 10000
+            }
+          ],
+          "keep_last_temporary_checkpoints": 1,
+          "save_interval": {
+            "days": 0,
+            "microseconds": 0,
+            "seconds": 600
+          },
+          "temporary_base_path": null,
+          "write": {
+            "cache_pool_bytes": 1073741824,
+            "data_copy_concurrency": 16,
+            "max_chunk_bytes": 536870912,
+            "max_staged_host_bytes": 17179869184,
+            "max_write_replicas": 1024,
+            "min_replica_slice_bytes": 16777216
+          }
+        },
+        "crash_on_inf": true,
+        "crash_on_nan": true,
+        "distributed": {
+          "coordinator_address": null,
+          "initialize_jax_distributed": true,
+          "local_device_ids": null,
+          "num_processes": null,
+          "process_id": null
+        },
+        "id": null,
+        "initialize_from": null,
+        "jax_compilation_cache_dir": null,
+        "jax_config": {
+          "jax_softmax_custom_jvp": true,
+          "jax_threefry_partitionable": true
+        },
+        "load_checkpoint": null,
+        "load_checkpoint_path": null,
+        "log_dir": "logs",
+        "log_jaxprs": true,
+        "log_xla_hlo": true,
+        "max_eval_batches": null,
+        "mesh": {
+          "axes": {
+            "data": -1,
+            "model": 1,
+            "replica": 1
+          },
+          "batch_axis_name": "batch",
+          "compute_mapping": {
+            "token": [
+              "replica_dcn",
+              "replica",
+              "data"
+            ],
+            "token_repeat": [
+              "replica_dcn",
+              "replica",
+              "data"
+            ]
+          },
+          "dcn_axes": {
+            "replica_dcn": -1
+          },
+          "param_mapping": {
+            "embed": "data"
+          },
+          "shared_mapping": {}
+        },
+        "model_averaging": null,
+        "mp": {
+          "compute_dtype": {
+            "__dtype__": "bfloat16"
+          },
+          "output_dtype": {
+            "__dtype__": "bfloat16"
+          },
+          "param_dtype": {
+            "__dtype__": "float32"
+          }
+        },
+        "num_train_steps": 4959,
+        "per_device_eval_parallelism": -1,
+        "per_device_parallelism": -1,
+        "profiler": {
+          "create_perfetto_trace": false,
+          "enabled": false,
+          "num_steps": 25,
+          "perfetto_link": false,
+          "process_index": null,
+          "profile_options": {
+            "advanced_configuration": {},
+            "device_tracer_level": null,
+            "enable_hlo_proto": false,
+            "host_tracer_level": null,
+            "include_dataset_ops": null,
+            "python_tracer_level": null
+          },
+          "start_step": 5,
+          "upload": {
+            "enabled": true,
+            "service_url": "https://iris.oa.dev/proxy/xprof",
+            "ttl_days": 30
+          }
+        },
+        "progress_watchdog": {
+          "diagnostic_timeout": null,
+          "process_timeout": null,
+          "startup_grace_period": {
+            "days": 0,
+            "microseconds": 0,
+            "seconds": 3600
+          },
+          "startup_timeout": null,
+          "step_timeout": null
+        },
+        "quantization": null,
+        "require_accelerator": null,
+        "seed": 0,
+        "shutdown_at_exit": false,
+        "steps_per_eval": 1000,
+        "tracker": {
+          "background": true,
+          "background_finish_timeout": 120.0,
+          "background_max_queue_size": 10000,
+          "entity": "reself",
+          "group": "muonh-qwen3-pls-della",
+          "id": null,
+          "mode": null,
+          "name": null,
+          "project": "marin-della",
+          "replicate_path": null,
+          "resume": "allow",
+          "save_code": true,
+          "save_xla_dumps": false,
+          "service_teardown_timeout": 60.0,
+          "tags": [
+            "speedrun",
+            "muonh",
+            "qwen3",
+            "130m",
+            "della4xh100",
+            "jax_flash",
+            "bf16",
+            "pls1"
+          ]
+        },
+        "train_batch_size": 128,
+        "use_explicit_mesh_axes": false,
+        "wandb": null,
+        "watch": {
+          "include_histograms": false,
+          "include_norms": true,
+          "include_per_parameter_norms": true,
+          "interval": 10,
+          "split_scan_layers": true,
+          "watch_targets": [
+            "grads",
+            "params"
+          ]
+        }
+      },
+      "use_hf_model_config": false,
+      "z_loss_weight": 0.0
+    }
+  },
+  "source": null,
+  "result": null,
+  "fingerprint_payload": "{\"auto_build_caches\": false, \"env_vars\": {\"RUN_ID\": \"muonh-qwen3-130m-della4xh100-pls1\"}, \"output_path\": \"<output_path>\", \"resources\": {\"cpu\": 1, \"device\": {\"count\": 4, \"kind\": \"gpu\", \"variant\": \"H100\"}, \"device_alternatives\": null, \"disk\": \"64g\", \"image\": null, \"preemptible\": true, \"ram\": \"4g\", \"regions\": null, \"replicas\": 1, \"target_cluster\": null, \"zone\": null}, \"train_config\": {\"adapter\": {}, \"data\": {\"auto_build_caches\": true, \"block_cross_document_attention\": true, \"cache_catalog\": null, \"cache_dir\": null, \"cache_options\": {\"batch_size\": 128}, \"chat_template\": null, \"components\": {\"fineweb-edu-10B\": {\"cache_dir\": \"fineweb-edu-10B@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"fineweb-edu-10B@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/4chan-marin-tokenizer\": {\"cache_dir\": \"paloma/4chan-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/4chan-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/c4_100_domains-marin-tokenizer\": {\"cache_dir\": \"paloma/c4_100_domains-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/c4_100_domains-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/c4_en-marin-tokenizer\": {\"cache_dir\": \"paloma/c4_en-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/c4_en-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/dolma-v1_5-marin-tokenizer\": {\"cache_dir\": \"paloma/dolma-v1_5-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/dolma-v1_5-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/dolma_100_programing_languages-marin-tokenizer\": {\"cache_dir\": \"paloma/dolma_100_programing_languages-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/dolma_100_programing_languages-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/dolma_100_subreddits-marin-tokenizer\": {\"cache_dir\": \"paloma/dolma_100_subreddits-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/dolma_100_subreddits-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/falcon-refinedweb-marin-tokenizer\": {\"cache_dir\": \"paloma/falcon-refinedweb-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/falcon-refinedweb-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/gab-marin-tokenizer\": {\"cache_dir\": \"paloma/gab-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/gab-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/m2d2_s2orc_unsplit-marin-tokenizer\": {\"cache_dir\": \"paloma/m2d2_s2orc_unsplit-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/m2d2_s2orc_unsplit-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/m2d2_wikipedia_unsplit-marin-tokenizer\": {\"cache_dir\": \"paloma/m2d2_wikipedia_unsplit-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/m2d2_wikipedia_unsplit-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/manosphere_meta_sep-marin-tokenizer\": {\"cache_dir\": \"paloma/manosphere_meta_sep-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/manosphere_meta_sep-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/mc4-marin-tokenizer\": {\"cache_dir\": \"paloma/mc4-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/mc4-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/ptb-marin-tokenizer\": {\"cache_dir\": \"paloma/ptb-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/ptb-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/redpajama-marin-tokenizer\": {\"cache_dir\": \"paloma/redpajama-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/redpajama-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/twitterAAE_HELM_fixed-marin-tokenizer\": {\"cache_dir\": \"paloma/twitterAAE_HELM_fixed-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/twitterAAE_HELM_fixed-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}, \"paloma/wikitext_103-marin-tokenizer\": {\"cache_dir\": \"paloma/wikitext_103-marin-tokenizer@2026.06.28\", \"flat_cache\": false, \"format\": {\"text_key\": \"text\"}, \"pack\": null, \"source\": {\"cache_dir\": \"paloma/wikitext_103-marin-tokenizer@2026.06.28\", \"format\": {\"text_key\": \"text\"}, \"tags\": [], \"train_urls\": [], \"validation_urls\": []}, \"split\": \"validation\", \"tags\": []}}, \"enforce_eos\": true, \"experiment_budget\": null, \"max_train_batches\": null, \"mixture_block_size\": 2048, \"num_validation_sequences\": null, \"permutation_type\": \"linear\", \"shuffle\": true, \"shuffle_before_trainval_split\": true, \"stop_strategy\": \"restart\", \"target_budget\": null, \"tokenizer\": \"<tokenizer>\", \"train_weights\": {\"fineweb-edu-10B\": 1.0, \"paloma/4chan-marin-tokenizer\": 0.0, \"paloma/c4_100_domains-marin-tokenizer\": 0.0, \"paloma/c4_en-marin-tokenizer\": 0.0, \"paloma/dolma-v1_5-marin-tokenizer\": 0.0, \"paloma/dolma_100_programing_languages-marin-tokenizer\": 0.0, \"paloma/dolma_100_subreddits-marin-tokenizer\": 0.0, \"paloma/falcon-refinedweb-marin-tokenizer\": 0.0, \"paloma/gab-marin-tokenizer\": 0.0, \"paloma/m2d2_s2orc_unsplit-marin-tokenizer\": 0.0, \"paloma/m2d2_wikipedia_unsplit-marin-tokenizer\": 0.0, \"paloma/manosphere_meta_sep-marin-tokenizer\": 0.0, \"paloma/mc4-marin-tokenizer\": 0.0, \"paloma/ptb-marin-tokenizer\": 0.0, \"paloma/redpajama-marin-tokenizer\": 0.0, \"paloma/twitterAAE_HELM_fixed-marin-tokenizer\": 0.0, \"paloma/wikitext_103-marin-tokenizer\": 0.0}, \"vocab_size\": null}, \"data_seed\": 42, \"eval_harness\": null, \"eval_harness_steps\": 10000, \"hf_generation_eos_token_ids\": null, \"hf_save_dtype\": null, \"hf_save_path\": null, \"hf_save_steps\": null, \"hf_upload\": null, \"initialize_from_checkpoint_path\": null, \"initialize_from_hf\": false, \"initialize_model_from_checkpoint_path\": null, \"labeled_eval\": null, \"log_entropy\": false, \"merged_hf_save_path\": null, \"merged_hf_upload\": null, \"model\": {\"activation_function\": \"silu\", \"attn_backend\": \"jax_flash\", \"flash_attention_block_size\": null, \"gradient_checkpointing\": true, \"head_dim\": null, \"hidden_dim\": 512, \"hybrid_norm\": true, \"initializer_range\": 0.02, \"input_embedding_norm\": false, \"intermediate_dim\": 1792, \"layer_norm_epsilon\": 1e-05, \"max_seq_len\": 4096, \"num_heads\": 8, \"num_kv_heads\": 8, \"num_layers\": 6, \"pls_eval\": true, \"pls_monitor_stride\": 16, \"pls_weight\": 1.0, \"reference_checkpoint\": \"Qwen/Qwen3-0.6B\", \"rope\": {\"factor\": 1.0, \"theta\": 10000}, \"scan_layers\": true, \"sliding_window\": 4096, \"tie_word_embeddings\": false, \"tokenizer\": null, \"upcast_attn\": false, \"use_bias\": false, \"use_layer_norm_weight\": true, \"use_qk_norm\": false, \"use_sliding_window\": false}, \"optimizer\": {\"adam_lr\": 0.008, \"backend_steps\": 5, \"beta1\": 0.9, \"beta2\": 0.98, \"coefficient_type\": \"simple\", \"cooldown\": null, \"cycle_length\": null, \"cycles\": null, \"decay\": 0.8, \"default_weight_decay_mask\": null, \"epsilon\": 1e-20, \"haps\": null, \"learning_rate\": 0.02, \"lr_schedule\": \"linear\", \"max_grad_norm\": 1.0, \"min_lr_ratio\": 0.0, \"momentum\": 0.95, \"muon_epsilon\": 1e-05, \"nesterov\": true, \"rewarmup\": 0.0, \"warmup\": 0, \"weight_decay\": 0.1, \"weight_decay_modules\": null}, \"pad_tokenizer_to_match_model\": false, \"peft_hf_upload\": null, \"peft_save_path\": null, \"train_seq_len\": 4096, \"trainer\": {\"allow_nondivisible_batch_size\": true, \"allow_partial_checkpoint\": false, \"checkpointer\": {\"append_run_id_to_base_path\": true, \"base_path\": \"checkpoints/\", \"debug\": {\"dump_stacks_after\": null, \"enabled\": false, \"flush_logs\": true, \"force_gc_before_serialize\": true, \"log_interval\": 60.0, \"top_allocations\": 8, \"tracemalloc_frames\": 25}, \"delete_old_temp_checkpoints\": true, \"keep\": [{\"every\": 10000}], \"keep_last_temporary_checkpoints\": 1, \"save_interval\": {\"days\": 0, \"microseconds\": 0, \"seconds\": 600}, \"temporary_base_path\": null, \"write\": {\"cache_pool_bytes\": 1073741824, \"data_copy_concurrency\": 16, \"max_chunk_bytes\": 536870912, \"max_staged_host_bytes\": 17179869184, \"max_write_replicas\": 1024, \"min_replica_slice_bytes\": 16777216}}, \"crash_on_inf\": true, \"crash_on_nan\": true, \"distributed\": {\"coordinator_address\": null, \"initialize_jax_distributed\": true, \"local_device_ids\": null, \"num_processes\": null, \"process_id\": null}, \"id\": null, \"initialize_from\": null, \"jax_compilation_cache_dir\": null, \"jax_config\": {\"jax_softmax_custom_jvp\": true, \"jax_threefry_partitionable\": true}, \"load_checkpoint\": null, \"load_checkpoint_path\": null, \"log_dir\": \"logs\", \"log_jaxprs\": true, \"log_xla_hlo\": true, \"max_eval_batches\": null, \"mesh\": {\"axes\": {\"data\": -1, \"model\": 1, \"replica\": 1}, \"batch_axis_name\": \"batch\", \"compute_mapping\": {\"token\": [\"replica_dcn\", \"replica\", \"data\"], \"token_repeat\": [\"replica_dcn\", \"replica\", \"data\"]}, \"dcn_axes\": {\"replica_dcn\": -1}, \"param_mapping\": {\"embed\": \"data\"}, \"shared_mapping\": {}}, \"model_averaging\": null, \"mp\": {\"compute_dtype\": {\"__dtype__\": \"bfloat16\"}, \"output_dtype\": {\"__dtype__\": \"bfloat16\"}, \"param_dtype\": {\"__dtype__\": \"float32\"}}, \"num_train_steps\": 4959, \"per_device_eval_parallelism\": -1, \"per_device_parallelism\": -1, \"profiler\": {\"create_perfetto_trace\": false, \"enabled\": false, \"num_steps\": 25, \"perfetto_link\": false, \"process_index\": null, \"profile_options\": {\"advanced_configuration\": {}, \"device_tracer_level\": null, \"enable_hlo_proto\": false, \"host_tracer_level\": null, \"include_dataset_ops\": null, \"python_tracer_level\": null}, \"start_step\": 5, \"upload\": {\"enabled\": true, \"service_url\": \"https://iris.oa.dev/proxy/xprof\", \"ttl_days\": 30}}, \"progress_watchdog\": {\"diagnostic_timeout\": null, \"process_timeout\": null, \"startup_grace_period\": {\"days\": 0, \"microseconds\": 0, \"seconds\": 3600}, \"startup_timeout\": null, \"step_timeout\": null}, \"quantization\": null, \"require_accelerator\": null, \"seed\": 0, \"shutdown_at_exit\": false, \"steps_per_eval\": 1000, \"tracker\": {\"background\": true, \"background_finish_timeout\": 120.0, \"background_max_queue_size\": 10000, \"entity\": \"reself\", \"group\": \"muonh-qwen3-pls-della\", \"id\": null, \"mode\": null, \"name\": null, \"project\": \"marin-della\", \"replicate_path\": null, \"resume\": \"allow\", \"save_code\": true, \"save_xla_dumps\": false, \"service_teardown_timeout\": 60.0, \"tags\": [\"speedrun\", \"muonh\", \"qwen3\", \"130m\", \"della4xh100\", \"jax_flash\", \"bf16\", \"pls1\"]}, \"train_batch_size\": 128, \"use_explicit_mesh_axes\": false, \"wandb\": null, \"watch\": {\"include_histograms\": false, \"include_norms\": true, \"include_per_parameter_norms\": true, \"interval\": 10, \"split_scan_layers\": true, \"watch_targets\": [\"grads\", \"params\"]}}, \"use_hf_model_config\": false, \"z_loss_weight\": 0.0}}",
+  "provenance": {
+    "tree_hash": "af2fbd8d92",
+    "base_commit": "f7a686caf6",
+    "dirty": false,
+    "branch": "pls",
+    "built_by": "USER",
+    "git_remote": "https://github.com/wenhaochai/marin-pli.git",
+    "created_at": "2026-09-30T02:42:18.721809",
+    "command_line": [
+      "/scratch/gpfs/GROUP/USER/project/marin-pls/experiments/references/della_muonh_qwen3_scaling.py"
+    ]
+  }
+}

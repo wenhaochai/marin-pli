@@ -1,0 +1,119 @@
+# Verified via arXiv API (export.arxiv.org) on 2026-09-29
+1808.04444v2 | Character-Level Language Modeling with Deeper Self-Attention | Rami Al-Rfou, Dokook Choe, Noah Constant, Mandy Guo, Llion Jones | 2018-08-09 | (AAAI 2019 - to verify)
+2503.05005v2 | Balcony: A Lightweight Approach to Dynamic Inference of Generative Language Models | Benyamin Jamialahmadi, Parsa Kavehzadeh, Mehdi Rezagholizadeh, et al. (8) | 2025-03-06
+2309.00255v3 | SortedNet: A Scalable and Generalized Framework for Training Modular Deep Neural Networks | Valipour, Rezagholizadeh, Rajabzadeh, Kavehzadeh, Tahaei, Chen, Ghodsi | 2023-09-01
+2311.08623v1 | DEED: Dynamic Early Exit on Decoder for Accelerating Encoder-Decoder Transformer Models | Peng Tang, Pengkai Zhu, Tian Li, Srikar Appalaraju, Vijay Mahadevan, R. Manmatha | 2023-11-15
+1910.10073v4 | Depth-Adaptive Transformer | Maha Elbayad, Jiatao Gu, Edouard Grave, Michael Auli | 2019-10-22 | ICLR 2020
+2412.01455v1 | Early Exit Is a Natural Capability in Transformer-based Models: An Empirical Study on Early Exit without Joint Optimization | Weiqiao Shan, Long Meng, Tong Zheng, Yingfeng Luo, Bei Li, Junxin Wang, Tong Xiao, Jingbo Zhu | 2024-12-02
+2310.18581v2 | Accelerating LLaMA Inference by Enabling Intermediate Layer Decoding via Instruction Tuning with LITE | Neeraj Varshney, Agneet Chatterjee, Mihir Parmar, Chitta Baral | 2023-10-28
+2310.05424v1 | Fast and Robust Early-Exiting Framework for Autoregressive Language Models with Synchronized Parallel Decoding | Sangmin Bae, Jongwoo Ko, Hwanjun Song, Se-Young Yun | 2023-10-09 | EMNLP 2023
+2207.07061v2 | Confident Adaptive Language Modeling | Tal Schuster, Adam Fisch, Jai Gupta, Mostafa Dehghani, Dara Bahri, Vinh Q. Tran, Yi Tay, Donald Metzler | 2022-07-14 | NeurIPS 2022 (oral)
+2404.16710v4 | LayerSkip: Enabling Early Exit Inference and Self-Speculative Decoding | Mostafa Elhoushi, Akshat Shrivastava, Diana Liskovich, et al. (13) | 2024-04-25 | ACL 2024
+2406.03853v1 | Speculative Decoding via Early-exiting for Faster LLM Inference with Thompson Sampling Control Mechanism | Jiahao Liu, Qifan Wang, Jingang Wang, Xunliang Cai | 2024-06-06 | ACL 2024 Findings
+2312.04916v3 | EE-LLM: Large-Scale Training and Inference of Early-Exit Large Language Models with 3D Parallelism | Yanxi Chen, Xuchen Pan, Yaliang Li, Bolin Ding, Jingren Zhou | 2023-12-08 | ICML 2024
+2309.08968v2 | Sorted LLaMA: Unlocking the Potential of Intermediate Layers of Large Language Models for Dynamic Inference | Kavehzadeh, Valipour, Tahaei, Ghodsi, Chen, Rezagholizadeh | 2023-09-16 | EACL 2024 Findings
+2210.13304v2 | ELMER: A Non-Autoregressive Pre-trained Language Model for Efficient and Effective Text Generation | Junyi Li, Tianyi Tang, Wayne Xin Zhao, Jian-Yun Nie, Ji-Rong Wen | 2022-10-24 | EMNLP 2022
+1808.10143v2 | Direct Output Connection for a High-Rank Language Model | Sho Takase, Jun Suzuki, Masaaki Nagata | 2018-08-30 | EMNLP 2018
+2303.08817v2 | DeepMIM: Deep Supervision for Masked Image Modeling | Sucheng Ren, Fangyun Wei, Samuel Albanie, Zheng Zhang, Han Hu | 2023-03-15
+1906.00675v2 | Deeply-supervised Knowledge Synergy | Dawei Sun, Anbang Yao, Aojun Zhou, Hao Zhao | 2019-06-03 (CVPR 2019 - to verify)
+1504.06375v2 | Holistically-Nested Edge Detection | Saining Xie, Zhuowen Tu | 2015-04-24 (ICCV 2015)
+1409.5185v2 | Deeply-Supervised Nets | Chen-Yu Lee, Saining Xie, Patrick Gallagher, Zhengyou Zhang, Zhuowen Tu | 2014-09-18 (AISTATS 2015)
+1602.00134v4 | Convolutional Pose Machines | Shih-En Wei, Varun Ramakrishna, Takeo Kanade, Yaser Sheikh | 2016-01-30 (CVPR 2016)
+1409.4842v1 | Going Deeper with Convolutions | Szegedy, Liu, Jia, Sermanet, Reed, Anguelov, Erhan, Vanhoucke, Rabinovich | 2014-09-17 (CVPR 2015)
+1807.10165v1 | UNet++: A Nested U-Net Architecture for Medical Image Segmentation | Zongwei Zhou, Siddiquee, Tajbakhsh, Jianming Liang | 2018-07-18 | DLMIA 2018
+1810.07052v3 | Shallow-Deep Networks: Understanding and Mitigating Network Overthinking | Yigitcan Kaya, Sanghyun Hong, Tudor Dumitras | 2018-10-16 | ICML 2019
+2207.05306v1 | Contrastive Deep Supervision | Linfeng Zhang, Xin Chen, Junbo Zhang, Runpei Dong, Kaisheng Ma | 2022-07-12 | ECCV 2022
+1603.06937v2 | Stacked Hourglass Networks for Human Pose Estimation | Alejandro Newell, Kaiyu Yang, Jia Deng | 2016-03-22 (ECCV 2016)
+1908.06294v1 | Improved Techniques for Training Adaptive Deep Networks | Hao Li, Hong Zhang, Xiaojuan Qi, Ruigang Yang, Gao Huang | 2019-08-17 (ICCV 2019)
+1709.01686v1 | BranchyNet: Fast Inference via Early Exiting from Deep Neural Networks | Teerapittayanon, McDanel, Kung | 2017-09-06 (ICPR 2016)
+1612.01105v2 | Pyramid Scene Parsing Network | Hengshuang Zhao, Jianping Shi, Xiaojuan Qi, Xiaogang Wang, Jiaya Jia | 2016-12-04 | CVPR 2017
+1905.08094v1 | Be Your Own Teacher: Improve the Performance of CNNs via Self Distillation | Linfeng Zhang, Jiebo Song, Anni Gao, Jingwei Chen, Chenglong Bao, Kaisheng Ma | 2019-05-17 (ICCV 2019)
+1505.02496v1 | Training Deeper Convolutional Networks with Deep Supervision | Liwei Wang, Chen-Yu Lee, Zhuowen Tu, Svetlana Lazebnik | 2015-05-11
+1801.03399v2 | Deep Supervision with Intermediate Concepts | Chi Li, et al. | 2018-01-08 | TPAMI
+1708.06832v3 | Learning Anytime Predictions in Neural Networks via Adaptive Loss Balancing | Hanzhang Hu, Debadeepta Dey, Martial Hebert, J. Andrew Bagnell | 2017-08-22 (AAAI 2019)
+1703.09844v5 | Multi-Scale Dense Networks for Resource Efficient Image Classification | Gao Huang, Danlu Chen, Tianhong Li, Felix Wu, Laurens van der Maaten, Kilian Q. Weinberger | 2017-03-29 (ICLR 2018)
+1512.00567v3 | Rethinking the Inception Architecture for Computer Vision | Szegedy, Vanhoucke, Ioffe, Shlens, Wojna | 2015-12-02 (CVPR 2016)
+2211.16726v1 | Boosted Dynamic Neural Networks | Haichao Yu, Haoxiang Li, Gang Hua, Gao Huang, Humphrey Shi | 2022-11-30 (AAAI 2023)
+2102.04906v4 | Dynamic Neural Networks: A Survey | Yizeng Han, Gao Huang, Shiji Song, Le Yang, Honghui Wang, Yulin Wang | 2021-02-09 (TPAMI)
+2104.08803v2 | Consistent Accelerated Inference via Confident Adaptive Transformers | Tal Schuster, Adam Fisch, Tommi Jaakkola, Regina Barzilay | 2021-04-18 | EMNLP 2021
+2004.02178v2 | FastBERT: a Self-distilling BERT with Adaptive Inference Time | Weijie Liu, Peng Zhou, Zhe Zhao, Zhiruo Wang, Haotang Deng, Qi Ju | 2020-04-05 | ACL 2020
+2004.12814v2 | Why should we add early exits to neural networks? | Scardapane, Scarpiniti, Baccarelli, Uncini | 2020-04-27 | Cognitive Computation 2020
+2004.12993v1 | DeeBERT: Dynamic Early Exiting for Accelerating BERT Inference | Ji Xin, Raphael Tang, Jaejun Lee, Yaoliang Yu, Jimmy Lin | 2020-04-27 | ACL 2020
+2106.15183v3 | Multi-Exit Vision Transformer for Dynamic Inference | Arian Bakhtiarnia, Qi Zhang, Alexandros Iosifidis | 2021-06-29 | BMVC 2021
+2101.09755v1 | RomeBERT: Robust Training of Multi-Exit BERT | Shijie Geng, Peng Gao, Zuohui Fu, Yongfeng Zhang | 2021-01-24
+2006.04152v3 | BERT Loses Patience: Fast and Robust Inference with Early Exit | Wangchunshu Zhou, Canwen Xu, Tao Ge, Julian McAuley, Ke Xu, Furu Wei | 2020-06-07 | NeurIPS 2020
+2308.00255v1 | LGViT: Dynamic Early Exiting for Accelerating Vision Transformer | Guanyu Xu et al. | 2023-08-01 | ACM MM 2023
+2004.07453v2 | The Right Tool for the Job: Matching Model and Instance Complexities | Roy Schwartz, Gabriel Stanovsky, Swabha Swayamdipta, Jesse Dodge, Noah A. Smith | 2020-04-16 | ACL 2020
+2110.07038v2 | Towards Efficient NLP: A Standard Evaluation and A Strong Baseline (ElasticBERT) | Xiangyang Liu, Tianxiang Sun, et al. (10) | 2021-10-13 | NAACL 2022
+2106.05409v2 | Zero Time Waste: Recycling Predictions in Early Exit Neural Networks | Wołczyk et al. | 2021-06-09 | NeurIPS 2021
+2105.13792v1 | Early Exiting with Ensemble Internal Classifiers | Tianxiang Sun et al. | 2021-05-28
+2407.14320v2 | How to Train Your Multi-Exit Model? Analyzing the Impact of Training Strategies | Piotr Kubaty, Bartosz Wójcik, et al. | 2024-07-19
+1910.09799v2 | Transformer-based Acoustic Modeling for Hybrid Speech Recognition | Yongqiang Wang, Abdelrahman Mohamed, et al. (13) | 2019-10-22 | ICASSP 2020
+2110.04109v2 | Hierarchical Conditional End-to-End ASR with CTC and Multi-Granular Subword Units | Yosuke Higuchi, Keita Karube, Tetsuji Ogawa, Tetsunori Kobayashi | 2021-10-08 | ICASSP 2022
+1910.10324v2 | Deja-vu: Double Feature Presentation and Iterated Loss in Deep Transformer Networks | Andros Tjandra, Chunxi Liu, Frank Zhang, Xiaohui Zhang, Yongqiang Wang, Gabriel Synnaeve, Satoshi Nakamura, Geoffrey Zweig | 2019-10-23 | ICASSP 2020
+2102.03216v1 | Intermediate Loss Regularization for CTC-based Speech Recognition | Jaesong Lee, Shinji Watanabe | 2021-02-05 | ICASSP 2021
+2104.02724v2 | Relaxing the Conditional Independence Assumption of CTC-based ASR by Conditioning on Intermediate Predictions | Jumon Nozaki, Tatsuya Komatsu | 2021-04-06 | Interspeech 2021
+1704.01631v2 | Multitask Learning with Low-Level Auxiliary Tasks for Encoder-Decoder Based Speech Recognition | Shubham Toshniwal, Hao Tang, Liang Lu, Karen Livescu | 2017-04-05 (Interspeech 2017)
+2309.09546v2 | Training dynamic models using early exits for automatic speech recognition on resource-constrained devices | George August Wright, Umberto Cappellazzo, et al. | 2023-09-18 | ICASSP 2024 SASB workshop
+2112.08778v1 | Self-Supervised Learning for speech recognition with Intermediate layer supervision | Chengyi Wang, Yu Wu, Sanyuan Chen, Shujie Liu, Jinyu Li, Yao Qian, Zhenglu Yang | 2021-12-16 (ICASSP 2022)
+2011.01482v1 | Layer-Wise Multi-View Learning for Neural Machine Translation | Qiang Wang, Changliang Li, Yue Zhang, Tong Xiao, Jingbo Zhu | 2020-11-03 | COLING 2020
+1807.07104v5 | Hierarchical Multi Task Learning With CTC | Ramon Sanabria, Florian Metze | 2018-07-18 | SLT 2018
+2110.07515v1 | Non-Autoregressive Translation with Layer-Wise Prediction and Deep Supervision | Chenyang Huang, Hao Zhou, Osmar R. Zaïane, Lili Mou, Lei Li | 2021-10-14 (AAAI 2022)
+2005.08081v7 | Rethinking and Improving Natural Language Generation with Layer-Wise Multi-View Decoding | Fenglin Liu et al. | 2020-05-16
+2202.05826v3 | End-to-end Algorithm Synthesis with Recurrent Networks: Logical Extrapolation Without Overthinking | Bansal, Schwarzschild, Borgnia, Emam, Huang, Goldblum, Goldstein | 2022-02-11 (NeurIPS 2022)
+2507.10524v3 | Mixture-of-Recursions | Sangmin Bae et al. (11) | 2025-07-14
+2311.12424v3 | Looped Transformers are Better at Learning Learning Algorithms | Liu Yang, Kangwook Lee, Robert Nowak, Dimitris Papailiopoulos | 2023-11-21 | ICLR 2024
+2410.20672v3 | Relaxed Recursive Transformers: Effective Parameter Sharing with Layer-wise LoRA | Sangmin Bae, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji, Seungyeon Kim, Tal Schuster | 2024-10-28 | ICLR 2025
+2409.15647v5 | Looped Transformers for Length Generalization | Ying Fan, Yilun Du, Kannan Ramchandran, Kangwook Lee | 2024-09-24 | ICLR 2025
+2005.12872v3 | End-to-End Object Detection with Transformers (DETR) | Carion, Massa, Synnaeve, Usunier, Kirillov, Zagoruyko | 2020-05-26 (ECCV 2020)
+1807.03819v3 | Universal Transformers | Dehghani, Gouws, Vinyals, Uszkoreit, Kaiser | 2018-07-10 | ICLR 2019
+2502.05171v2 | Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach | Jonas Geiping et al. (9) | 2025-02-07
+2502.17416v1 | Reasoning with Latent Thoughts: On the Power of Looped Transformers | Saunshi, Dikkala, Zhiyuan Li, Sanjiv Kumar, Reddi | 2025-02-24 | ICLR 2025
+2510.04871v1 | Less is More: Recursive Reasoning with Tiny Networks | Alexia Jolicoeur-Martineau | 2025-10-06
+2510.25741v5 | Scaling Latent Reasoning via Looped Language Models (Ouro) | Rui-Jie Zhu, Zixuan Wang, et al. (31) | 2025-10-29
+2003.12039v3 | RAFT: Recurrent All-Pairs Field Transforms for Optical Flow | Zachary Teed, Jia Deng | 2020-03-26 (ECCV 2020)
+2107.05407v2 | PonderNet: Learning to Ponder | Andrea Banino, Jan Balaguer, Charles Blundell | 2021-07-12 | ICML 2021 AutoML workshop
+1603.08983v6 | Adaptive Computation Time for Recurrent Neural Networks | Alex Graves | 2016-03-29
+2506.21734v3 | Hierarchical Reasoning Model | Guan Wang, Jin Li, et al. (9) | 2025-06-26
+2402.17318v1 | Scaling Supervised Local Learning with Augmented Auxiliary Networks | Chenxiang Ma, Jibin Wu, Chenyang Si, Kay Chen Tan | 2024-02-27 | ICLR 2024
+2012.15828v2 | MiniLMv2 | Wenhui Wang, Hangbo Bao, Shaohan Huang, Li Dong, Furu Wei | 2020-12-31 (ACL Findings 2021)
+1905.11786v3 | Putting An End to End-to-End: Gradient-Isolated Learning of Representations | Sindy Löwe, Peter O'Connor, Bastiaan S. Veeling | 2019-05-28 | NeurIPS 2019
+2002.10957v2 | MiniLM: Deep Self-Attention Distillation | Wenhui Wang, Furu Wei, Li Dong, Hangbo Bao, Nan Yang, Ming Zhou | 2020-02-25 (NeurIPS 2020)
+1908.09355v1 | Patient Knowledge Distillation for BERT Model Compression | Siqi Sun, Yu Cheng, Zhe Gan, Jingjing Liu | 2019-08-25 | EMNLP 2019
+2503.14494v2 | Deeply Supervised Flow-Based Generative Models (DeepFlow) | Inkyu Shin, Chenglin Yang, Liang-Chieh Chen | 2025-03-18 | ICCV 2025
+2601.07372v2 | Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models (Engram) | Xin Cheng, Rui Tian, Wangding Zeng, Damai Dai, et al. (16) | 2026-01-12
+2101.10832v1 | Revisiting Locally Supervised Learning: an Alternative to End-to-end Training (InfoPro) | Yulin Wang, Zanlin Ni, Shiji Song, Le Yang, Gao Huang | 2021-01-26 | ICLR 2021
+1901.06656v2 | Training Neural Networks with Local Error Signals | Arild Nøkland, Lars Hiller Eidnes | 2019-01-20 | ICML 2019
+2502.05795v6 | The Curse of Depth in Large Language Models | Wenfang Sun, Xinyuan Song, Pengxiang Li, Lu Yin, Yefeng Zheng, Shiwei Liu | 2025-02-09 | NeurIPS 2025
+1901.08164v4 | Decoupled Greedy Learning of CNNs | Belilovsky, Eickenberg, Oyallon | 2019-01-23 (ICML 2020)
+1412.6550v4 | FitNets: Hints for Thin Deep Nets | Romero, Ballas, Kahou, Chassang, Gatta, Bengio | 2014-12-19 (ICLR 2015)
+2410.06940v4 | REPA | Sihyun Yu, Sangkyung Kwak, Huiwon Jang, Jongheon Jeong, Jonathan Huang, Jinwoo Shin, Saining Xie | 2024-10-09 | ICLR 2025 Oral
+1812.11446v3 | Greedy Layerwise Learning Can Scale to ImageNet | Belilovsky, Eickenberg, Oyallon | 2018-12-29 (ICML 2019)
+2004.02984v2 | MobileBERT | Zhiqing Sun, Hongkun Yu, Xiaodan Song, Renjie Liu, Yiming Yang, Denny Zhou | 2020-04-06 | ACL 2020
+1909.10351v5 | TinyBERT | Xiaoqi Jiao et al. (8) | 2019-09-23 | Findings of EMNLP 2020
+2505.13898v3 | Do Language Models Use Their Depth Efficiently? | Róbert Csordás, Christopher D. Manning, Christopher Potts | 2025-05-20 | NeurIPS 2025
+2303.08112v6 | Eliciting Latent Predictions from Transformers with the Tuned Lens | Belrose et al. (8) | 2023-03-14
+2505.16792v1 | REPA Works Until It Doesn't: Early-Stopped, Holistic Alignment Supercharges Diffusion Training (HASTE) | Ziqiao Wang, Wangbo Zhao, Yuhao Zhou, Zekai Li, et al. (8) | 2025-05-22
+2602.14159v1 | Synergistic Intra- and Cross-Layer Regularization Losses for MoE Expert Specialization | Rizhen Hu, Yuan Cao, Boao Kong, Mou Sun, Kun Yuan | 2026-02-15
+2410.11451v1 | Tending Towards Stability: Convergence Challenges in Small Language Models | Richard Diehl Martinez, Pietro Lesci, Paula Buttery | 2024-10-15 (EMNLP Findings 2024 per ACL anthology search hit)
+2309.08168v2 | Draft & Verify: Lossless LLM Acceleration via Self-Speculative Decoding | Jun Zhang et al. (7) | 2023-09-15 | ACL 2024
+2606.23670v1 | Tapered Language Models | Reza Bayat, Ali Behrouz, Aaron Courville | 2026-06-22
+2605.24956v3 | NITP: Next Implicit Token Prediction for LLM Pre-training | Xiangdong Zhang, Debing Zhang, Shaofeng Zhang, Xiaohan Qin, Yu Cheng, Junchi Yan | 2026-05-24 | ICML 2026
+2402.00518v1 | EE-Tuning: An Economical yet Scalable Solution for Tuning Early-Exit LLMs | Xuchen Pan, Yanxi Chen, Yaliang Li, Bolin Ding, Jingren Zhou | 2024-02-01
+2603.19714v1 | LoopRPT: Reinforcement Pre-Training for Looped Language Models | Guo Tang et al. (9) | 2026-03-20
+2603.23701v1 | The Diminishing Returns of Early-Exit Decoding in Modern LLMs | Rui Wei et al. (7) | 2026-03-24
+2603.05369v1 | Progressive Residual Warmup for Language Model Pretraining | Tianhao Chen et al. (7) | 2026-03-05
+2605.10504v1 | Learning Less Is More: Premature Upper-Layer Attention Specialization Hurts Language Model Pretraining | Jinchang Zhu et al. (6) | 2026-05-11
+2307.02628v1 | SkipDecode | Luciano Del Corro et al. (6) | 2023-07-05
+2502.02013v2 | Layer by Layer: Uncovering Hidden Representations in Language Models | Oscar Skean et al. (7) | 2025-02-04 | ICML 2025
+2511.07384v1 | Teaching Pretrained Language Models to Think Deeper with Retrofitted Recurrence | Sean McLeish et al. (10) | 2025-11-10
+2609.05275v1 | Don't Drop Dropout: Optimizing Layer Sparsity for Efficient LLM Training and Inference | Mostafa Elhoushi et al. (9) | 2026-09-04 | ICML 2026
+2410.13077v2 | Tuning Language Models by Mixture-of-Depths Ensemble | Haoyan Luo, Lucia Specia | 2024-10-16
+2511.16886v5 | Latent Reasoning in TRMs is Secretly a Policy Improvement Operator | Arip Asadulaev, Rayan Banerjee, Fakhri Karray, Martin Takac | 2025-11-21
+2605.01058v1 | LEAP: Layer-wise Exit-Aware Pretraining for Efficient Transformer Inference | Shashank Kapadia et al. (7) | 2026-05-01 | ACL 2026 Industry
+2404.18911v1 | Kangaroo: Lossless Self-Speculative Decoding via Double Early Exiting | Fangcheng Liu et al. (6) | 2024-04-29
+2502.13842v2 | Inner Thinking Transformer | Yilong Chen et al. (10) | 2025-02-19 | ACL 2025
+2601.18302v1 | Suppressing Final Layer Hidden State Jumps in Transformer Pretraining | Keigo Shibata et al. (6) | 2026-01-26 | EACL 2026 Findings
+2506.11389v5 | Curriculum-Guided Layer Scaling for Language Model Pretraining | Karanpartap Singh, Neil Band, Ehsan Adeli | 2025-06-13 | ICML 2026
+DTS (no arXiv found) | Deep Trajectory Supervision: Deep Supervision Strikes Back | Han Wang, Weijie Wang, Jiaqi Liu, Hilde Kuehne, Nicu Sebe | ICML 2026 poster https://icml.cc/virtual/2026/poster/64479 ; OpenReview N9kBjRH0Cx
+ARC Prize blog | The Hidden Drivers of HRM's Performance on ARC-AGI | ARC Prize Team | 2025-08-15 | https://arcprize.org/blog/hrm-analysis
