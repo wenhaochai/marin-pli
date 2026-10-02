@@ -46,6 +46,7 @@ from levanter.models.loss import maybe_fused_next_token_loss
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.trainer import current_train_step
 
+from experiments.references.focal_qwen3 import focal_next_token_loss
 from experiments.references.sampled_softmax_qwen3 import sampled_next_token_loss
 
 ROWS = "oe_rows"  # the tables' row axis: sharded over the data axis for both parameters and compute (launcher)
@@ -62,11 +63,15 @@ class OverVocabQwen3Config(Qwen3Config):
     # sampled softmax for both heads (empty: full softmax); see experiments.references.sampled_softmax_qwen3
     ss_candidates: tuple[int, ...] = ()
     ss_stage_ends: tuple[int, ...] = ()
+    # focal loss (experiments.references.focal_qwen3) on both heads; 0 is plain cross-entropy
+    focal_gamma: float = 0.0
 
     def __post_init__(self):
         super().__post_init__()
         if self.oe_n < 2 or self.oe_m < 1 or self.oe_k < 0 or self.od_weight < 0:
             raise ValueError("oe_n >= 2, oe_m >= 1, oe_k >= 0 and od_weight >= 0 are required")
+        if self.focal_gamma < 0 or (self.focal_gamma > 0 and self.ss_candidates):
+            raise ValueError("focal_gamma must be >= 0 and is not combined with the sampled softmax (its p is a candidate-set probability)")
         if len(self.ss_candidates) != len(self.ss_stage_ends):
             raise ValueError("one stage end per candidate count")
 
@@ -197,9 +202,14 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             if sampled:
                 return sampled_next_token_loss(self.Pos, self.Embed, self.Vocab, states, head, true_ids, loss_weight=weight,
                                                step=step, candidates=cfg.ss_candidates, stage_ends=cfg.ss_stage_ends, key=k_s, dtype=loss_dtype, **kw)
+            if cfg.focal_gamma > 0:
+                focal, ce = focal_next_token_loss(self.Pos, self.Embed, self.Vocab, states, head, true_ids, gamma=cfg.focal_gamma,
+                                                  loss_weight=weight, dtype=loss_dtype, **kw)
+                return focal, {"ce": Metric.from_value(jnp.mean(ce).astype(jnp.float32), ReductionType.MEAN)}
             return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, states, head, true_ids, loss_weight=weight, dtype=loss_dtype, **kw), {}
 
         ntp, stats = head_loss(h, self.get_lm_head(), example.tokens, example.loss_weight, k_s1)
+        stats = {("ntp_ce" if name == "ce" else name): v for name, v in stats.items()}
         loss = ntp
         metrics = {"ntp_loss": Metric.from_value(_scalar(ntp), ReductionType.MEAN)}
         if cfg.od_weight > 0:

@@ -34,9 +34,9 @@ from datetime import timedelta
 # the run); cuda_async without preallocation +30%; vmm +17%. So unless the job set an allocator itself, 1_2b OV uses
 # cuda_async with a pool sized to its temp (ov 30.2 GiB -> 0.8, ovss 25.1 GiB -> 0.75). It must run before JAX
 # initialises its backend, which reads these variables once.
-if os.environ.get("VARIANT") in ("ov", "ovss") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
+if os.environ.get("VARIANT") in ("ov", "ovss", "ovfocal") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75"}[os.environ["VARIANT"]]
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75", "ovfocal": "0.8"}[os.environ["VARIANT"]]
     print(f"1_2b OV allocator: cuda_async, memory fraction {os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']}", flush=True)
 
 import jmp
@@ -63,6 +63,7 @@ from experiments.datasets.prebuilt_caches import fineweb_edu_10B_dataset
 from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
+from experiments.references.focal_qwen3 import FocalQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
 from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
 from experiments.references.sampled_softmax_qwen3 import SampledSoftmaxQwen3Config
@@ -178,7 +179,11 @@ SS_SCHEDULE = tuple((float(f), int(p)) for f, p in (st.split(":") for st in os.e
 # hashed n-gram table, OV_OD_W = lambda_2 of over-decoding (0 turns it off). ovss also applies SS_SCHEDULE to both heads.
 OV_M = int(float(os.environ.get("OV_M", "12.8e6")))
 OV_OD_W = float(os.environ.get("OV_OD_W", "0.1"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", *OBJECTIVE_VARIANTS):
+# VARIANT=focal: the baseline with its cross-entropy replaced by focal loss (experiments.references.focal_qwen3);
+# VARIANT=ovfocal: OV with focal loss on both of its heads. FOCAL_GAMMA is gamma; run ids end in -focal<gamma>.
+FOCAL_GAMMA = float(os.environ.get("FOCAL_GAMMA", "1"))
+OV_VARIANTS = ("ov", "ovss", "ovfocal")
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "focal", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -223,8 +228,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-mtpk{MTP_K}w{MTP_W:g}"
     if VARIANT == "swap":
         variant_tags += f"-sww{SWAP_W:g}" + (f"n{SWAP_SPANS}" if SWAP_SPANS != 1 else "") + (f"l{SWAP_MIN}-{SWAP_MAX}" if (SWAP_MIN, SWAP_MAX) != (16, 128) else "")
-    if VARIANT in ("ov", "ovss"):
+    if VARIANT in OV_VARIANTS:
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
+    if VARIANT in ("focal", "ovfocal"):
+        variant_tags += f"-focal{FOCAL_GAMMA:g}"
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -297,11 +304,14 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_candidates=tuple(p for _, p in SS_SCHEDULE),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE),
         )
-    elif VARIANT in ("ov", "ovss"):
+    elif VARIANT == "focal":
+        model_cls, model_extra = FocalQwen3Config, dict(focal_gamma=FOCAL_GAMMA)
+    elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
         model_cls, model_extra = OverVocabQwen3Config, dict(
             oe_m=OV_M,
             od_weight=OV_OD_W,
+            focal_gamma=FOCAL_GAMMA if VARIANT == "ovfocal" else 0.0,
             ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
@@ -349,7 +359,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
-                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
+                    group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in OV_VARIANTS else "muonh-qwen3-focal-della" if VARIANT == "focal" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
                     tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
@@ -369,8 +379,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # to host (300m ov: ~70 s per save, ~11% of wall-clock at the 10-minute interval). The final checkpoint is
                 # unchanged and training is unaffected; a killed job loses at most an hour.
                 checkpointer=CheckpointerConfig(
-                    save_interval=timedelta(minutes=60 if VARIANT in ("ov", "ovss") else 10),
-                    keep=[] if VARIANT in ("ov", "ovss") else [dict(every=10000)],
+                    save_interval=timedelta(minutes=60 if VARIANT in OV_VARIANTS else 10),
+                    keep=[] if VARIANT in OV_VARIANTS else [dict(every=10000)],
                 ),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
@@ -378,9 +388,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                         "token": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
                         "token_repeat": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
                         # ov: the hashed n-gram tables stay row-sharded in compute too (never all-gathered)
-                        **({OV_ROWS: ResourceAxis.DATA} if VARIANT in ("ov", "ovss") else {}),
+                        **({OV_ROWS: ResourceAxis.DATA} if VARIANT in OV_VARIANTS else {}),
                     },
-                    **({"param_mapping": {"embed": "data", OV_ROWS: "data"}} if VARIANT in ("ov", "ovss") else {}),
+                    **({"param_mapping": {"embed": "data", OV_ROWS: "data"}} if VARIANT in OV_VARIANTS else {}),
                 ),
                 seed=SEED,
                 model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,
