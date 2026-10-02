@@ -3,7 +3,7 @@ purpose: >-
   the shared final RMSNorm + lm_head and trained on NTP, weight 1 at every layer, always on (user 2026-09-29: dense,
   every-layer, always-on version of LLAL). First look: 130m and 300m, pls1 only (user 2026-09-29: no pls0, the
   baselines already exist). Per-layer eval eval/L{k}/..., per-layer train loss train/pls/L{k}.
-branch: pls@b141a8aeba (pushed to archive = wenhaochai/marin-objective-hillclimb, PRIVATE; never push origin/upstream)
+branch: pls@7bf1e23c99 (pushed to archive = wenhaochai/marin-objective-hillclimb, PRIVATE; never push origin/upstream)
 worktree: /scratch/gpfs/GROUP/USER/project/marin-pls
 env: scripts/della/pls_env.sh (worktree-local .venv copied from project/marin/.venv 2026-09-30, jax 0.11.1; worktree lib/*/src first on PYTHONPATH)
 sbatch:
@@ -35,6 +35,7 @@ jobs:
   - {jid: 14832726, kind: train, run_id: muonh-qwen3-130m-della4xh100-pls1-off80, arm: "共享头, per-layer weight 1 switched off at step 80 (oracle, peak of early advantage)", size: 130m, qos: pli-short, time: "01:30:00", commit: b141a8aeba, state: COMPLETED, ran: "2026-10-01 17:36-18:44 della-j13g1", result: "c4_en bpb 1.16355 (+0.0003 vs pool, inside its range; same-seed baseline 1.16358), macro 4.1812 (-0.005, 0.9 sd); transient -0.0052 at step 2000; after-switch speed 0.67 s/it (readouts skipped)"}
   - {jid: 14832727, kind: train, run_id: muonh-qwen3-130m-della4xh100-pls1-off140, arm: "共享头, switched off at step 140 (oracle, crossover)", size: 130m, qos: pli-short, time: "01:30:00", commit: b141a8aeba, state: COMPLETED, ran: "2026-10-01 18:27-19:36", result: "c4_en bpb 1.16384 (+0.0006, just above pool max), macro +0.007, micro +0.012"}
   - {jid: 14832728, kind: train, run_id: muonh-qwen3-130m-della4xh100-pls1-off0-150, arm: "共享头, LLAL-style linear 1 -> 0 over steps 0-150", size: 130m, qos: pli-short, time: "01:30:00", commit: b141a8aeba, state: COMPLETED, ran: "2026-10-01 19:36-20:46", result: "c4_en bpb 1.16389 (+0.0006), macro -0.000, micro +0.003; all three oracle arms at the pool -> prediction held", prediction: "all three |delta c4_en bpb| <= 0.002 vs pool (no lasting gain)"}
-status: completed (130m chapter; next step awaits user)
-synced: NEVER
+status: closed (user 2026-10-01: 结题，上传，删 ckpt)
+synced: "2026-10-02 00:53 UTC (all 11 W&B runs verified: 8 finished with final + per-layer evals, 3 probe runs stopped by budget with probe metrics; per-run eval_metrics.jsonl + configs copied to docs/della/pls_runs/)"
 result: "always-on per-layer LM loss hurts the final layer (+0.034-0.044 bpb 130m, +0.043 300m); switched off before the in-context onset (step 80/140/linear 0-150) it ends at the baseline (<= +0.0006 bpb); the early n-gram speedup never becomes a lasting gain"
+checkpoints: "deleted 2026-10-01: 8 run dirs under marin_store_big/speedrun/*-pls* (~21.6 GB) + 10 temp dirs under tmp/checkpoints-temp/<mirrored path>/speedrun/*-pls* (~8.8 GB); baselines untouched"
