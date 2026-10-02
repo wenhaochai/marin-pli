@@ -1,0 +1,429 @@
+W20260929 23:30:58 23436980475712 levanter.tracker.tracker_fns Failed to dump config to yaml. Skipping logging as artifact.
+Traceback (most recent call last):
+  File "/scratch/gpfs/GROUP/USER/project/marin-pls/lib/levanter/src/levanter/tracker/tracker_fns.py", line 200, in log_configuration
+    draccus.dump(hparams, f, encoding="utf-8")
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/cfgparsing.py", line 137, in dump
+    config_dict = encode(config)
+                  ^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 122, in encode
+    return encode_dataclass(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 122, in encode
+    return encode_dataclass(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 111, in encode
+    return fn(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 205, in encode_dict
+    v_ = encode(v, value_type)
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 120, in encode
+    return encode_choice(obj, underlying_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 176, in encode_choice
+    encoded = encode_dataclass(obj, declared_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 111, in encode
+    return fn(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 205, in encode_dict
+    v_ = encode(v, value_type)
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 126, in encode
+    raise Exception(f"No parser for object {obj} of type {type(obj)}, consider using draccus.encode.register")
+Exception: No parser for object <levanter.data.dataset.ListAsyncDataset object at 0x15503ea02a50> of type <class 'levanter.data.dataset.ListAsyncDataset'>, consider using draccus.encode.register
+I20260929 23:30:58 23436980475712 tqdm_loggable.tqdm_logging Progress on:train -/2 rate:- remaining:? elapsed:00:00 postfix:-
+W20260929 23:30:58 23436980475712 levanter.callbacks.profiler Adjusting profiler_total_steps from 25 to -3
+I20260929 23:30:58 23436980475712 levanter.main.train_lm Overriding data seed with 42
+W20260929 23:30:58 23436980475712 levanter.data.text Direct dataset format missing validation split for component tiny
+I20260929 23:30:59 23436980475712 levanter.main.train_lm No checkpoint found. Starting from scratch.
+W20260929 23:31:02 23436980475712 fray.device_flops Unknown device type: cpu - cpu
+W20260929 23:31:02 23436980475712 fray.device_flops Unknown device type: cpu - cpu
+I20260929 23:31:02 23436980475712 levanter.trainer First batch loaded in 0.1s, starting first train step (includes JIT compilation)...
+I20260929 23:31:02 23436980475712 levanter.trainer Tracing train_step for jaxpr...
+I20260929 23:31:02 23436980475712 levanter.kernels.pallas.fused_cross_entropy_loss.api Fused cross-entropy selected implementation: xla
+I20260929 23:31:04 23436980475712 levanter.trainer Traced train_step in 2.2s
+I20260929 23:31:06 23436980475712 levanter.trainer Lowering train_step to HLO...
+I20260929 23:31:07 23436980475712 levanter.trainer Lowered train_step in 1.3s
+I20260929 23:31:09 23436980475712 levanter.trainer First train step completed in 6.7s (step 0)
+I20260929 23:31:09 23436980475712 levanter.trainer Tracing train_step_hooks for jaxpr...
+I20260929 23:31:10 23436980475712 levanter.trainer Traced train_step_hooks in 1.2s
+I20260929 23:31:11 23436980475712 levanter.trainer Lowering train_step_hooks to HLO...
+I20260929 23:31:11 23436980475712 levanter.trainer Lowered train_step_hooks in 0.8s
+I20260929 23:31:13 23436980475712 levanter.checkpoint Saving checkpoint at step 1.
+I20260929 23:31:13 23436980475712 levanter.checkpoint Saving checkpoint at step 1 to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-1
+I20260929 23:31:13 23436980475712 levanter.checkpoint Saving checkpoint to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-1 for step 1
+I20260929 23:31:13 23436980475712 levanter.tensorstore_serialization Checkpoint gives this process 0.09GiB of 0.09GiB across 54 of 54 arrays; 0.00GiB of that is 12 arrays it writes alone and 0.00GiB is split no further than the replica cap, opt_state/inner_state/1/nu/transformer/layers/stacked/self_attn/q_norm/weight at 0.00GiB, opt_state/inner_state/1/nu/transformer/layers/stacked/self_attn/k_norm/weight at 0.00GiB, opt_state/inner_state/1/mu/transformer/layers/stacked/self_attn/q_norm/weight at 0.00GiB
+I20260929 23:31:13 23436980475712 jax.experimental.array_serialization.serialization Error check finished successfully
+I20260929 23:31:13 23436980475712 levanter.tensorstore_serialization Checkpoint staged 0.09 GiB peak against a 16.00 GiB budget across 180 writes (about 0 GiB of host memory while in flight)
+I20260929 23:31:13 22542250333760 jax.experimental.array_serialization.serialization Starting commit to storage layer by process: 0
+I20260929 23:31:13 22542252435008 levanter.tensorstore_serialization malloc_trim after checkpoint commits returned 1
+I20260929 23:31:13 22542250333760 jax.experimental.array_serialization.serialization Finished committing to storage layer by process: 0
+I20260929 23:31:13 22542250333760 levanter.checkpoint Saved checkpoint to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-1 for step 1
+I20260929 23:31:13 22542250333760 jax.experimental.array_serialization.serialization on_commit_callback successfully ran!
+I20260929 23:31:13 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:31:26 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval 4.00it/4.00it rate:1.9s/it remaining:00:00 elapsed:00:13 postfix:-
+I20260929 23:31:37 23436980475712 levanter.eval eval loss: 12.282
+I20260929 23:31:37 23436980475712 levanter.eval paloma macro loss: 12.281
+I20260929 23:31:37 23436980475712 levanter.eval paloma micro loss: 12.282
+I20260929 23:31:37 23436980475712 levanter.eval paloma/a loss: 12.270
+I20260929 23:31:37 23436980475712 levanter.eval paloma/b loss: 12.292
+I20260929 23:31:41 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts -/4 rate:- remaining:? elapsed:00:00 postfix:-
+W20260929 23:31:41 23436980475712 levanter.data.loader Data loader stalled 0.538s. queue_size=4 fetch_batch_size=32 max_buffered=100
+I20260929 23:32:10 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts 4.00it/4.00it rate:4.6s/it remaining:00:00 elapsed:00:29 postfix:-
+I20260929 23:32:22 23436980475712 experiments.references.per_layer_qwen3 eval/L0 loss 12.2668 macro 12.2628 bpb 4.119072437286377
+I20260929 23:32:22 23436980475712 experiments.references.per_layer_qwen3 eval/L1 loss 12.2972 macro 12.2967 bpb 4.131629467010498
+I20260929 23:32:22 23436980475712 experiments.references.per_layer_qwen3 eval/L2 loss 12.2820 macro 12.2811 bpb 4.126150608062744
+I20260929 23:32:22 23436980475712 jax.experimental.array_serialization.serialization Thread joined successfully
+I20260929 23:32:22 23436980475712 jax.experimental.array_serialization.serialization Error check finished successfully
+I20260929 23:32:22 23436980475712 levanter.tracker.json_file Saved eval results to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/eval_results.json
+I20260929 23:32:24 23436980475712 levanter.distributed Skipping jax.distributed.initialize because initialize_jax_distributed=False.
+I20260929 23:32:24 23436980475712 levanter.cutlass_kernel_cache CuTeDSL kernel cache already installed
+I20260929 23:32:24 23436980475712 levanter.trainer Setting per_device_eval_parallelism to 1
+/scratch/gpfs/GROUP/USER/project/marin-pls/lib/levanter/src/levanter/tracker/tracker_fns.py:227: UserWarning: Global tracker is already set. Overwriting it.
+  warnings.warn("Global tracker is already set. Overwriting it.")
+W20260929 23:32:24 23436980475712 levanter.tracker.tracker_fns Failed to dump config to yaml. Skipping logging as artifact.
+Traceback (most recent call last):
+  File "/scratch/gpfs/GROUP/USER/project/marin-pls/lib/levanter/src/levanter/tracker/tracker_fns.py", line 200, in log_configuration
+    draccus.dump(hparams, f, encoding="utf-8")
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/cfgparsing.py", line 137, in dump
+    config_dict = encode(config)
+                  ^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 122, in encode
+    return encode_dataclass(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 122, in encode
+    return encode_dataclass(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 111, in encode
+    return fn(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 205, in encode_dict
+    v_ = encode(v, value_type)
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 120, in encode
+    return encode_choice(obj, underlying_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 176, in encode_choice
+    encoded = encode_dataclass(obj, declared_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 111, in encode
+    return fn(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 205, in encode_dict
+    v_ = encode(v, value_type)
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 126, in encode
+    raise Exception(f"No parser for object {obj} of type {type(obj)}, consider using draccus.encode.register")
+Exception: No parser for object <levanter.data.dataset.ListAsyncDataset object at 0x15503ea02a50> of type <class 'levanter.data.dataset.ListAsyncDataset'>, consider using draccus.encode.register
+[w1 seg1] train steps logged: [0, 1]
+[w1 seg1] step 0: no train/loss logged (hook cadence), per-layer [12.3063, 12.2744, 12.2765]
+[w1 seg1] step 1: train/loss 36.5725 per-layer [12.2373, 12.1973, 12.1379]
+[w1 seg1] main eval log steps [1]  readout eval log steps [1]
+[w1 seg1] eval@1: 12 main keys; L-1 vs main max rel diff 1.55e-07; loss by layer [12.2668, 12.2972, 12.282] main 12.2820; paloma/a/bpb by layer [4.9255, 4.957, 4.9487]
+[w1 seg1] main-eval keys: ['eval/bpb', 'eval/loss', 'eval/macro_bpb', 'eval/macro_loss', 'eval/paloma/a/bpb', 'eval/paloma/a/loss', 'eval/paloma/b/bpb', 'eval/paloma/b/loss', 'eval/paloma/bpb', 'eval/paloma/macro_bpb', 'eval/paloma/macro_loss', 'eval/paloma/micro_loss']
+I20260929 23:32:24 23436980475712 tqdm_loggable.tqdm_logging Progress on:train -/4 rate:- remaining:? elapsed:00:00 postfix:-
+W20260929 23:32:24 23436980475712 levanter.callbacks.profiler Adjusting profiler_total_steps from 25 to -1
+I20260929 23:32:24 23436980475712 levanter.main.train_lm Overriding data seed with 42
+W20260929 23:32:24 23436980475712 levanter.data.text Direct dataset format missing validation split for component tiny
+I20260929 23:32:24 23436980475712 levanter.checkpoint Discovered latest checkpoint at /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-1
+I20260929 23:32:24 23436980475712 levanter.checkpoint Loading checkpoint from /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-1
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+W20260929 23:32:24 23436980475712 levanter.tensorstore_serialization Unknown leaf type <class 'NoneType'>
+I20260929 23:32:25 23436980475712 levanter.tensorstore_serialization Restore read 0.09GiB from TensorStore and materialized 0.09GiB across 54 arrays in 0.9s (0.11 GiB/s), peak 0.09GiB of a 16.00GiB budget
+W20260929 23:32:29 23436980475712 fray.device_flops Unknown device type: cpu - cpu
+W20260929 23:32:29 23436980475712 fray.device_flops Unknown device type: cpu - cpu
+I20260929 23:32:29 23436980475712 levanter.main.train_lm Resuming training from step 2
+I20260929 23:32:29 23436980475712 levanter.trainer First batch loaded in 0.1s, starting first train step (includes JIT compilation)...
+I20260929 23:32:29 23436980475712 levanter.trainer Tracing train_step_hooks for jaxpr...
+I20260929 23:32:31 23436980475712 levanter.trainer Traced train_step_hooks in 1.7s
+I20260929 23:32:31 23436980475712 levanter.trainer Lowering train_step_hooks to HLO...
+I20260929 23:32:32 23436980475712 levanter.trainer Lowered train_step_hooks in 0.8s
+I20260929 23:32:34 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:34 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval 4.00it/4.00it rate:4.2it/s remaining:00:00 elapsed:00:00 postfix:-
+I20260929 23:32:35 23436980475712 levanter.eval eval loss: 12.275
+I20260929 23:32:35 23436980475712 levanter.eval paloma macro loss: 12.273
+I20260929 23:32:35 23436980475712 levanter.eval paloma micro loss: 12.275
+I20260929 23:32:35 23436980475712 levanter.eval paloma/a loss: 12.259
+I20260929 23:32:35 23436980475712 levanter.eval paloma/b loss: 12.288
+I20260929 23:32:35 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:35 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts 4.00it/4.00it rate:3.3it/s remaining:00:00 elapsed:00:00 postfix:-
+I20260929 23:32:36 23436980475712 experiments.references.per_layer_qwen3 eval/L0 loss 12.2589 macro 12.2547 bpb 4.116333484649658
+I20260929 23:32:36 23436980475712 experiments.references.per_layer_qwen3 eval/L1 loss 12.2866 macro 12.2859 bpb 4.127878189086914
+I20260929 23:32:36 23436980475712 experiments.references.per_layer_qwen3 eval/L2 loss 12.2745 macro 12.2734 bpb 4.1235432624816895
+I20260929 23:32:36 23436980475712 levanter.trainer First train step completed in 5.0s (step 2)
+I20260929 23:32:37 23436980475712 levanter.checkpoint Saving checkpoint at step 3.
+I20260929 23:32:37 23436980475712 levanter.checkpoint Saving checkpoint at step 3 to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-3
+I20260929 23:32:37 23436980475712 levanter.checkpoint Saving checkpoint to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-3 for step 3
+I20260929 23:32:37 23436980475712 levanter.tensorstore_serialization Checkpoint gives this process 0.09GiB of 0.09GiB across 54 of 54 arrays; 0.00GiB of that is 12 arrays it writes alone and 0.00GiB is split no further than the replica cap, opt_state/inner_state/1/nu/transformer/layers/stacked/self_attn/q_norm/weight at 0.00GiB, opt_state/inner_state/1/nu/transformer/layers/stacked/self_attn/k_norm/weight at 0.00GiB, opt_state/inner_state/1/mu/transformer/layers/stacked/self_attn/q_norm/weight at 0.00GiB
+I20260929 23:32:37 23436980475712 jax.experimental.array_serialization.serialization Error check finished successfully
+I20260929 23:32:37 23436980475712 levanter.tensorstore_serialization Checkpoint staged 0.09 GiB peak against a 16.00 GiB budget across 180 writes (about 0 GiB of host memory while in flight)
+I20260929 23:32:37 22534753875520 jax.experimental.array_serialization.serialization Starting commit to storage layer by process: 0
+I20260929 23:32:37 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:37 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval 4.00it/4.00it rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:37 23436980475712 levanter.eval eval loss: 12.272
+I20260929 23:32:37 23436980475712 levanter.eval paloma macro loss: 12.271
+I20260929 23:32:37 23436980475712 levanter.eval paloma micro loss: 12.272
+I20260929 23:32:37 23436980475712 levanter.eval paloma/a loss: 12.255
+I20260929 23:32:37 23436980475712 levanter.eval paloma/b loss: 12.286
+I20260929 23:32:37 22536010053184 levanter.tensorstore_serialization malloc_trim after checkpoint commits returned 1
+I20260929 23:32:37 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:37 22534753875520 jax.experimental.array_serialization.serialization Finished committing to storage layer by process: 0
+I20260929 23:32:37 22534753875520 levanter.checkpoint Saved checkpoint to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/checkpoints/pls-audit-w1/step-3 for step 3
+I20260929 23:32:37 22534753875520 jax.experimental.array_serialization.serialization on_commit_callback successfully ran!
+I20260929 23:32:37 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts 4.00it/4.00it rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:38 23436980475712 experiments.references.per_layer_qwen3 eval/L0 loss 12.2560 macro 12.2518 bpb 4.115338325500488
+I20260929 23:32:38 23436980475712 experiments.references.per_layer_qwen3 eval/L1 loss 12.2834 macro 12.2826 bpb 4.126712799072266
+I20260929 23:32:38 23436980475712 experiments.references.per_layer_qwen3 eval/L2 loss 12.2719 macro 12.2707 bpb 4.122607231140137
+I20260929 23:32:38 23436980475712 jax.experimental.array_serialization.serialization Thread joined successfully
+I20260929 23:32:38 23436980475712 jax.experimental.array_serialization.serialization Error check finished successfully
+I20260929 23:32:38 23436980475712 levanter.tracker.json_file Saved eval results to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w1/eval_results.json
+I20260929 23:32:39 23436980475712 levanter.distributed Skipping jax.distributed.initialize because initialize_jax_distributed=False.
+I20260929 23:32:39 23436980475712 levanter.cutlass_kernel_cache CuTeDSL kernel cache already installed
+I20260929 23:32:39 23436980475712 levanter.trainer Setting per_device_eval_parallelism to 1
+W20260929 23:32:39 23436980475712 levanter.tracker.tracker_fns Failed to dump config to yaml. Skipping logging as artifact.
+Traceback (most recent call last):
+  File "/scratch/gpfs/GROUP/USER/project/marin-pls/lib/levanter/src/levanter/tracker/tracker_fns.py", line 200, in log_configuration
+    draccus.dump(hparams, f, encoding="utf-8")
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/cfgparsing.py", line 137, in dump
+    config_dict = encode(config)
+                  ^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 122, in encode
+    return encode_dataclass(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 122, in encode
+    return encode_dataclass(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 111, in encode
+    return fn(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 205, in encode_dict
+    v_ = encode(v, value_type)
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 120, in encode
+    return encode_choice(obj, underlying_type)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 176, in encode_choice
+    encoded = encode_dataclass(obj, declared_type)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 159, in encode_dataclass
+    d[field.name] = encode(value, field_type)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 111, in encode
+    return fn(obj, declared_type)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 205, in encode_dict
+    v_ = encode(v, value_type)
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/registry_utils.py", line 81, in wrapper
+    return base_func(*args, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 129, in encode
+    raise e
+  File "/scratch/gpfs/GROUP/USER/project/marin/.venv/lib/python3.12/site-packages/draccus/parsers/encoding.py", line 126, in encode
+    raise Exception(f"No parser for object {obj} of type {type(obj)}, consider using draccus.encode.register")
+Exception: No parser for object <levanter.data.dataset.ListAsyncDataset object at 0x15503ea02a50> of type <class 'levanter.data.dataset.ListAsyncDataset'>, consider using draccus.encode.register
+[w1 seg2 (resumed)] train steps logged: [2, 3]
+[w1 seg2 (resumed)] step 2: train/loss 36.6549 per-layer [12.2244, 12.2124, 12.2181]
+[w1 seg2 (resumed)] step 3: train/loss 36.2239 per-layer [12.0511, 12.0704, 12.1024]
+[w1 seg2 (resumed)] main eval log steps [2, 3]  readout eval log steps [2, 3]
+[w1 seg2 (resumed)] eval@2: 12 main keys; L-1 vs main max rel diff 1.12e-07; loss by layer [12.2589, 12.2866, 12.2745] main 12.2745; paloma/a/bpb by layer [4.9215, 4.951, 4.9443]
+[w1 seg2 (resumed)] eval@3: 12 main keys; L-1 vs main max rel diff 7.78e-08; loss by layer [12.256, 12.2834, 12.2719] main 12.2719; paloma/a/bpb by layer [4.9202, 4.9492, 4.9428]
+[w1 seg2 (resumed)] main-eval keys: ['eval/bpb', 'eval/loss', 'eval/macro_bpb', 'eval/macro_loss', 'eval/paloma/a/bpb', 'eval/paloma/a/loss', 'eval/paloma/b/bpb', 'eval/paloma/b/loss', 'eval/paloma/bpb', 'eval/paloma/macro_bpb', 'eval/paloma/macro_loss', 'eval/paloma/micro_loss']
+I20260929 23:32:39 23436980475712 tqdm_loggable.tqdm_logging Progress on:train -/2 rate:- remaining:? elapsed:00:00 postfix:-
+W20260929 23:32:39 23436980475712 levanter.callbacks.profiler Adjusting profiler_total_steps from 25 to -3
+I20260929 23:32:39 23436980475712 levanter.main.train_lm Overriding data seed with 42
+W20260929 23:32:39 23436980475712 levanter.data.text Direct dataset format missing validation split for component tiny
+I20260929 23:32:39 23436980475712 levanter.main.train_lm No checkpoint found. Starting from scratch.
+W20260929 23:32:42 23436980475712 fray.device_flops Unknown device type: cpu - cpu
+W20260929 23:32:42 23436980475712 fray.device_flops Unknown device type: cpu - cpu
+I20260929 23:32:42 23436980475712 levanter.trainer First batch loaded in 0.1s, starting first train step (includes JIT compilation)...
+I20260929 23:32:42 23436980475712 levanter.trainer Tracing train_step for jaxpr...
+I20260929 23:32:43 23436980475712 levanter.trainer Traced train_step in 1.4s
+I20260929 23:32:45 23436980475712 levanter.trainer Lowering train_step to HLO...
+I20260929 23:32:46 23436980475712 levanter.trainer Lowered train_step in 0.9s
+I20260929 23:32:46 23436980475712 levanter.trainer First train step completed in 4.6s (step 0)
+I20260929 23:32:46 23436980475712 levanter.trainer Tracing train_step_hooks for jaxpr...
+I20260929 23:32:48 23436980475712 levanter.trainer Traced train_step_hooks in 1.6s
+I20260929 23:32:49 23436980475712 levanter.trainer Lowering train_step_hooks to HLO...
+I20260929 23:32:49 23436980475712 levanter.trainer Lowered train_step_hooks in 0.7s
+I20260929 23:32:50 23436980475712 levanter.checkpoint Saving checkpoint at step 1.
+I20260929 23:32:50 23436980475712 levanter.checkpoint Saving checkpoint at step 1 to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w0/checkpoints/pls-audit-w0/step-1
+I20260929 23:32:50 23436980475712 levanter.checkpoint Saving checkpoint to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w0/checkpoints/pls-audit-w0/step-1 for step 1
+I20260929 23:32:50 23436980475712 levanter.tensorstore_serialization Checkpoint gives this process 0.09GiB of 0.09GiB across 54 of 54 arrays; 0.00GiB of that is 12 arrays it writes alone and 0.00GiB is split no further than the replica cap, opt_state/inner_state/1/nu/transformer/layers/stacked/self_attn/q_norm/weight at 0.00GiB, opt_state/inner_state/1/nu/transformer/layers/stacked/self_attn/k_norm/weight at 0.00GiB, opt_state/inner_state/1/mu/transformer/layers/stacked/self_attn/q_norm/weight at 0.00GiB
+I20260929 23:32:50 23436980475712 jax.experimental.array_serialization.serialization Error check finished successfully
+I20260929 23:32:50 23436980475712 levanter.tensorstore_serialization Checkpoint staged 0.09 GiB peak against a 16.00 GiB budget across 180 writes (about 0 GiB of host memory while in flight)
+I20260929 23:32:50 22534699492928 jax.experimental.array_serialization.serialization Starting commit to storage layer by process: 0
+I20260929 23:32:50 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:50 22536023692864 levanter.tensorstore_serialization malloc_trim after checkpoint commits returned 1
+I20260929 23:32:50 22534699492928 jax.experimental.array_serialization.serialization Finished committing to storage layer by process: 0
+I20260929 23:32:50 22534699492928 levanter.checkpoint Saved checkpoint to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w0/checkpoints/pls-audit-w0/step-1 for step 1
+I20260929 23:32:50 22534699492928 jax.experimental.array_serialization.serialization on_commit_callback successfully ran!
+I20260929 23:32:50 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval 4.00it/4.00it rate:3.9it/s remaining:00:00 elapsed:00:00 postfix:-
+I20260929 23:32:51 23436980475712 levanter.eval eval loss: 12.291
+I20260929 23:32:51 23436980475712 levanter.eval paloma macro loss: 12.291
+I20260929 23:32:51 23436980475712 levanter.eval paloma micro loss: 12.291
+I20260929 23:32:51 23436980475712 levanter.eval paloma/a loss: 12.286
+I20260929 23:32:51 23436980475712 levanter.eval paloma/b loss: 12.296
+I20260929 23:32:51 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts -/4 rate:- remaining:? elapsed:00:00 postfix:-
+I20260929 23:32:51 23436980475712 tqdm_loggable.tqdm_logging Progress on:eval readouts 4.00it/4.00it rate:3.1it/s remaining:00:00 elapsed:00:00 postfix:-
+I20260929 23:32:51 23436980475712 experiments.references.per_layer_qwen3 eval/L0 loss 12.2723 macro 12.2686 bpb 4.12100887298584
+I20260929 23:32:51 23436980475712 experiments.references.per_layer_qwen3 eval/L1 loss 12.3022 macro 12.3023 bpb 4.133565902709961
+I20260929 23:32:51 23436980475712 experiments.references.per_layer_qwen3 eval/L2 loss 12.2914 macro 12.2910 bpb 4.1295952796936035
+I20260929 23:32:51 23436980475712 jax.experimental.array_serialization.serialization Thread joined successfully
+I20260929 23:32:51 23436980475712 jax.experimental.array_serialization.serialization Error check finished successfully
+I20260929 23:32:51 23436980475712 levanter.tracker.json_file Saved eval results to /scratch/gpfs/GROUP/USER/tmp/pls/audit/pls_e2e_n1hbwb4p/w0/eval_results.json
+[w0] train steps logged: [0, 1]
+[w0] step 0: no train/loss logged (hook cadence), per-layer [12.3966, 12.3746, 12.2765]
+[w0] step 1: train/loss 12.1534 per-layer [12.1941, 12.037, 12.1534]
+[w0] main eval log steps [1]  readout eval log steps [1]
+[w0] eval@1: 12 main keys; L-1 vs main max rel diff 1.55e-07; loss by layer [12.2723, 12.3022, 12.2914] main 12.2914; paloma/a/bpb by layer [4.9292, 4.9622, 4.9552]
+[w0] main-eval keys: ['eval/bpb', 'eval/loss', 'eval/macro_bpb', 'eval/macro_loss', 'eval/paloma/a/bpb', 'eval/paloma/a/loss', 'eval/paloma/b/bpb', 'eval/paloma/b/loss', 'eval/paloma/bpb', 'eval/paloma/macro_bpb', 'eval/paloma/macro_loss', 'eval/paloma/micro_loss']
+C1 w=1 steps 0-1 OK
+C1 w=1 resumed steps 2-3 OK
+C2 w=0 OK
+AUDIT E2E PASSED

@@ -1,0 +1,10 @@
+M1 monitor target not shifted            KILLED rc=1 passed_sections=['1.', '2.', '2.'] err='    raise AssertionError(msg)'
+M2 monitor stride offset 1               KILLED rc=1 passed_sections=['1.', '2.', '2.'] err='    raise AssertionError(msg)'
+M3 readout skips final norm              KILLED rc=1 passed_sections=['1.'] err='    raise AssertionError(msg)'
+M4 per-tag weights = total               KILLED rc=1 passed_sections=['1.', '2.', '2.', '3.', '4.'] err='    raise AssertionError(msg)'
+M5 readout k is the layer INPUT          KILLED rc=1 passed_sections=['1.'] err='    raise AssertionError(msg)'
+M6 weight also on final layer            KILLED rc=1 passed_sections=['1.', '2.'] err='    raise AssertionError(msg)'
+M7 bpb per tag uses global bytes         KILLED rc=1 passed_sections=['1.', '2.', '2.', '3.', '4.'] err='    raise AssertionError(msg)'
+M8 monitor drops loss weights            KILLED rc=1 passed_sections=['1.', '2.', '2.'] err='    raise AssertionError(msg)'
+M9 readouts reversed in eval             KILLED rc=1 passed_sections=['1.', '2.', '2.', '3.'] err='    raise AssertionError(msg)'
+mutation score 9 / 9

@@ -1,0 +1,21 @@
+Ambiguous metric name: pls/L0, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L1, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L2, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L3, defaulting to MEAN. Return an explicit Metric to avoid this message.
+leaf                                                                    pls_bf16 vs f32  ref_bf16 vs f32   baseline bf16 vs f32
+.transformer.layers.stacked.self_attn.q_proj.weight[<flat index 0>]           2.870e-02        2.813e-02              3.845e-02
+.transformer.layers.stacked.self_attn.k_proj.weight[<flat index 0>]           2.955e-02        2.912e-02              3.848e-02
+.transformer.layers.stacked.self_attn.v_proj.weight[<flat index 0>]           2.354e-02        2.277e-02              3.049e-02
+.transformer.layers.stacked.self_attn.o_proj.weight[<flat index 0>]           2.339e-02        2.271e-02              2.936e-02
+.transformer.layers.stacked.self_attn.q_norm.weight[<flat index 0>]           3.990e-02        3.527e-02              3.712e-02
+.transformer.layers.stacked.self_attn.k_norm.weight[<flat index 0>]           3.635e-02        4.073e-02              5.139e-02
+.transformer.layers.stacked.mlp.gate_proj.weight[<flat index 0>]              2.555e-02        2.505e-02              3.185e-02
+.transformer.layers.stacked.mlp.up_proj.weight[<flat index 0>]                2.501e-02        2.462e-02              3.165e-02
+.transformer.layers.stacked.mlp.down_proj.weight[<flat index 0>]              2.380e-02        2.354e-02              3.005e-02
+.transformer.layers.stacked.input_layernorm.weight[<flat index 0>]            2.615e-02        2.565e-02              3.374e-02
+.transformer.layers.stacked.post_attention_layernorm.weight[<flat index 0>]        2.589e-02        2.632e-02              3.391e-02
+.transformer.layers.stacked.post_attn_layernorm.weight[<flat index 0>]        2.254e-02        2.315e-02              2.989e-02
+.transformer.layers.stacked.post_mlp_layernorm.weight[<flat index 0>]         2.705e-02        2.559e-02              3.222e-02
+.transformer.norm.weight[<flat index 0>]                                      6.121e-03        6.167e-03              8.868e-03
+.embeddings.token_embeddings.weight[<flat index 0>]                           2.662e-02        2.598e-02              3.531e-02
+.lm_head.weight[<flat index 0>]                                               1.541e-02        1.545e-02              1.941e-02

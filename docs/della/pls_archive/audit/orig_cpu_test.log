@@ -1,0 +1,15 @@
+/scratch/gpfs/GROUP/USER/project/marin-pls/lib/haliax/src/haliax/partitioning.py:220: RuntimeWarning: No resource mapping found. Not sharding.
+  warnings.warn("No resource mapping found. Not sharding.", RuntimeWarning)
+1. init == baseline Qwen3 (same key); eval (key=None) == baseline loss 6.576888
+2. w=1.0: loss 19.998600 == CE_final + w * sum CE_k (per layer [6.7417, 6.68, 6.5769]); stats and all grads match
+2. w=0.3: loss 10.603400 == CE_final + w * sum CE_k (per layer [6.7417, 6.68, 6.5769]); stats and all grads match
+3. w=0: loss and all grads == baseline training step; monitor CEs == reference on every 4th position [6.7468, 6.6576]
+4. readout losses == reference per position; readout L-1 == baseline per-position eval loss (bitwise: True)
+5. readout evaluator == TaggedEvaluator per readout (loss, macro, per-tag loss/bpb); readout 2 == main eval; eval/L{k} keys ok. micro loss by layer [6.6272, 6.6517, 6.6542]
+6. flops_per_token: + (L-1) lm_head (trained) / + (L-1) lm_head / (3 stride) (monitor)
+ALL PLS CPU TESTS PASSED
+
+real	0m41.930s
+user	1m6.051s
+sys	0m3.238s
+EXIT 0

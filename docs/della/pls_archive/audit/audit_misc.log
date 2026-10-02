@@ -1,0 +1,13 @@
+D1 scan_layers=True: loss 18.126520 per-layer [6.11021, 5.9551, 6.06121]
+D1 scan_layers=True: eval path ok 6.061211; readout_losses axes (Axis(name='readout', size=3), Axis(name='batch', size=2), Axis(name='position', size=32))
+D1 scan_layers=False: FAILED ValueError: split accepts a single key, but was given a key array of shape (3, 2) != (). Use jax.vmap for batching.
+D1 scan_layers=False: eval path ok 6.061211; readout_losses axes (Axis(name='readout', size=3), Axis(name='batch', size=2), Axis(name='position', size=32))
+D2 encoded model config:
+    pls_eval: false
+    pls_monitor_stride: 8
+    pls_weight: 0.5
+      type: default
+D2 decode FAILED ParsingError: Failed to load config from <_io.StringIO object at 0x145e3816e440>
+D3 130m: baseline fwd FLOPs/token 228M (lm_head 131M = 58%); pls1 885M = 3.88x; pls0 242M = 1.060x
+D3 300m: baseline fwd FLOPs/token 555M (lm_head 197M = 35%); pls1 2722M = 4.90x; pls0 600M = 1.081x
+D4 stride check passes for max_seq_len=4096 (the check does not see train_seq_len)

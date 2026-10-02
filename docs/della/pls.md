@@ -274,3 +274,5 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
   （约 8.8 GB，其中 3 个是诊断 run 的残留——`pls_probe.sbatch` / `pls_smoke.sbatch` 的清理只查了临时目录的浅层，而 levanter
   把临时 checkpoint 存在镜像绝对路径的深层；两个脚本已改成直接删那条路径）。
 - 原始基线的 checkpoint（不带 pls 的 run）未动。
+- worktree `project/marin-pls`（含 12 GB 的 `.venv` 副本）和工作目录 `tmp/pls` 已删除；worktree 的 `logs/`（各 run 日志、slurm 输出、
+  台账原件）打包为 `pls_archive/logs.tar.gz`。代码只在 archive 的 `pls` 分支（主仓库本地也留有 `pls` 分支）。

@@ -1,0 +1,28 @@
+Ambiguous metric name: pls/L0, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L1, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L2, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L3, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L0, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L1, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L2, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L3, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L0, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L1, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L2, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L3, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L0, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L1, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L2, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L3, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L0, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L1, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L2, defaulting to MEAN. Return an explicit Metric to avoid this message.
+Ambiguous metric name: pls/L3, defaulting to MEAN. Return an explicit Metric to avoid this message.
+A1 f32: loss 26.396748 ref 26.396748 (rel 0.00e+00); per-layer [6.5939 6.5872 6.6031 6.6126] ref [6.5939 6.5872 6.6031 6.6126] (max rel 0.00e+00); grads max rel 5.92e-07 -> OK
+A2 bf16: loss 26.396593 ref 26.396593 (rel 0.00e+00); per-layer [6.5933 6.5864 6.6034 6.6135] ref [6.5933 6.5864 6.6034 6.6135] (max rel 0.00e+00); grads max rel 2.37e-02 -> OK
+A3 bf16 w=0 vs baseline: loss 6.6134963 vs 6.6134963 bitwise_loss=True bitwise_grads=True grads max rel 0.00e+00
+B1 microbatched bf16 w=1: loss 26.384533 ref(mean of microbatches) 26.384534 (rel 3.61e-08); per-layer [6.5902 6.5904 6.5997 6.6042] ref [6.5902 6.5904 6.5997 6.6042] (max rel 3.61e-08); grads max rel 2.71e-02 -> OK
+    (for reference: full-batch token-weighted per-layer [6.5933 6.5864 6.6034 6.6135])
+B2 microbatched bf16 w=0: loss 6.6042433 vs baseline 6.6042433; bitwise grads=True (max rel 0.00e+00); monitor [6.6285 6.7465 6.6879] vs strided ref [6.6285 6.7465 6.6879] (max rel 3.60e-08); L3 stat 6.60424 == train loss 6.60424
+RESULTS {'A1 f32': True, 'A2 bf16': True, 'A3': True, 'B1': True, 'B2': np.True_}
+AUDIT LOSS TESTS PASSED

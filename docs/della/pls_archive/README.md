@@ -12,6 +12,7 @@
 | `figs/` | 诊断 run 的梯度余弦与上下文学习分数图（汇总图在 `../pls_figs/130m_dynamic_signals.png`） |
 | `gradflow.html` | 给用户讲梯度流的动画页（基线 / 共享头 / 只读共享头） |
 | `ledger.yaml` | 作业台账副本（原件 `logs/pls_qwen3_h100x4.yaml` 按惯例不进 git） |
+| `logs.tar.gz` | worktree 的 `logs/` 整个打包：每个 run 的 levanter 日志、全部 slurm 作业输出、台账原件 |
 | `../pls_runs/<run_id>/` | 每个训练 run 的 `eval_metrics.jsonl`、运行配置 `executor_info.json`、`artifact.json`（checkpoint 删除前留下） |
 
-脚本里的绝对路径指向当时的工作目录 `/scratch/gpfs/GROUP/USER/tmp/pls`（在 della-vis1 上运行）。未存入的第三方原文（论文 PDF 与全文提取、博客与 Notion 网页抓取）仍在该目录，链接见阅读笔记。
+脚本里的绝对路径指向当时的工作目录 `/scratch/gpfs/GROUP/USER/tmp/pls`（在 della-vis1 上运行）。该目录和 worktree `project/marin-pls` 已在结题时删除；未存入的第三方原文（论文 PDF 与全文提取、博客与 Notion 网页抓取）随之删除，链接见阅读笔记。
