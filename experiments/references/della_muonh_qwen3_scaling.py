@@ -423,8 +423,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
 
 
 def _start_memstats_thread(every: int) -> None:
-    """Diagnostic (MEMSTATS_EVERY=<seconds>): print device 0's allocator stats every `every` seconds. The first read
-    waits one period so the trainer brings the backend up first."""
+    """Peak device memory, a P0 signal the trainer does not log: every `every` seconds (MEMSTATS_EVERY, default 600, 0
+    turns it off) print the allocator stats reduced over the local devices, max for usage and peak, min for the limit.
+    The first read waits one period so the trainer brings the backend up first."""
     import threading
     import time
 
@@ -434,9 +435,11 @@ def _start_memstats_thread(every: int) -> None:
         while True:
             time.sleep(every)
             try:
-                st = jax.devices()[0].memory_stats() or {}
-                gib = {k: st.get(k, 0) / 2**30 for k in ("bytes_in_use", "peak_bytes_in_use", "largest_alloc_size", "largest_free_block_bytes", "bytes_limit")}
-                print("MEMSTATS dev0 " + " ".join(f"{k}={v:.2f}" for k, v in gib.items()) + " GiB", flush=True)
+                stats = [d.memory_stats() or {} for d in jax.local_devices()]
+                red = {k: max(st.get(k, 0) for st in stats) for k in ("bytes_in_use", "peak_bytes_in_use", "largest_alloc_size")}
+                red["largest_free_block_bytes"] = min(st.get("largest_free_block_bytes", 0) for st in stats)
+                red["bytes_limit"] = min(st.get("bytes_limit", 0) for st in stats)
+                print(f"MEMSTATS max-over-{len(stats)}-devices " + " ".join(f"{k}={v / 2**30:.2f}" for k, v in red.items()) + " GiB", flush=True)
             except Exception as e:  # diagnostics must never take the run down
                 print(f"MEMSTATS error {e!r}", flush=True)
 
@@ -444,8 +447,8 @@ def _start_memstats_thread(every: int) -> None:
 
 
 if __name__ == "__main__":
-    if int(os.environ.get("MEMSTATS_EVERY", "0")) > 0:
-        _start_memstats_thread(int(os.environ["MEMSTATS_EVERY"]))
+    if int(os.environ.get("MEMSTATS_EVERY", "600")) > 0 and os.environ.get("DRY_RUN") != "1":
+        _start_memstats_thread(int(os.environ.get("MEMSTATS_EVERY", "600")))
     step = muonh_qwen3_run(os.environ["SIZE"])
     if os.environ.get("DRY_RUN") == "1":
         spec = lower(step)

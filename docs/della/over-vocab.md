@@ -93,6 +93,19 @@ interaction with OV. Prior (MiLe, arXiv 2310.19531): gamma >= 1 raises Pile perp
 expected Paloma result is at best neutral. Go to 300m only if ovfocal beats OV by more than 0.012 macro (~2 seed sd).
 Jobs: smoke 14885494, ovfocal pair 14885495, focal pair 14885496.
 
+## Run monitoring (P0, training-monitor skill, 2026-10-02)
+
+Levanter already logs train/loss, grad/norm/total (and per parameter), throughput/duration, MFU and the Paloma evals; W&B
+keeps train metrics every 10 steps. `scripts/della/p0_check.py` reads the recent points of each running run every
+5 minutes and alerts once per event on: non-finite loss or grad norm; z(log loss) > 8; z(log loss) > 6 and z(log grad
+norm) > 6 at the same step (co-spike); more than 5% of the last 300 points above max_grad_norm; median step time of the
+last 30 points above 1.25x the run's own median. z is the robust spike score over a trailing 100-point window. The
+thresholds come from six healthy runs (130m-1.2B: OV, OV+ss, baseline, ss): z(log loss) max 4.5, no co-spike at 6,
+clip rate <= 0.5%, step-time p99 <= 1.28x median; z(log grad norm) alone reaches 25 at sampled-softmax stage changes,
+so it only alerts together with the loss. Peak device memory, which the trainer does not log, comes from the launcher's
+MEMSTATS line (default every 600 s, max over local devices) and alerts above 95% of the allocator limit. Not covered:
+the output absolute maximum (needs a model hook) and worst-rank loss (one JAX process per run).
+
 ## Runs (seed 0, compared with the existing baseline pools)
 
 * 130m: ov 14711157 (COMPLETED), ovss 14711158 (COMPLETED)
