@@ -148,6 +148,9 @@ AUX_GATE = os.environ.get("AUX_GATE", "")
 AUX_GATE_HI, AUX_GATE_LO = (tuple(float(v) for v in AUX_GATE.split(":")) if AUX_GATE else (0.0, 0.0))
 # SEED (default 0 = the baseline's): trainer init seed for seed replicates; data order stays data_seed=42. Run tag -s{SEED}.
 SEED = int(os.environ.get("SEED", "0"))
+# LAYERS (default 0 = the size's own depth): a shallower or deeper model at the same width, batch, steps and schedule,
+# e.g. the depth-matched controls for the per-layer readouts of VARIANT=pls. Run tag -d{LAYERS}.
+LAYERS = int(os.environ.get("LAYERS", "0"))
 # EMA_BETA > 0 keeps an exponential moving average of the weights (levanter ModelAveraging) and evaluates it alongside the
 # raw weights (eval/ema/...). Training is untouched; this is an evaluation-noise reduction (Polyak 1992). Tag -ema{beta}.
 EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
@@ -245,6 +248,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += "-fh"
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
+    if LAYERS:
+        variant_tags += f"-d{LAYERS}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
@@ -321,7 +326,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         max_seq_len=SEQ_LEN,
         hidden_dim=s["hidden"],
         intermediate_dim=s["inter"],
-        num_layers=s["layers"],
+        num_layers=LAYERS or s["layers"],
         num_heads=s["heads"],
         num_kv_heads=s["kv"],
         hybrid_norm=True,
