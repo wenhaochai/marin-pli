@@ -1,4 +1,4 @@
-"""Per-layer training loss of the shared-head pls run against backbone compute, with the baseline's final points at
+"""Per-layer training loss of a pls run (130m: separate heads, 独立头; the blog follows that arm) against backbone compute, with the baseline's final points at
 four sizes, log-log. One figure per pls size (130m: readouts L1-L5; 300m: final points of L1-L11, curves of L1, L3, ..., L11; L0 left out).
 
 Readout k of an L-layer pls model: 3 * (k+1)/L * F_backbone FLOPs per token, F_backbone = the same-size baseline's
@@ -33,7 +33,7 @@ def smooth(x, y, w=50):
     return x[w - 1:], np.convolve(y, k, mode="valid")
 
 
-def figure(size, L, hidden, curves=None, controls=None):
+def figure(size, L, hidden, curves=None, controls=None, arm='shared', label='Shared head'):
     F = D[f"{size}-base/gflops"][-1] * 1e9 / (D[f"{size}-base/step"][-1] * TOK) / 3 - 2 * hidden * V
     fig, axes = canvas(rows=1, cols=1, width=WIDTH_POST, panel_height=2.3,
                        title=f'Per-layer training loss against backbone compute, {size}m',
@@ -41,7 +41,7 @@ def figure(size, L, hidden, curves=None, controls=None):
                        quantity='Cross-entropy (nats, log scale)', xlabel='Backbone compute up to the layer (FLOPs)',
                        title_pt=9.2, tick_pt=TEXT_PT, note_pt=TICK_PT, side=0.10)
     ax = axes.flat[0]
-    s, ce = D[f"{size}-shared/step"], D[f"{size}-shared/ce"]
+    s, ce = D[f"{size}-{arm}/step"], D[f"{size}-{arm}/ce"]
     m = s >= 100
     ends = []
     for k in range(1, L):
@@ -81,11 +81,12 @@ def figure(size, L, hidden, curves=None, controls=None):
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ylo, yhi)
     y_values(ax, [v for v in (2.75, 3, 3.25, 3.5, 3.75, 4, 4.5, 5) if ylo <= v <= yhi / 1.05], '{:g}')  # no value right under the top edge, where the panel name sits
-    panel_label(ax, 'Shared head', x=xt[0] if len(xt) == 1 else xt[-2])
+    panel_label(ax, label, x=xt[0] if len(xt) == 1 else xt[-2])
     save(fig, HERE / f'layer_backbone_{size}m')
     print(size, "final by layer", [round(e[1], 3) for e in ends])
 
 
 DEPTH = json.load(open(HERE / "depth.json"))
-figure("130", 6, 512, controls=[(d / 6 * B["130m"]["backbone_flops"], DEPTH[str(d)]["loss"]) for d in range(2, 6)])
-figure("300", 12, 768, curves={1, 3, 5, 7, 9, 11})
+figure("130", 6, 512, arm="own", label="Separate heads", controls=[(d / 6 * B["130m"]["backbone_flops"], DEPTH[str(d)]["loss"]) for d in range(2, 6)])
+# 300m: no separate-heads run yet (job 14940604 queued 2026-10-03); the shared-head 300m figure is retired
+# figure("300", 12, 768, curves={1, 3, 5, 7, 9, 11})
