@@ -59,8 +59,8 @@ shared, ro = Z["-pls1/final"][1:], Z["-pls1-dh/final"][1:]
 plain = np.array([DEPTH[str(d)]["loss"] for d in range(2, 6)] + [B["130m"]["loss"]])
 figs["cand-01"] = dict(
     title={"en": "Per-layer training loss against backbone compute, 130m", "zh": "逐层训练损失与骨干算力，130m"},
-    legend=[[{"en": "Separate heads, fit", "zh": "独立头，拟合"}, BLUE7, "line"], [{"en": "Probe of the baseline", "zh": "基线的探针"}, RED, "line"],
-            [{"en": "Baseline by depth, fit", "zh": "各深度的基线，拟合"}, GREY, "line"]],
+    legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Probe of the baseline", "zh": "基线的探针"}, RED, "line"],
+            [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
     quantity=CE, xlabel=XL, height=300,
     panels=[dict(**logview(np.r_[x6, x6, x6], np.r_[sep, probe, plain]), marks=[
         line(fit(x6, sep), BLUE7), dots(pts(x6, sep), BLUE7), line(pchip(x6, probe), RED), dots(pts(x6, probe), RED),
@@ -68,7 +68,7 @@ figs["cand-01"] = dict(
 figs["cand-03"] = dict(
     title={"en": "Final training loss by layer and head type, 130m", "zh": "按层和头的类型的最终训练损失，130m"},
     legend=[[{"en": "Separate", "zh": "独立头"}, BLUE7, "line"], [{"en": "Shared", "zh": "共享头"}, GREEN, "line"],
-            [{"en": "Read-only head", "zh": "只读共享头"}, PURPLE, "line"], [{"en": "Baseline", "zh": "基线"}, GREY, "line"]],
+            [{"en": "Shared head, stop-grad", "zh": "共享头 stop-grad"}, PURPLE, "line"], [{"en": "Baseline", "zh": "基线"}, GREY, "line"]],
     quantity=CE, xlabel=XL, height=300,
     panels=[dict(**logview(np.r_[x6, x6, x6, x6], np.r_[sep, shared, ro, plain], yticks=(3.25, 3.5, 3.75, 4)), marks=sum(
         ([line(fit(x6, y), c), dots(pts(x6, y), c)] for y, c in ((sep, BLUE7), (shared, GREEN), (ro, PURPLE), (plain, GREY))), []))])
@@ -97,12 +97,12 @@ def backbone(size, arm, L, hidden, curves, label, controls):
     return dict(**v, label=label, marks=marks)
 figs["cand-02"] = dict(
     title={"en": "Per-layer training loss against backbone compute, 130m", "zh": "逐层训练损失与骨干算力，130m"},
-    legend=[[{"en": "Final loss by layer, fit", "zh": "各层最终损失，拟合"}, BLUE7, "line"], [{"en": "Baseline by depth, fit", "zh": "各深度的基线，拟合"}, GREY, "line"]],
+    legend=[[{"en": "Final loss by layer", "zh": "各层最终损失"}, BLUE7, "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
     quantity=CE, xlabel=XL, height=300,
     panels=[backbone("130", "own", 6, 512, None, {"en": "Separate heads", "zh": "独立头"}, True)])
 figs["cand-04"] = dict(
     title={"en": "Per-layer training loss against backbone compute, 300m", "zh": "逐层训练损失与骨干算力，300m"},
-    legend=[[{"en": "Final loss by layer, fit", "zh": "各层最终损失，拟合"}, BLUE7, "line"], [{"en": "Baseline", "zh": "基线"}, GREY, "dot"]],
+    legend=[[{"en": "Final loss by layer", "zh": "各层最终损失"}, BLUE7, "line"], [{"en": "Baseline", "zh": "基线"}, GREY, "dot"]],
     quantity=CE, xlabel=XL, height=300,
     panels=[backbone("300", "shared", 12, 768, {1, 3, 5, 7, 9, 11}, {"en": "Shared head", "zh": "共享头"}, False)])
 
@@ -120,7 +120,7 @@ x12 = np.array([3 * (k + 1) / 12 * F3 * (now + 1) * TOK for k in range(1, 12)])
 done = run.state == "finished"
 figs["cand-05"] = dict(
     title={"en": f"Per-layer training loss at step {now:,} of 11,444, 300m" + ("" if done else " (draft)"), "zh": f"第 {now:,} 步（共 11,444 步）的逐层训练损失，300m" + ("" if done else "（草图）")},
-    legend=[[{"en": "Shared head, fit", "zh": "共享头，拟合"}, BLUE7, "line"], [{"en": "Probe of the baseline", "zh": "基线的探针"}, RED, "line"], [{"en": "Baseline", "zh": "基线"}, GREY, "dot"]],
+    legend=[[{"en": "Shared head", "zh": "共享头"}, BLUE7, "line"], [{"en": "Probe of the baseline", "zh": "基线的探针"}, RED, "line"], [{"en": "Baseline", "zh": "基线"}, GREY, "dot"]],
     quantity=CE, xlabel=XL, height=300,
     panels=[dict(**logview(np.r_[x12, x12], np.r_[sh, pr, bs], yticks=(3, 3.25, 3.5, 3.75, 4, 4.5, 5, 5.5)), marks=[
         line(fit(x12, sh), BLUE7), dots(pts(x12, sh), BLUE7), line(pchip(x12, pr), RED), dots(pts(x12, pr), RED), dots([[x12[-1], bs]], GREY)])])
@@ -167,7 +167,7 @@ for n, (size, L, hid, cv) in {"cand-07": ("130", 6, 512, None), "cand-08": ("300
 COLS = [GM[("blue", g)] for g in (300, 400, 500, 600, 700, 900)]
 bsx, bly = smooth(LY["base/step"], LY["base/ce"]); mb = bsx >= 200
 panels = []
-for n, name in [("-pls1", {"en": "Shared head", "zh": "共享头"}), ("-pls1-dh", {"en": "Read-only shared head", "zh": "只读共享头"}),
+for n, name in [("-pls1", {"en": "Shared head", "zh": "共享头"}), ("-pls1-dh", {"en": "Shared head, stop-grad", "zh": "共享头 stop-grad"}),
                 ("-pls1-sep", {"en": "Own heads", "zh": "独立头"}), ("-pls1-off80", {"en": "Switched off at step 80", "zh": "第 80 步关掉"})]:
     s, ce = LY[n + "/step"], LY[n + "/ce"]; marks, hi = [], 0
     for k in range(6):
@@ -180,6 +180,28 @@ for n, name in [("-pls1", {"en": "Shared head", "zh": "共享头"}), ("-pls1-dh"
 figs["cand-09"] = dict(title={"en": "Per-layer training loss, 130m", "zh": "逐层训练损失，130m"},
                        legend=[[f"L{k}", c, "line"] for k, c in enumerate(COLS)] + [[{"en": "Baseline", "zh": "基线"}, GREY, "line"]],
                        quantity={"en": "Cross-entropy (nats)", "zh": "交叉熵（nats）"}, xlabel=None, height=170, cols=2, panels=panels)
+
+# 0: the raw final-layer training loss of each gradient and parameter mode, 130m (first figure of the page)
+ZB = np.load(HERE / "bbfrozen.npz")
+MODES = [("base", None, {"en": "Baseline", "zh": "基线"}, GREY), ("-pls1", 5, {"en": "Shared head", "zh": "共享头"}, GREEN),
+         ("-pls1-dh", 5, {"en": "Shared head, stop-grad", "zh": "共享头 stop-grad"}, PURPLE), ("-pls1-sep", 5, {"en": "Separate heads", "zh": "独立头"}, BLUE7)]
+marks, ends = [], []
+for key, col, name, c in MODES:
+    if key == "-pls1-sep-bbfrozen": st, y = ZB[key + "/step"].astype(float), ZB[key + "/ce"][:, col]
+    elif col is None: st, y = LY["base/step"], LY["base/ce"]
+    else: st, y = LY[key + "/step"], LY[key + "/ce"][:, col]
+    ok = np.isfinite(y) & (st >= 100); xs, ys = smooth(st[ok] * TOK, y[ok])
+    marks.append(line(thin(xs, ys, 200), c, 1.2, 0.3)); ends.append((xs[-1], ys[-1], c))
+marks += [dots([[x, y]], c) for x, y, c in ends]
+xe = max(x for x, _, _ in ends); fy = [y for _, y, _ in ends]
+v = dict(xlog=True, ylog=True, xlim=[xe / 4, xe * 1.25], ylim=[0.97 * min(fy), 1.15 * max(fy)])
+v["xticks"] = [[a, "10" + str(int(np.log10(a))).translate(SUP)] for a in (1e8, 1e9, 1e10) if v["xlim"][0] <= a <= v["xlim"][1]] + [[2e9, "2×10⁹"]]
+v["yticks"] = [[a, f"{a:g}"] for a in (3.25, 3.5, 3.75, 4) if v["ylim"][0] <= a <= v["ylim"][1] / 1.05]
+figs = {"modes-130m": dict(
+    title={"en": "Final-layer training loss by gradient and parameter mode, 130m", "zh": "不同梯度与参数模式下的最终层训练损失，130m"},
+    legend=[[name, c, "line"] for _, _, name, c in MODES], quantity=CE, xlabel={"en": "Training tokens", "zh": "训练 token 数"}, height=300,
+    panels=[dict(**v, marks=marks)]), **figs}
+print("modes finals", [(n["en"], round(y, 4)) for (_, _, n, _), (_, y, _) in zip(MODES, ends)])
 
 OUT.write_text("/* Generated by build_candidates_data.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_CANDIDATES = " + json.dumps(figs, ensure_ascii=False, separators=(",", ":")) + ";\n")
 print("wrote", OUT, OUT.stat().st_size, "bytes")
