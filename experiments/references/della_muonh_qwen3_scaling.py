@@ -183,6 +183,11 @@ OV_OD_W = float(os.environ.get("OV_OD_W", "0.1"))
 # VARIANT=ovfocal: OV with focal loss on both of its heads. FOCAL_GAMMA is gamma; run ids end in -focal<gamma>.
 FOCAL_GAMMA = float(os.environ.get("FOCAL_GAMMA", "1"))
 OV_VARIANTS = ("ov", "ovss", "ovfocal")
+# DATA_EPOCHS > 0 trains on a random subset of fineweb-edu-10B sized so the run makes that many passes over it: levanter
+# shuffles (linear permutation, data seed 42), keeps the first steps / DATA_EPOCHS batches (max_train_batches) and
+# restarts at its end. 1.2B makes 2.4 passes over the full 10.0B tokens; DATA_EPOCHS=2.4 reproduces that repetition at
+# a smaller size, every other setting unchanged. Run tag -rep{epochs}.
+DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "focal", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -244,6 +249,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-L{AUX_LAYER}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
+    if DATA_EPOCHS > 0:
+        variant_tags += f"-rep{DATA_EPOCHS:g}"
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
     if SEED != 0:
@@ -353,6 +360,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
 
     def build_config(ctx: StepContext) -> TrainLmOnPodConfig:
         data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
+        if DATA_EPOCHS > 0:
+            steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
+            data = dataclasses.replace(data, max_train_batches={d.name: round(steps / DATA_EPOCHS) for d in train})
         inner = train_lm.TrainLmConfig(
             data=data,
             trainer=TrainerConfig(
