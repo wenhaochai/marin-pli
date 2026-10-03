@@ -1,0 +1,7 @@
+{"base_commit": "e9a1f53", "ours_commit": "a3356ad822d86550e1f1ca48837383adf5d56f57",
+ "sections": [{"base": ["lib/levanter/src/levanter/models/lm_model.py", 337, 354, "loss"],
+               "ours": ["experiments/references/sampled_softmax_qwen3.py", 100, 116]},
+              {"base": ["lib/levanter/src/levanter/models/llama.py", 497, 501, "input embedding"],
+               "ours": ["experiments/references/over_vocab_qwen3.py", 157, 169]},
+              {"base": null, "ours": ["experiments/references/over_vocab_qwen3.py", 217, 217]},
+              {"base": null, "ours": ["experiments/references/over_vocab_qwen3.py", 226, 227]}]}

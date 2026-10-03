@@ -1,0 +1,3 @@
+{"base_commit": "e9a1f53", "ours_commit": "b04f09f68ad515e0b265994f983fea53fa4ce154",
+ "sections": [{"base": ["lib/levanter/src/levanter/models/lm_model.py", 337, 354, "loss"],
+               "ours": ["experiments/references/per_layer_qwen3.py", 327, 336]}]}
