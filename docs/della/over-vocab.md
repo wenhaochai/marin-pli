@@ -1,6 +1,6 @@
 # Over-vocabulary (OV) on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-10-01):** OV (over-encoding + over-decoding) beats the baseline at 130m, 300m and 520m on the same data
+**Status (2026-10-03):** 1.2B is done: OV +0.122 and OV + ss +0.132 macro (worse on all 16 domains); 1.2B is the only size that repeats fineweb-edu-10B (2.4 passes), see "1.2B: OV loses under repeated data". Earlier status (2026-10-01): OV (over-encoding + over-decoding) beats the baseline at 130m, 300m and 520m on the same data
 and steps, and with the sampled softmax on both heads it does so at about baseline speed: Paloma macro -0.066 at 130m
 (t -10.8 vs the 8-run pool), -0.038 at 300m (t -5.3 vs the 4-run pool) and -0.029 at 520m (one baseline run, all 16
 domains lower); 1.04x / 1.03x faster than the baseline at 130m / 300m, and 1.13x faster than OV alone at 520m (8 GPUs,
@@ -82,14 +82,14 @@ their training time is comparable only with each other: a perfectly scaling 8-GP
 ovss's 557.7. Not planned (user, 2026-10-01): extra seeds, 8-GPU baselines, the OE vs OD split. 1.2B is the last
 run; the blog follows it.
 
-## 1.2B: OV loses under repeated data (2026-10-03, ovss final, ov finishing)
+## 1.2B: OV loses under repeated data (2026-10-03, both final)
 
 1.2B trains 22,888 steps x 256 x 4096 = 24.0B tokens on fineweb-edu-10B, which holds 10,000,000,738 tokens (cache
 offsets), so it runs 2.4 epochs; epochs 2 and 3 start at steps 9537 and 19073. 520m runs 1.04 epochs, 300m and 130m
 less than one. Paloma macro vs the 4-GPU baseline: OV -0.065 at step 10k, then rising to +0.118 at 21k; OV + ss +0.014
 at 10k and +0.132 final (3.4929 vs 3.3609, all 16 domains worse). Both OV arms jump up right after each epoch start
 (OV 3.7376 -> 3.7347 from 10k to 11k while the baseline falls 0.048; OV 3.4541 -> 3.4873 from 19k to 20k while the baseline falls
-0.016), and training loss keeps falling smoothly. Reading: the 12.8M-row hashed n-gram tables memorize repeated
+0.016), and training loss keeps falling smoothly. Final (seed 0, vs the 4-GPU baseline 3.3609): OV 3.4824 (+0.1215, c4_en bpb +0.031, worse on 16/16 domains, 2103.6 min of training steps on 8 GPUs); OV + ss 3.4929 (+0.1321, 1805.4 min, 1.17x faster than OV). Both final checkpoints (step-22887, 211 GB each) kept, temp leftovers removed; with the two 520m ones these are the only OV checkpoints kept. Reading: the 12.8M-row hashed n-gram tables memorize repeated
 n-grams, so OV overfits once data repeats. The timing evidence is correlational. The isolating test is the same model
 on the same data with and without repetition (`tmp_plots/ss130/epoch_check.py`, `epoch_1_2b.py`).
 
