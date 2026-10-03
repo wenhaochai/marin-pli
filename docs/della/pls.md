@@ -303,3 +303,14 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
 1. 不加干扰的模型，中间层几乎不做下一词预测。在 2 层骨干处，读出比同算力的 2 层模型高 1.10 nats。预测主要在最后两层形成。
 2. 逐层监督让每层都接近一个小模型的预测能力：中间层读出只比同算力的普通模型高 0.09–0.13 nats。代价是最后一层也高 0.13 nats。
 3. 300m 只训独立头（作业 14888822，12 层）在排队，用来检查"预测在最后几层才形成"在更深的模型上是否成立。
+
+## Next: depth (2026-10-03, owner)
+
+1. Queued: the 130m setup with 48 layers instead of 6, separate heads (job 14949463) and probes (job 14949464), 8 GPUs
+   each, after an 8-GPU smoke test (job 14949462). Run ids `...-pls1-sep-d48` and `...-pls1-sep-bbfrozen-d48`.
+2. Queued: 300m read-only shared head (shared head, stop-grad into the head; job 14949465), so the head setups exist at
+   300m too (300m shared done, 300m probes running, 300m separate heads queued as 14940604).
+3. To do, the owner asked that it not be forgotten: repeat the per-layer measurement under the setups of DepthBench
+   (arXiv 2609.32534, "Measuring How Residual Connections Enable More Computational Depth"): model size and recipe fixed,
+   width-depth ratio from shallow-wide to deep-narrow, 10 architectures including Pre-LN, LayerNorm Scaling, mHC and
+   AttnRes. The question: how does each architecture change each layer's contribution?
