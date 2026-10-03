@@ -308,9 +308,13 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
 
 1. Queued: the 130m setup with 48 layers instead of 6, separate heads (job 14949463) and probes (job 14949464), 8 GPUs
    each, after an 8-GPU smoke test (job 14949462). Run ids `...-pls1-sep-d48` and `...-pls1-sep-bbfrozen-d48`.
-2. Queued: 300m read-only shared head (shared head, stop-grad into the head; job 14949465), so the head setups exist at
-   300m too (300m shared done, 300m probes running, 300m separate heads queued as 14940604).
+2. 300m: shared head done, probes running (14888822), separate heads queued (14940604). The 300m shared head with
+   stop-grad (14949465) was cancelled: the owner does not need it at 300m. The blog's Figures 2 and 3 at 300m also need
+   ordinary 300m models of 2 to 11 layers, which are not run yet.
 3. To do, the owner asked that it not be forgotten: repeat the per-layer measurement under the setups of DepthBench
    (arXiv 2609.32534, "Measuring How Residual Connections Enable More Computational Depth"): model size and recipe fixed,
    width-depth ratio from shallow-wide to deep-narrow, 10 architectures including Pre-LN, LayerNorm Scaling, mHC and
    AttnRes. The question: how does each architecture change each layer's contribution?
+   DepthBench's ten designs: Pre-LN, Sandwich-LN, LayerNorm Scaling, DeepNorm, KEEL, Hyper-Connections, mHC, AttnRes
+   (Full), AttnRes (Block), MoDA; shapes at ~400M from (16 layers, width 1216) to (70, 640); 8B tokens, AdamW. The blog
+   holds a placeholder for probes at 48 layers under the nine designs other than Pre-LN, each against Pre-LN.
