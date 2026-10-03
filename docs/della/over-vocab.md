@@ -82,7 +82,7 @@ their training time is comparable only with each other: a perfectly scaling 8-GP
 ovss's 557.7. Not planned (user, 2026-10-01): extra seeds, 8-GPU baselines, the OE vs OD split. 1.2B is the last
 run; the blog follows it.
 
-## Focal loss + OV (2026-10-02, running)
+## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
 and 1, at 130m, seed 0, same data/steps/batch as the baseline. Per-token cross-entropy l becomes (1 - e^-l)^gamma * l
@@ -92,6 +92,19 @@ exactly; eval stays plain cross-entropy (`experiments/references/focal_qwen3.py`
 interaction with OV. Prior (MiLe, arXiv 2310.19531): gamma >= 1 raises Pile perplexity, gamma 0.5 about neutral, so the
 expected Paloma result is at best neutral. Go to 300m only if ovfocal beats OV by more than 0.012 macro (~2 seed sd).
 Jobs: smoke 14885494, ovfocal pair 14885495, focal pair 14885496.
+
+**Result (130m, n = 1 per cell, Paloma macro vs the 8-run pool 4.18646 +- 0.00577 sd; t is one-vs-sample):**
+
+| gamma | baseline + focal | OV + focal | focal effect on OV |
+|---|---|---|---|
+| 0 (CE) | 0 (pool) | -0.0481 (t -7.9) | |
+| 0.5 | +0.0074 (t +1.2), lower on 4/16 domains | -0.0528 (t -8.6), 16/16 | -0.0047 |
+| 1 | +0.0134 (t +2.2), lower on 4/16 domains | -0.0570 (t -9.3), 16/16 | -0.0089 |
+
+Focal raises the baseline's loss (as MiLe found) and lowers OV's by less than the gate at both gammas, so both 300m
+pairs (14888823, 14888825) were cancelled. The interaction (OV effect minus baseline effect) is -0.012 at gamma 0.5 and
+-0.022 at gamma 1, about 1.5-2.7 single-run sd, one seed: a hint that OV's extra capacity makes the down-weighting
+of easy tokens useful, not a result. Scripts: `tmp_plots/ss130/focal_2x2.py`, `focal_2x2_fig.py`.
 
 ## Run monitoring (P0, training-monitor skill, 2026-10-02)
 
