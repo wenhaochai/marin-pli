@@ -82,6 +82,17 @@ their training time is comparable only with each other: a perfectly scaling 8-GP
 ovss's 557.7. Not planned (user, 2026-10-01): extra seeds, 8-GPU baselines, the OE vs OD split. 1.2B is the last
 run; the blog follows it.
 
+## 1.2B: OV loses under repeated data (2026-10-03, ovss final, ov finishing)
+
+1.2B trains 22,888 steps x 256 x 4096 = 24.0B tokens on fineweb-edu-10B, which holds 10,000,000,738 tokens (cache
+offsets), so it runs 2.4 epochs; epochs 2 and 3 start at steps 9537 and 19073. 520m runs 1.04 epochs, 300m and 130m
+less than one. Paloma macro vs the 4-GPU baseline: OV -0.065 at step 10k, then rising to +0.118 at 21k; OV + ss +0.014
+at 10k and +0.132 final (3.4929 vs 3.3609, all 16 domains worse). Both OV arms jump up right after each epoch start
+(OV 3.7376 -> 3.7347 from 10k to 11k while the baseline falls 0.048; OV 3.4541 -> 3.4873 from 19k to 20k while the baseline falls
+0.016), and training loss keeps falling smoothly. Reading: the 12.8M-row hashed n-gram tables memorize repeated
+n-grams, so OV overfits once data repeats. The timing evidence is correlational. The isolating test is the same model
+on the same data with and without repetition (`tmp_plots/ss130/epoch_check.py`, `epoch_1_2b.py`).
+
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
