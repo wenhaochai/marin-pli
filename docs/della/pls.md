@@ -309,8 +309,8 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
 1. Queued: the 130m setup with 48 layers instead of 6, separate heads (job 14949463) and probes (job 14949464), 8 GPUs
    each, after an 8-GPU smoke test (job 14949462). Run ids `...-pls1-sep-d48` and `...-pls1-sep-bbfrozen-d48`.
 2. 300m: shared head done, probes running (14888822), separate heads queued (14940604). The 300m shared head with
-   stop-grad (14949465) was cancelled: the owner does not need it at 300m. The blog's Figures 2 and 3 at 300m also need
-   ordinary 300m models of 2 to 11 layers, which are not run yet.
+   stop-grad (14949465) was cancelled: the owner does not need it at 300m. From here on the blog follows separate heads
+   only (owner, 2026-10-03), so 300m has no setup comparison and no ordinary models by depth (owner: cancelled).
 3. To do, the owner asked that it not be forgotten: repeat the per-layer measurement under the setups of DepthBench
    (arXiv 2609.32534, "Measuring How Residual Connections Enable More Computational Depth"): model size and recipe fixed,
    width-depth ratio from shallow-wide to deep-narrow, 10 architectures including Pre-LN, LayerNorm Scaling, mHC and

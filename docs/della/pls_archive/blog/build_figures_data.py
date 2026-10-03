@@ -13,10 +13,10 @@ and the output heads not counted): per Qwen3 layer 4h^2 (q, k, v, o; 8 heads of 
 Curves through final points: L = E + A (C/1e18)^-alpha fitted freely (probes: monotone PCHIP in log-log); the page does not
 label them as fits. Final value = mean of the last 50 logged steps (fig-heads), last point of the running mean (fig-traj).
 Placeholders (axes, legend and a status word, no data until the runs finish):
-  fig-traj-300m, fig-heads-300m   the two figures above at 300m (12 layers, width 768, 6.0B tokens)
-  fig-d48                         130m width at 48 layers: separate heads and probes, final loss by layer
-  fig-d48-arch                    probes at 48 layers under the DepthBench architectures (arXiv 2609.32534), each
-                                  against Pre-LN, which is the baseline's own norm placement
+  fig-traj-300m                   fig-traj at 300m (12 layers, width 768, 6.0B tokens)
+  fig-d48                         48 layers of width 512 (the 130m layer): separate heads and probes, final loss by layer
+  fig-d48-arch                    fig-d48 under the nine DepthBench architectures (arXiv 2609.32534) other than Pre-LN,
+                                  which is the baseline's own design and so fig-d48 itself: separate heads against probes
 Sources: flops.npz, layers.npz, bbfrozen.npz, depth.json, baselines.json (this directory)."""
 import json, sys
 from pathlib import Path
@@ -119,18 +119,15 @@ RUNNING, QUEUED, PLANNED = {"en": "Running", "zh": "运行中"}, {"en": "Queued"
 N300, D300 = nl(768, 2688), 11444 * TOK
 x300 = [6.0 * N300 * d * D300 for d in range(2, 13)]
 figs["fig-traj-300m"] = dict(title={"en": "Per-layer training loss against backbone compute, separate heads, 300m", "zh": "独立头的逐层训练损失与骨干算力，300m"},
-                             legend=figs["fig-traj"]["legend"], quantity=CE, xlabel=XL, height=300,
+                             legend=figs["fig-traj"]["legend"][:1], quantity=CE, xlabel=XL, height=300,   # no 300m ordinary models by depth (owner)
                              panels=[dict(**empty_view([x / 4 for x in x300] + x300, 2.9, 4.4, RUNNING), label={"en": "Separate heads", "zh": "独立头"})])
-figs["fig-heads-300m"] = dict(title={"en": "Final training loss by layer and setup, 300m", "zh": "按层和做法的最终训练损失，300m"},
-                              legend=[L for L in figs["fig-heads"]["legend"] if L[0]["en"] != "Shared head, stop-grad"], quantity=CE, xlabel=XL, height=320,
-                              panels=[empty_view(x300, 2.9, 5.0, RUNNING)])
 x48 = [6.0 * NL * d * DTOT for d in range(2, 49)]
-figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers at 130m width", "zh": "按层的最终训练损失，130m 宽度的 48 层网络"},
+figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers of width 512", "zh": "按层的最终训练损失，48 层、宽 512 的网络"},
                        legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Probes only", "zh": "只加探针"}, RED, "line"]],
                        quantity=CE, xlabel=XL, height=320, panels=[empty_view(x48, 2.9, 5.0, QUEUED)])
 ARCH = ["Sandwich-LN", "LayerNorm Scaling", "DeepNorm", "KEEL", "Hyper-Connections", "mHC", "AttnRes (Full)", "AttnRes (Block)", "MoDA"]
-figs["fig-d48-arch"] = dict(title={"en": "Per-layer probe loss by architecture, 48 layers at 130m width", "zh": "不同架构下的逐层探针损失，130m 宽度的 48 层网络"},
-                            legend=[[{"en": "This architecture", "zh": "该架构"}, BLUE7, "line"], [{"en": "Pre-LN (the baseline)", "zh": "Pre-LN（基线）"}, GREY, "line"]],
+figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and architecture, 48 layers of width 512", "zh": "按层和架构的最终训练损失，48 层、宽 512 的网络"},
+                            legend=figs["fig-d48"]["legend"],
                             quantity=CE, xlabel=XL, height=150, cols=3,
                             panels=[dict(**empty_view(x48, 2.9, 5.0, PLANNED, ys=(3, 3.5, 4)), label={"en": a, "zh": a}) for a in ARCH])
 
