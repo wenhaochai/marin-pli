@@ -1,3 +1,60 @@
-{"base_commit": "e9a1f53", "ours_commit": "b04f09f68ad515e0b265994f983fea53fa4ce154",
- "sections": [{"base": ["lib/levanter/src/levanter/models/lm_model.py", 337, 354, "loss"],
-               "ours": ["experiments/references/per_layer_qwen3.py", 327, 336]}]}
+{
+ "inline": {
+  "en": {
+   "base_title": "baseline loss (simplified)",
+   "ours_title": "per-layer losses (simplified; the Code link has the real code)",
+   "base": [
+    "def loss_fn(model, tokens):",
+    "    targets = tokens[1:]",
+    "    x = model.embed(tokens[:-1])",
+    "    for block in model.blocks:",
+    "        x = block(x)",
+    "    return cross_entropy(model.head(model.norm(x)), targets)"
+   ],
+   "ours": [
+    "def loss_fn(model, tokens):",
+    "    targets = tokens[1:]",
+    "    x = model.embed(tokens[:-1])",
+    "    loss = 0.0",
+    "    for k, block in enumerate(model.blocks[:-1]):",
+    "        x = block(x)",
+    "        # probes: read the layer, but send no gradient into the model",
+    "        h = stop_gradient(x) if probe else x",
+    "        # every earlier layer has its own norm and output head, and predicts the next token",
+    "        logits = model.layer_heads[k](model.layer_norms[k](h))",
+    "        loss += cross_entropy(logits, targets)",
+    "    x = model.blocks[-1](x)",
+    "    # the usual loss at the last layer, at the same weight",
+    "    return loss + cross_entropy(model.head(model.norm(x)), targets)"
+   ]
+  },
+  "zh": {
+   "base_title": "基线损失（简化）",
+   "ours_title": "逐层损失（简化；真实代码见“代码”链接）",
+   "base": [
+    "def loss_fn(model, tokens):",
+    "    targets = tokens[1:]",
+    "    x = model.embed(tokens[:-1])",
+    "    for block in model.blocks:",
+    "        x = block(x)",
+    "    return cross_entropy(model.head(model.norm(x)), targets)"
+   ],
+   "ours": [
+    "def loss_fn(model, tokens):",
+    "    targets = tokens[1:]",
+    "    x = model.embed(tokens[:-1])",
+    "    loss = 0.0",
+    "    for k, block in enumerate(model.blocks[:-1]):",
+    "        x = block(x)",
+    "        # 探针：读取这一层，但梯度不传回模型",
+    "        h = stop_gradient(x) if probe else x",
+    "        # 前面每一层都有自己的 norm 和输出头，也预测下一个词",
+    "        logits = model.layer_heads[k](model.layer_norms[k](h))",
+    "        loss += cross_entropy(logits, targets)",
+    "    x = model.blocks[-1](x)",
+    "    # 最后一层仍是原来的损失，权重相同",
+    "    return loss + cross_entropy(model.head(model.norm(x)), targets)"
+   ]
+  }
+ }
+}

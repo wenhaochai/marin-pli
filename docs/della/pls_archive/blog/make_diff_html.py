@@ -31,7 +31,7 @@ def hl(code):
 def row(sign, cls, code):
     return f'<span class="{cls}">{sign}{hl(code)}</span>'
 out = []
-for sec in spec["sections"]:
+for sec in spec.get("sections", []):
     op, oa, ob = sec["ours"]
     # blank lines are left out of the comparison; every shown line keeps its real line number
     ours = [(oa + i, strip_comment(l)) for i, l in enumerate(lines(spec["ours_commit"], op, oa, ob)) if l.strip()]
@@ -52,6 +52,16 @@ for sec in spec["sections"]:
         out += [f'<span class="hk">@@ +{oa} @@ {op}, added, comments omitted</span>']
         out += [row("+", "add", t) for _, t in ours]
 pre = '<pre class="diff code">' + "".join(out) + "</pre>"
+if "inline" in spec:   # rewritten code for the clearest presentation, comments in each language; the Code link has the real code
+    pre = ""
+    for lang, d in spec["inline"].items():
+        rows = [f'<span class="hd">--- {d["base_title"]}</span>', f'<span class="hd">+++ {d["ours_title"]}</span>']
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, d["base"], d["ours"], autojunk=False).get_opcodes():
+            if tag == "equal":
+                rows += [row(" ", "ctx", l) for l in d["ours"][j1:j2]]
+            else:
+                rows += [row("-", "del", l) for l in d["base"][i1:i2]] + [row("+", "add", l) for l in d["ours"][j1:j2]]
+        pre += f'<pre class="diff code" lang="{lang}">' + "".join(rows) + "</pre>"
 s = open(page).read(); a, b = f"<!-- diff:{slug} -->", f"<!-- /diff:{slug} -->"
 i, j = s.index(a) + len(a), s.index(b)
 open(page, "w").write(s[:i] + pre + s[j:])
