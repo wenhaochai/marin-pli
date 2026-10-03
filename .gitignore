@@ -280,4 +280,3 @@ slurm-*.out
 scripts/della/logs/
 # Local notes and agent state
 CLAUDE.local.md
-.claude/
