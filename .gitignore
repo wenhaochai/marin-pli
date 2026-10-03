@@ -251,3 +251,33 @@ scr/*
 
 # Stamped into built artifacts by lib/iris/hatch_build.py; never tracked.
 lib/iris/src/iris/_build_info.py
+
+# Never commit credentials or cluster job output (this branch is published on a public fork).
+# Credentials and keys
+.netrc
+_netrc
+.git-credentials
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials*.json
+*service-account*.json
+*_token
+*_token.txt
+*.token
+.secrets/
+secrets/
+.env.*
+.hf_token
+.wandb_api_key
+# Della job output: stdout/stderr carry cluster paths, user names and host names
+slurm-*.out
+*.out
+*.err
+scripts/della/logs/
+# Local notes and agent state
+CLAUDE.local.md
+.claude/
