@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<!-- Overview animation for wenhaochai.com/blogs/per-layer-contribution.html, rendered frame by frame by render_anim.py.
+     Anthropic illustration style (same as the card picture): ivory ground, slate hand-drawn outlines, offset flat fills.
+     render(t) draws time t in seconds; the loop is T seconds:
+       part 1  ordinary model: one head at the top; the gradient runs back through every layer
+       part 2  every layer predicts: heads on layers 1-5 send their gradients into the model
+       part 3  probes only: the heads read the layers, their gradient stops at a break; only the top head trains the model -->
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#F0EEE6}svg{display:block}</style></head>
+<body>
+<svg id="s" width="1920" height="1080" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+<defs><filter id="rough" filterUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080"><feTurbulence type="fractalNoise" baseFrequency="0.011" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="5"/></filter></defs>
+<rect width="1920" height="1080" fill="#F0EEE6"/>
+<g id="g"></g>
+</svg>
+<script>
+const INK = '#141413', IVORY = '#F0EEE6', OAT = '#E3DACC', MANILLA = '#EBDBBC', KRAFT = '#D4A27F', CLAY = '#D97757';
+const NS = 'http://www.w3.org/2000/svg', g = document.getElementById('g');
+const CX = [455, 675, 895, 1115, 1335, 1555], SY = 700, BT = 580, BB = 820, BW = 170;
+const HT = 310, HB = 400, PY = 225, GAP = 490, IN = 230;
+const PARTS = [4.0, 4.6, 4.6], T = PARTS.reduce((a, b) => a + b);
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = x => { x = clamp(x); return x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2; };
+const pop = x => { x = clamp(x); return x === 0 ? 0 : 1 + 0.25 * Math.sin(Math.PI * x) * (1 - x); };
+function el(tag, a, parent = g) { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); parent.appendChild(e); return e; }
+function box(x, y, w, h, rx, fill, op = 1, d = 12) {
+  el('rect', { x: x + d, y: y + d, width: w, height: h, rx, fill, opacity: op });
+  el('rect', { x, y, width: w, height: h, rx, fill: 'none', stroke: INK, 'stroke-width': 7, 'stroke-linejoin': 'round', filter: 'url(#rough)', opacity: op });
+}
+function dot(x, y, r, fill, op = 1, d = 7) {
+  if (r <= 0) return;
+  el('circle', { cx: x + d, cy: y + d, r, fill, opacity: op });
+  el('circle', { cx: x, cy: y, r, fill: 'none', stroke: INK, 'stroke-width': 6, filter: 'url(#rough)', opacity: op });
+}
+function line(x1, y1, x2, y2, op = 1, w = 7) { el('path', { d: `M${x1} ${y1} L${x2} ${y2}`, stroke: INK, 'stroke-width': w, 'stroke-linecap': 'round', fill: 'none', filter: 'url(#rough)', opacity: op }); }
+
+function render(t) {
+  g.innerHTML = '';
+  t = ((t % T) + T) % T;
+  let part = 0, tau = t;
+  while (tau >= PARTS[part]) { tau -= PARTS[part]; part++; }
+  const fadeOut = 1 - clamp((tau - (PARTS[part] - 0.35)) / 0.35);       // everything dims at the end of a part
+  const headsOn = part === 0 ? 0.16 : (part === 1 ? 0.16 + 0.84 * ease(tau / 0.4) : 1);
+  const brk = part === 2 ? ease(tau / 0.4) : 0;                         // the break on each head's connector
+  // forward pulse along the stream: tau 0.35 .. 1.95
+  const fx = IN + (CX[5] - IN) * ease((tau - 0.35) / 1.6);
+  const reached = i => (tau - 0.35) >= 0 && fx >= CX[i] - 1;
+  const tReach = i => { // time the pulse reaches block i (inverse of the eased path, by search)
+    for (let s = 0; s <= 1.6; s += 0.01) if (IN + (CX[5] - IN) * ease(s / 1.6) >= CX[i] - 1) return 0.35 + s; return 1.95; };
+
+  // stream, input, blocks
+  line(IN + 40, SY, 1700, SY, 1, 8);
+  dot(IN, SY, 38, KRAFT);
+  CX.forEach((cx, i) => box(cx - BW / 2, BT, BW, BB - BT, 26, reached(i) ? MANILLA : OAT));
+  // heads, connectors, predictions
+  CX.forEach((cx, i) => {
+    const top = i === 5, op = top ? 1 : headsOn;
+    if (brk > 0 && !top) {   // a break in the connector: a gap with two short bars
+      line(cx, BT, cx, GAP + 22, op); line(cx, GAP - 22, cx, HB, op);
+      line(cx - 26, GAP + 22, cx + 26, GAP + 22, op * brk, 7); line(cx - 26, GAP - 22, cx + 26, GAP - 22, op * brk, 7);
+    } else line(cx, BT, cx, HB, op);
+    box(cx - 60, HT, 120, HB - HT, 20, top ? INK : CLAY, op, 10);
+    line(cx, HT, cx, PY + 30, op);
+    const active = top || part > 0;
+    const arrive = tReach(i) + 0.45;
+    const r = active && tau > arrive ? 30 * pop((tau - arrive) / 0.35) : 0;
+    dot(cx, PY, r, top ? INK : CLAY, op * fadeOut);
+  });
+  // forward pulse and its branches up to the heads
+  if (tau > 0.35 && tau < 2.0) dot(fx, SY, 22, CLAY, 1, 5);
+  CX.forEach((cx, i) => {
+    if (!(i === 5 || part > 0)) return;
+    const s = (tau - tReach(i)) / 0.45;
+    if (s > 0 && s < 1) dot(cx, BT - (BT - (PY + 30)) * ease(s), 16, CLAY, 1, 4);
+  });
+  // backward: gradient dots (slate) from each training head down, then back along the stream to the input
+  const b0 = 2.45, down = 0.45, back = 0.9;
+  const sDown = (tau - b0) / down, sBack = (tau - b0 - down) / back;
+  CX.forEach((cx, i) => {
+    const top = i === 5;
+    if (!(top || part > 0)) return;
+    if (part === 2 && !top) {           // stops at the break, and fades there
+      if (sDown > 0 && sDown < 1.6) {
+        const y = HB + (GAP - 22 - HB) * ease(Math.min(sDown, 1));
+        dot(cx, y, 14, INK, 1 - clamp(sDown - 1, 0, 0.6) / 0.6, 4);
+      }
+      return;
+    }
+    if (sDown > 0 && sDown < 1) dot(cx, HB + (SY - HB) * ease(sDown), 14, INK, 1, 4);
+    if (sDown >= 1 && sBack < 1) dot(cx - (cx - IN) * ease(sBack), SY, 14, INK, 1, 4);
+  });
+  // part indicator: three small dots, bottom centre
+  [0, 1, 2].forEach(k => dot(900 + k * 60, 990, 11, k === part ? INK : OAT, 1, 3));
+}
+window.render = render; window.T = T;
+render(2.2);
+</script>
+</body></html>
