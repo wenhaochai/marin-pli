@@ -1,0 +1,34 @@
+{
+ "130m": {
+  "state": "finished",
+  "step": 4958,
+  "loss": 3.259793839454651,
+  "total_flops": 1.777337490915459e+18,
+  "backbone_flops": 7.529531562031841e+17,
+  "head_share": 0.5763589301121657
+ },
+ "300m": {
+  "state": "finished",
+  "step": 11443,
+  "loss": 2.900490746498108,
+  "total_flops": 9.99035877535934e+18,
+  "backbone_flops": 6.444365331182911e+18,
+  "head_share": 0.35494155154091395
+ },
+ "520m": {
+  "state": "finished",
+  "step": 9917,
+  "loss": 2.6583920335769653,
+  "total_flops": 4.210403636805422e+19,
+  "backbone_flops": 3.3908961690356023e+19,
+  "head_share": 0.19463869463869463
+ },
+ "1_2b": {
+  "state": "finished",
+  "step": 22887,
+  "loss": 2.4391638088226317,
+  "total_flops": 2.071634014279733e+20,
+  "backbone_flops": 1.6933947135675807e+20,
+  "head_share": 0.1825801749271137
+ }
+}
