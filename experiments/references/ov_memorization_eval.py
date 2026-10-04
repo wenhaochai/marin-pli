@@ -157,9 +157,11 @@ def main():
     datasets = []
     for a in starts:
         tag = f"slice{a:09d}"
-        # passes over sequence a: the k >= 0 with k * S + a < total (none past the cycled subset)
-        passes = 0 if a >= S else max(0, -(-(total - a) // S))
-        meta[tag] = dict(start=a, passes=passes, last_seen_step=((passes - 1) * S + a) // B if passes else None)
+        # passes over sequence i: the k >= 0 with k * S + i < total (none past the cycled subset). A slice whose first and
+        # last sequences differ in pass count straddles a boundary; it is kept but labelled "mixed" and left out of groups.
+        npass = lambda i: 0 if i >= S else max(0, -(-(total - i) // S))
+        passes = npass(a) if npass(a) == npass(a + SEQS - 1) else "mixed"
+        meta[tag] = dict(start=a, passes=passes, last_seen_step=((passes - 1) * S + a) // B if isinstance(passes, int) and passes else None)
         datasets.append((NamedLmDataset(order.slice_dataset(start_index=a, end_index=a + SEQS), Pos), [tag]))
     for name, ds in data.validation_sets(Pos).items():
         if name in HELDOUT:
