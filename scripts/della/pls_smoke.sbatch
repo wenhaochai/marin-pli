@@ -32,17 +32,20 @@ export SMOKE_STEPS=${SMOKE_STEPS:-40}
 export VARIANT=pls RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
 
+# SMOKE_ARCHS="a b ...": repeat every config under each residual design (ARCH, depth_arch_qwen3); empty = the baseline.
+for arch in ${SMOKE_ARCHS:-baseline}; do
 for cfg in ${CONFIGS:-130m:1 300m:1}; do
   export SIZE=${cfg%%:*} PLS_W=${cfg##*:}
+  if [ "$arch" = baseline ]; then unset ARCH; else export ARCH=$arch; fi
   out=$(DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's/^output: //p')
   run_id=$(basename "$(dirname "$out")")
   case "$run_id" in
     *-j${SLURM_JOB_ID}-smoke${SMOKE_STEPS}) ;;
     *) echo "SUMMARY cfg=$cfg bad run id '$run_id' from dry run output '$out'"; continue ;;
   esac
-  log=logs/slurm/pls-smoke_${SLURM_JOB_ID}_${SIZE}_pls${PLS_W}.log
+  log=logs/slurm/pls-smoke_${SLURM_JOB_ID}_${SIZE}_pls${PLS_W}_${arch}.log
   echo "SMOKE $cfg $run_id START $(date +%H:%M:%S)"
-  timeout --signal=TERM 14m $PY -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
+  timeout --signal=TERM ${SMOKE_TIMEOUT:-14m} $PY -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
   rc=$?
   err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160)
   $PY - "$run_id" "$cfg" "$rc" "$err" <<'PYEOF'
@@ -60,5 +63,6 @@ except Exception as e:
 PYEOF
   rm -rf "$MARIN_PREFIX/speedrun/$run_id"
   rm -rf "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$run_id"  # levanter mirrors the absolute output path under the temp root
+done
 done
 echo "SMOKE DONE $(date +%H:%M:%S)"

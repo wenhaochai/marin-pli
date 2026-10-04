@@ -377,7 +377,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # embeddings, norms, attention softmax and the loss stay in the bf16/f32 policy above.
                 quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
-                per_device_parallelism=PER_DEVICE_PARALLELISM.get(size, -1),
+                per_device_parallelism=int(os.environ.get("PDP", PER_DEVICE_PARALLELISM.get(size, -1))),  # PDP=<n>: microbatch per device
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
