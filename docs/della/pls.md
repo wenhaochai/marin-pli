@@ -267,7 +267,7 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
 
 ## 结题（2026-10-01，用户："结题吧，把所有东西上传，ckpt删掉"）
 
-- 代码、文档、过程材料全部在分支 `pls`，推到私有仓库 archive（wenhaochai/marin-objective-hillclimb）；过程材料目录见
+- 代码、文档、过程材料全部在分支 `pls`，推到私有仓库 archive（wenhaochai/marin-private）；过程材料目录见
   `pls_archive/README.md`，每个训练 run 的评估记录与运行配置在 `pls_runs/`。
 - 指标全部在 W&B `reself/marin-della`（group `muonh-qwen3-pls-della`；诊断 run 的 run id 带 `-probe-j<jobid>`）。
 - checkpoint 已删除：`marin_store_big/speedrun/` 下 8 个 pls run 目录（约 21.6 GB）与临时 checkpoint 目录下 10 个 pls 目录
