@@ -179,6 +179,9 @@ SS_SCHEDULE = tuple((float(f), int(p)) for f, p in (st.split(":") for st in os.e
 # hashed n-gram table, OV_OD_W = lambda_2 of over-decoding (0 turns it off). ovss also applies SS_SCHEDULE to both heads.
 OV_M = int(float(os.environ.get("OV_M", "12.8e6")))
 OV_OD_W = float(os.environ.get("OV_OD_W", "0.1"))
+# OV_FREEZE_AT > 0: the n-gram tables stop getting gradients from that step on (over_vocab_qwen3.oe_freeze_step). Run ids
+# get -oefreeze<step>. With DATA_EPOCHS=2.4 at 300m, 4768 freezes them as the second pass over the subset starts.
+OV_FREEZE_AT = int(os.environ.get("OV_FREEZE_AT", "0"))
 # VARIANT=focal: the baseline with its cross-entropy replaced by focal loss (experiments.references.focal_qwen3);
 # VARIANT=ovfocal: OV with focal loss on both of its heads. FOCAL_GAMMA is gamma; run ids end in -focal<gamma>.
 FOCAL_GAMMA = float(os.environ.get("FOCAL_GAMMA", "1"))
@@ -238,7 +241,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "swap":
         variant_tags += f"-sww{SWAP_W:g}" + (f"n{SWAP_SPANS}" if SWAP_SPANS != 1 else "") + (f"l{SWAP_MIN}-{SWAP_MAX}" if (SWAP_MIN, SWAP_MAX) != (16, 128) else "")
     if VARIANT in OV_VARIANTS:
-        variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
+        variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "") + (f"-oefreeze{OV_FREEZE_AT}" if OV_FREEZE_AT else "")
     if VARIANT in ("focal", "ovfocal"):
         variant_tags += f"-focal{FOCAL_GAMMA:g}"
     if VARIANT == "ovgram":
@@ -329,6 +332,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
             od_mode="hashed" if VARIANT == "ovgram" else "product",
             od_m=OD_M,
+            oe_freeze_step=OV_FREEZE_AT,
         )
     else:
         model_cls, model_extra = Qwen3Config, {}

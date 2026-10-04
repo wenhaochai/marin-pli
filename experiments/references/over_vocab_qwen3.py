@@ -72,6 +72,9 @@ class OverVocabQwen3Config(Qwen3Config):
     # (x_{t+1}, x_{t+2}) hashed into od_m classes with an embedding of its own, scored jointly by a sampled softmax.
     od_mode: str = "product"
     od_m: int = 12_800_000
+    # > 0: the n-gram tables get no gradient from this train step on (a diagnostic: do the tables' updates on repeated
+    # data cause the loss under repetition?). Their Adam moments then decay, so the rows stop within ~50 steps.
+    oe_freeze_step: int = 0
 
     def __post_init__(self):
         super().__post_init__()
@@ -169,15 +172,19 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             hnn.Linear.init(In=Dim, Out=config.Embed, key=k_o, use_bias=False, out_first=True) if hashed else None,
         )
 
-    def embed(self, input_ids: NamedArray, attn_mask) -> NamedArray:
-        """Over-encoded input embedding (the baseline's embed() with the hashed n-gram terms added)."""
+    def embed(self, input_ids: NamedArray, attn_mask, table_grad=None) -> NamedArray:
+        """Over-encoded input embedding (the baseline's embed() with the hashed n-gram terms added). table_grad (a 0/1
+        scalar) scales the gradient reaching the n-gram tables without changing the forward value."""
         cfg = cast(OverVocabQwen3Config, self.config)
         Pos = input_ids.resolve_axis(self.Pos.name)
         x = self.embeddings.token_embeddings(input_ids)
         prev = shifted_tokens(input_ids, _segment_ids(attn_mask), Pos, cfg.oe_n)
         for table, proj, (order, m) in zip(self.oe_tables, self.oe_proj, cfg.moduli()):
             idx = hax.named(ngram_index([z.array for z in prev[:order]], self.Vocab.size, m), input_ids.axes)
-            x = x + proj(table.take(ROWS, idx))
+            rows = table.take(ROWS, idx)
+            if table_grad is not None:
+                rows = jax.lax.stop_gradient(rows) + table_grad.astype(rows.dtype) * (rows - jax.lax.stop_gradient(rows))
+            x = x + proj(rows)
         x = x / (1 + cfg.k * (cfg.oe_n - 1))
         if self.embeddings.norm is not None:
             x = self.embeddings.norm(x)
@@ -206,7 +213,13 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
         if key is None:  # evaluation: main head, full softmax (LmHeadModel's loss over this model's activations)
             return super().compute_next_token_loss(example, key=None, loss_dtype=loss_dtype, **kw)
         k_main, k_s1, k_s2 = jrandom.split(key, 3)
-        e = self.embed(example.tokens, example.attn_mask)
+        table_grad = None
+        if cfg.oe_freeze_step > 0:
+            t = current_train_step()
+            if t is None:
+                raise RuntimeError("oe_freeze_step follows the train step, but current_train_step() is None")
+            table_grad = (jnp.asarray(t) < cfg.oe_freeze_step).astype(jnp.float32)
+        e = self.embed(example.tokens, example.attn_mask, table_grad)
         h = self.transformer(e, attn_mask=example.attn_mask, key=k_main)
         sampled = bool(cfg.ss_candidates)
         step = current_train_step() if sampled else None
