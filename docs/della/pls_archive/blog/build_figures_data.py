@@ -3,7 +3,7 @@ never hand-edit). Drawn on the page in the writing:plot (Epoch AI) style.
 
 x axis everywhere: backbone compute 6ND. N = parameters of the transformer layers up to the one read out (the embedding
 and the output heads not counted): per Qwen3 layer 4h^2 (q, k, v, o; 8 heads of 64 at 130m, so kv = h) + 3*h*inter
-(SwiGLU) + 2h (two RMSNorms) + 2*64 (q and k norms). D = training tokens = step * 128 * 4096.
+(SwiGLU) + 4h (four RMSNorms: pre and post of both sublayers, the baseline's hybrid norm) + 2*64 (q and k norms). D = training tokens = step * 128 * 4096.
   fig-modes    final-layer training loss over training, four modes (baseline, shared head, shared head with stop-grad
                into the head, separate heads); 50-step running means from step 100, faint, with the final points
   fig-traj     separate heads: training curves of layers 2..6 (faint, light to dark) and their final points, with the
@@ -15,8 +15,8 @@ label them as fits. Final value = mean of the last 50 logged steps (fig-heads), 
 Placeholders (axes, legend and a status word, no data until the runs finish):
   fig-traj-300m                   fig-traj at 300m (12 layers, width 768, 6.0B tokens)
   fig-d48                         48 layers of width 512 (the 130m layer): separate heads and probes, final loss by layer
-  fig-d48-arch                    fig-d48 under the nine DepthBench architectures (arXiv 2609.32534) other than Pre-LN,
-                                  which is the baseline's own design and so fig-d48 itself: separate heads against probes
+  fig-d48-arch                    fig-d48 under the nine DepthBench architectures (arXiv 2609.32534) other than Sandwich-LN,
+                                  which is the baseline's own design (hybrid norm) and so fig-d48 itself: separate heads against probes
 Sources: flops.npz, layers.npz, bbfrozen.npz, depth.json, baselines.json (this directory)."""
 import json, sys
 from pathlib import Path
@@ -31,7 +31,7 @@ B = json.load(open(HERE / "baselines.json")); DEPTH = json.load(open(HERE / "dep
 _raw = np.load(HERE / "layers.npz", allow_pickle=True)
 LY = {k: np.array([[np.nan if v is None else v for v in r] for r in _raw[k]], float) if _raw[k].ndim == 2 else np.array([np.nan if v is None else v for v in _raw[k]], float) for k in _raw.files}
 h, inter = 512, 1792
-NL = 4 * h * h + 3 * h * inter + 2 * h + 2 * 64          # parameters of one 130m layer
+NL = 4 * h * h + 3 * h * inter + 4 * h + 2 * 64          # parameters of one 130m layer
 STEPS = 4959; DTOT = STEPS * TOK
 BLUE7, RED, GREEN, PURPLE, GREY = "#1967D2", "#D93025", "#1E8E3E", "#9334E6", "#80868B"
 def ramp(t):
@@ -95,7 +95,7 @@ cx = np.array([6.0 * NL * d * DTOT for d in range(2, 7)])
 cy = np.array([DEPTH[str(d)]["loss"] for d in range(2, 6)] + [B["130m"]["loss"]])
 marks += [line(fit(ex, ey), BLUE7), dots(pts(ex, ey), BLUE7), line(fit(cx, cy), GREY), dots(pts(cx, cy), GREY)]
 v = view(np.r_[ex, cx], np.r_[ey, cy])
-figs["fig-traj"] = dict(title={"en": "Per-layer training loss against backbone compute, separate heads, 130m", "zh": "独立头的逐层训练损失与骨干算力，130m"},
+figs["fig-traj"] = dict(title={"en": "Per-layer training loss, separate heads, 130m", "zh": "独立头的逐层训练损失，130m"},
                         legend=[[{"en": "Separate heads, final loss by layer", "zh": "独立头，各层最终损失"}, BLUE7, "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
                         quantity=CE, xlabel=XL, height=300, panels=[dict(**v, label={"en": "Separate heads", "zh": "独立头"}, marks=marks)])
 
@@ -110,7 +110,7 @@ figs["fig-heads"] = dict(title={"en": "Final training loss by layer and setup, 1
                          legend=[[n, c, "line"] for _, n, c, _ in SETS], quantity=CE, xlabel=XL, height=320, panels=[dict(**v, marks=marks)])
 
 # Placeholders for runs in progress or planned: axes from the planned shapes, no marks
-def nl(h, inter): return 4 * h * h + 3 * h * inter + 2 * h + 2 * 64
+def nl(h, inter): return 4 * h * h + 3 * h * inter + 4 * h + 2 * 64
 def empty_view(xs, ylo, yhi, word, ys=(3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5)):
     lo, hi = 10 ** np.floor(np.log10(min(xs))), max(xs) * 1.3
     return dict(xlog=True, ylog=True, yoff=YOFF, xlim=[float(lo), float(hi)], ylim=[ylo, yhi], xticks=xticks(lo, hi),
@@ -118,14 +118,26 @@ def empty_view(xs, ylo, yhi, word, ys=(3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5)):
 RUNNING, QUEUED, PLANNED = {"en": "Running", "zh": "运行中"}, {"en": "Queued", "zh": "排队中"}, {"en": "Planned", "zh": "计划中"}
 N300, D300 = nl(768, 2688), 11444 * TOK
 x300 = [6.0 * N300 * d * D300 for d in range(2, 13)]
-figs["fig-traj-300m"] = dict(title={"en": "Per-layer training loss against backbone compute, separate heads, 300m", "zh": "独立头的逐层训练损失与骨干算力，300m"},
-                             legend=figs["fig-traj"]["legend"][:1], quantity=CE, xlabel=XL, height=300,   # no 300m ordinary models by depth (owner)
-                             panels=[dict(**empty_view([x / 4 for x in x300] + x300, 2.9, 4.4, RUNNING), label={"en": "Separate heads", "zh": "独立头"})])
+SEP300 = HERE / "sep300.npz"   # fetch_sep300.py, once job 14940604 has finished
+legend300 = figs["fig-traj"]["legend"][:1]   # no 300m ordinary models by depth (owner)
+if SEP300.exists() and str(np.load(SEP300)["state"]) == "finished":
+    z = np.load(SEP300); s3, c3 = z["step"], z["ce"]; m3 = s3 >= 100
+    marks, ends = [], []
+    for k in range(1, 12):                 # readout after layer k+1: layers 2..12, as at 130m
+        xs, y = smooth((6 * N300 * (k + 1) * s3 * TOK)[m3], c3[m3, k])
+        marks.append(line(thin(xs, y), ramp((k - 1) / 10), 1.2, 0.45)); ends.append((xs[-1], y[-1]))
+    ex3, ey3 = map(np.array, zip(*ends))
+    marks += [line(fit(ex3, ey3), BLUE7), dots(pts(ex3, ey3), BLUE7)]
+    p300 = dict(**view(ex3, ey3), label={"en": "Separate heads", "zh": "独立头"}, marks=marks)
+else:
+    p300 = dict(**empty_view([x / 4 for x in x300] + x300, 2.9, 4.4, RUNNING), label={"en": "Separate heads", "zh": "独立头"})
+figs["fig-traj-300m"] = dict(title={"en": "Per-layer training loss, separate heads, 300m", "zh": "独立头的逐层训练损失，300m"},
+                             legend=legend300, quantity=CE, xlabel=XL, height=300, panels=[p300])
 x48 = [6.0 * NL * d * DTOT for d in range(2, 49)]
 figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers of width 512", "zh": "按层的最终训练损失，48 层、宽 512 的网络"},
                        legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Probes only", "zh": "只加探针"}, RED, "line"]],
                        quantity=CE, xlabel=XL, height=320, panels=[empty_view(x48, 2.9, 5.0, QUEUED)])
-ARCH = ["Sandwich-LN", "LayerNorm Scaling", "DeepNorm", "KEEL", "Hyper-Connections", "mHC", "AttnRes (Full)", "AttnRes (Block)", "MoDA"]
+ARCH = ["Pre-LN", "LayerNorm Scaling", "DeepNorm", "KEEL", "Hyper-Connections", "mHC", "AttnRes (Full)", "AttnRes (Block)", "MoDA"]
 figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and architecture, 48 layers of width 512", "zh": "按层和架构的最终训练损失，48 层、宽 512 的网络"},
                             legend=figs["fig-d48"]["legend"],
                             quantity=CE, xlabel=XL, height=150, cols=3,
