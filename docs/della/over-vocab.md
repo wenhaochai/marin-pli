@@ -1,6 +1,6 @@
 # Over-vocabulary (OV) on the Kaiyue muonh_qwen3 baseline
 
-**Status (2026-10-03):** 1.2B is done: OV +0.122 and OV + ss +0.132 macro (worse on all 16 domains); 1.2B is the only size that repeats fineweb-edu-10B (2.4 passes), see "1.2B: OV loses under repeated data". Earlier status (2026-10-01): OV (over-encoding + over-decoding) beats the baseline at 130m, 300m and 520m on the same data
+**Status (2026-10-04):** 300m on a 2.5B-token subset repeated 2.4 times: OT +0.153 vs the baseline (-0.036 on the full data); repetition alone costs OT 0.21 and the baseline 0.02. **Earlier status (2026-10-03):** 1.2B is done: OV +0.122 and OV + ss +0.132 macro (worse on all 16 domains); 1.2B is the only size that repeats fineweb-edu-10B (2.4 passes), see "1.2B: OV loses under repeated data". Earlier status (2026-10-01): OV (over-encoding + over-decoding) beats the baseline at 130m, 300m and 520m on the same data
 and steps, and with the sampled softmax on both heads it does so at about baseline speed: Paloma macro -0.066 at 130m
 (t -10.8 vs the 8-run pool), -0.038 at 300m (t -5.3 vs the 4-run pool) and -0.029 at 520m (one baseline run, all 16
 domains lower); 1.04x / 1.03x faster than the baseline at 130m / 300m, and 1.13x faster than OV alone at 520m (8 GPUs,
@@ -121,6 +121,22 @@ of the same distribution after one pass. At 1.2B OT is 0.17 better on its traini
 overfits. Scrambling the n-gram indices costs OT more on seen data (300m: 0.557 seen, 0.520 unseen, 0.417 c4_en; 1.2B:
 1.11 train, 0.74 c4_en). OT+ss matches OT within 0.004 everywhere. Size and repetition are still confounded at 1.2B; the
 300m 2.4-pass runs (14940537, 14952678) separate them.
+
+### 300m with repeated data: repetition alone flips OT (2026-10-04, job 14940537)
+
+Same 300m recipe, trained on a random 2.5B-token subset of fineweb-edu-10B repeated 2.4 times (DATA_EPOCHS=2.4,
+max_train_batches 4768, passes 2 and 3 start at steps 4768 and 9536). Paloma macro, final step 11443:
+
+| | full data (0.6 passes) | subset, 2.4 passes | cost of repetition |
+|---|---|---|---|
+| baseline | 3.8087 | 3.8299 | +0.021 |
+| OT | 3.7728 | 3.9825 | +0.210 |
+| OT minus baseline | -0.036 | **+0.153** | |
+
+Before the subset repeats the two settings match (OT minus baseline -0.04 to -0.05 at steps 1k-5k). After pass 2 starts
+the gap goes +0.014 (6k), +0.059 (7k), +0.076 (10k), and after pass 3 starts +0.151 (11k). So repetition, not size,
+causes the 1.2B loss: repeating the data costs the baseline 0.02 and OT 0.21. Figure `tmp_plots/ss130/rep300_gap.png`.
+Seen/unseen eval of the final checkpoints: 14975608 (pending).
 
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
