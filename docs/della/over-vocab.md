@@ -109,17 +109,19 @@ on the same data with and without repetition (`tmp_plots/ss130/epoch_check.py`, 
 
 `experiments/references/ov_memorization_eval.py` rebuilds each run's shuffled fineweb-edu-10B order (checked against the
 run's own mixture) and evaluates 16 evenly spaced slices of 256 x 4096 tokens with known pass counts, plus Paloma c4_en
-(jobs 14953407, 14961897; figure `tmp_plots/ss130/ov_memorization.png`). OT minus ss loss (ss stands in for the baseline):
+(jobs 14953407, 14961897; figure `tmp_plots/ss130/ov_memorization.png`). Slices that straddle a pass boundary (one per
+run) are labelled mixed and left out (audit 2026-10-04). OT minus ss loss (ss stands in for the baseline):
 
 | run | seen 3x | seen 2x | seen 1x | never seen | c4_en |
 |---|---|---|---|---|---|
-| 300m (0.6 passes) | | | -0.093 | -0.064 | -0.038 |
-| 1.2B (2.4 passes) | -0.174 | -0.163 | | | +0.098 |
+| 300m (0.6 passes) | | | -0.097 | -0.064 | -0.038 |
+| 1.2B (2.4 passes) | -0.170 | -0.163 | | | +0.098 |
 
-ss itself has a seen-unseen gap of 0.009 at 300m; OT has 0.038, so OT already fits the data it saw better than fresh data
+ss itself has a seen-unseen gap of 0.011 at 300m; OT has 0.044, so OT already fits the data it saw better than fresh data
 of the same distribution after one pass. At 1.2B OT is 0.17 better on its training data and 0.10 worse on c4_en: it
-overfits. Scrambling the n-gram indices costs OT more on seen data (300m: 0.557 seen, 0.520 unseen, 0.417 c4_en; 1.2B:
-1.11 train, 0.74 c4_en). OT+ss matches OT within 0.004 everywhere. Size and repetition are still confounded at 1.2B; the
+overfits. Scrambling the n-gram indices costs OT more on seen data (300m: 0.562 seen, 0.520 unseen, 0.417 c4_en; 1.2B:
+1.11-1.12 train, 0.74 c4_en): the tables help most where they were trained, which fits memorization but does not by
+itself prove it; the seen-unseen loss gap carries that claim. OT+ss matches OT within 0.004 everywhere. Size and repetition are still confounded at 1.2B; the
 300m 2.4-pass runs (14940537, 14952678) separate them.
 
 ### 300m with repeated data: repetition alone flips OT (2026-10-04, job 14940537)
@@ -138,9 +140,9 @@ the gap goes +0.014 (6k), +0.059 (7k), +0.076 (10k), and after pass 3 starts +0.
 causes the 1.2B loss: repeating the data costs the baseline 0.02 and OT 0.21. Figure `tmp_plots/ss130/rep300_gap.png`.
 Variants (14952678, final): 10x smaller tables (1.28M rows) +0.012, no second head (OV_OD_W=0) +0.179, so the input
 tables cause it and their size sets it. Seen/unseen eval of the final checkpoints (14975608), loss minus the baseline's:
-seen 2-3 times -0.216, never seen (same distribution) +0.061, c4_en +0.132. The baseline's own seen-unseen gap is 0.047,
-OT's 0.32: OT fits the repeated subset far better and generalizes worse, textbook overfitting. Scrambling the n-gram
-indices costs OT 1.07 on seen data, 0.76 on unseen and 0.62 on c4_en. Literature: the recsys "one-epoch phenomenon"
+seen twice -0.216, three times -0.202, never seen (same distribution) +0.061, c4_en +0.132. The baseline's own
+seen-unseen gap is 0.05-0.06, OT's 0.32: OT fits the repeated subset far better and generalizes worse, textbook overfitting. Scrambling the n-gram
+indices costs OT 1.06-1.08 on seen data, 0.76 on unseen and 0.62 on c4_en. Literature: the recsys "one-epoch phenomenon"
 (Zhang et al. 2022, arXiv 2209.06053; MEDA 2305.19531; AdamAR 2511.06374) and MoE under repetition (Xue et al. 2023,
 2305.13230; Jha et al. 2026, 2609.11917): total, not active, parameters set repetition damage; 300m OT tables hold 6.5B
 parameters against 2.5B repeated tokens. Next: tables frozen at the pass-2 start (14983240) separates "tables keep
@@ -150,7 +152,7 @@ fitting" (MEDA) from "backbone adapts to trained rows" (Zhang).
 
 Paloma macro minus the seed-0 baseline 4.1798 at the final step: real 2-gram output vocabulary -0.0623, OT (product
 decomposition) -0.0414, OT + ss -0.0595 (pool sd 0.006, one seed each). So predicting (x_{t+1}, x_{t+2}) jointly over
-12.8M hashed classes with a sampled softmax beats the factorised second head by 0.021 at the same time per step
+12.8M hashed classes with a sampled softmax beats the factorised second head by 0.021 (about 2.5 sd of a two-run difference) at the same time per step
 (0.906 vs 0.890 s). Caveat: od_proj's gradient norm spiked to 2.3-2.9 at steps 600-1500 (peak LR) and was clipped; it
 settled after step 1600. 300m queued (14988894). Page: Figure 7.
 

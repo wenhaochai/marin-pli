@@ -71,7 +71,12 @@ def main():
     member[np.asarray(perm(np.arange(S, dtype=np.int64)))] = True
     print(f"N={N} S={S} ({member.sum()} member sequences), eos={eos}", flush=True)
 
-    m2, m3 = OV_M, OV_M + 4   # moduli of the order-2 and order-3 tables with k = 1 (config.moduli)
+    from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
+    cfg = OverVocabQwen3Config(hidden_dim=s["hidden"], intermediate_dim=s["inter"], num_layers=s["layers"], num_heads=s["heads"],
+                               num_kv_heads=s["kv"], oe_m=OV_M)
+    if cfg.k != 1:
+        raise ValueError(f"{SIZE} has k = {cfg.k} tables per order; this counter handles k = 1 (one order-2 and one order-3 table)")
+    (_, m2), (_, m3) = cfg.moduli()   # the order-2 and order-3 tables' moduli
     v2_3 = pow(V, 2, m3)
     c2 = np.zeros(m2, np.int64)
     c3 = np.zeros(m3, np.int64)

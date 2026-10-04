@@ -109,7 +109,8 @@ class OverVocabQwen3Config(Qwen3Config):
 
 
 def _mulmod(a: jax.Array, b: int, m: int) -> jax.Array:
-    """(a * b) mod m in int32 for 0 <= a < 2^17, 0 <= b < m < 2^24: Horner over 6-bit chunks of b, every partial < 2^31."""
+    """(a * b) mod m in int32 for 0 <= a < m, 0 <= b < m < 2^24: Horner over 6-bit chunks of b, every partial < 2^31
+    ((m - 1) * 64 + a * 63 < 2^31 for m < 2^24)."""
     assert m < (1 << 24) and 0 <= b < m
     r = jnp.zeros_like(a)
     for shift in (18, 12, 6, 0):
