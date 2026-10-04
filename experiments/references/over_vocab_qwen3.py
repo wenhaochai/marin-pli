@@ -39,6 +39,8 @@ import jax.random as jrandom
 import haliax as hax
 import haliax.nn as hnn
 from haliax import NamedArray
+from haliax.partitioning import _get_mesh, current_thread_local_mapping, pspec_for, shard_map
+from jax.sharding import PartitionSpec
 from levanter.layers.attention import AttentionMask
 from levanter.metrics import Metric, ReductionType
 from levanter.models.lm_model import LmConfig, LmExample
@@ -47,7 +49,7 @@ from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.trainer import current_train_step
 
 from experiments.references.focal_qwen3 import focal_next_token_loss
-from experiments.references.sampled_softmax_qwen3 import sampled_next_token_loss
+from experiments.references.sampled_softmax_qwen3 import row_block, row_tiled_cross_entropy, sampled_next_token_loss
 
 ROWS = "oe_rows"  # the tables' row axis: sharded over the data axis for both parameters and compute (launcher)
 ROW_ALIGN = 64  # table rows are padded to a multiple of this so any data-axis size up to 64 divides them; rows >= m are never indexed
@@ -65,6 +67,11 @@ class OverVocabQwen3Config(Qwen3Config):
     ss_stage_ends: tuple[int, ...] = ()
     # focal loss (experiments.references.focal_qwen3) on both heads; 0 is plain cross-entropy
     focal_gamma: float = 0.0
+    # "product": the paper's over-decoding, a V-way head for x_{t+2} (its product decomposition, which makes the 2-gram
+    # softmax factorise into independent next and next-but-one predictions). "hashed": a real 2-gram output vocabulary,
+    # (x_{t+1}, x_{t+2}) hashed into od_m classes with an embedding of its own, scored jointly by a sampled softmax.
+    od_mode: str = "product"
+    od_m: int = 12_800_000
 
     def __post_init__(self):
         super().__post_init__()
@@ -74,6 +81,8 @@ class OverVocabQwen3Config(Qwen3Config):
             raise ValueError("focal_gamma must be >= 0 and is not combined with the sampled softmax (its p is a candidate-set probability)")
         if len(self.ss_candidates) != len(self.ss_stage_ends):
             raise ValueError("one stage end per candidate count")
+        if self.od_mode not in ("product", "hashed") or (self.od_mode == "hashed" and (self.od_weight <= 0 or self.focal_gamma > 0 or not 1 <= self.od_m < (1 << 24))):
+            raise ValueError("od_mode is product or hashed; hashed needs od_weight > 0, no focal loss and 1 <= od_m < 2^24")
 
     @property
     def k(self) -> int:
@@ -135,6 +144,8 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
     oe_proj: list  # hnn.Linear oe_dim -> embed per table (MuonH group, like every Linear)
     od_proj: Optional[hnn.Linear]  # W_2: od_in (d) -> embed (MuonH group)
     od_lm_head: Optional[hnn.Linear]  # E_2: embed -> vocab, initialised like lm_head (AdamH group, like lm_head)
+    od_table: Optional[NamedArray] = None  # od_mode hashed: [oe_rows, oe_dim], one row per hashed 2-gram (Adam, like the OE tables)
+    od_out: Optional[hnn.Linear] = None  # od_mode hashed: oe_dim -> embed, the 2-gram output embedding's projection (MuonH)
 
     @classmethod
     def init(cls, Vocab, config: OverVocabQwen3Config, *, key):  # type: ignore[override]
@@ -148,10 +159,14 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             tables.append(hnn.Embedding.init(hax.Axis(ROWS, rows), Dim, key=jrandom.fold_in(k_t, t)).weight)
             projs.append(hnn.Linear.init(In=Dim, Out=config.Embed, key=jrandom.fold_in(k_p, t), use_bias=False, out_first=True))
         od = config.od_weight > 0
+        hashed = od and config.od_mode == "hashed"
+        k_h, k_o = jrandom.split(jrandom.fold_in(key, 0x0D), 2)
         return cls(
             base.transformer, base.embeddings, base.lm_head, tables, projs,
             hnn.Linear.init(In=config.Embed.alias("od_in"), Out=config.Embed, key=k_w, use_bias=False, out_first=True) if od else None,
-            hnn.Linear.init(In=config.Embed, Out=Vocab, key=k_e, use_bias=False, out_first=True) if od else None,
+            hnn.Linear.init(In=config.Embed, Out=Vocab, key=k_e, use_bias=False, out_first=True) if od and not hashed else None,
+            hnn.Embedding.init(hax.Axis(ROWS, -(-config.od_m // ROW_ALIGN) * ROW_ALIGN), Dim, key=k_h).weight if hashed else None,
+            hnn.Linear.init(In=Dim, Out=config.Embed, key=k_o, use_bias=False, out_first=True) if hashed else None,
         )
 
     def embed(self, input_ids: NamedArray, attn_mask) -> NamedArray:
@@ -223,7 +238,12 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             if seg is not None:
                 ok = ok & (hax.roll(seg, -1, Pos) == seg) & (hax.roll(seg, -2, Pos) == seg)
             w = example.loss_weight * hax.roll(example.loss_weight, -1, Pos) * ok.astype(example.loss_weight.dtype)
-            od, od_stats = head_loss(h2, cast(hnn.Linear, self.od_lm_head).weight, hax.roll(example.tokens, -1, Pos), w, k_s2)
+            if cfg.od_mode == "hashed":
+                od, od_stats = hashed_od_loss(Pos, self.Embed, h2, example.tokens, w, self.od_table, cast(hnn.Linear, self.od_out),
+                                              m=cfg.od_m, vocab_size=self.Vocab.size, key=k_s2, dtype=loss_dtype, reduction=reduction,
+                                              reduction_axis=reduction_axis)
+            else:
+                od, od_stats = head_loss(h2, cast(hnn.Linear, self.od_lm_head).weight, hax.roll(example.tokens, -1, Pos), w, k_s2)
             loss = loss + cfg.od_weight * od
             metrics["od_loss"] = Metric.from_value(_scalar(od), ReductionType.MEAN)
             stats.update({"od_" + name: v for name, v in od_stats.items()})
@@ -234,3 +254,68 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
 def _scalar(x):
     x = x.array if isinstance(x, NamedArray) else x
     return jax.lax.stop_gradient(jnp.mean(x)).astype(jnp.float32)
+
+
+def hashed_candidates(labels: jax.Array, m: int, offset: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """One device's candidate set over m hashed classes, as many candidates as labels (so every present class fits):
+    every present class plus the first absent ones of a stride sweep over [0, m) read from offset. Returns (ascending
+    candidate ids, each label's position among them)."""
+    n = labels.shape[0]
+    stride = int(m * 0.6180339887498949) | 1
+    while math.gcd(stride, m) != 1:
+        stride += 2
+    present = jnp.zeros((m,), jnp.bool_).at[labels].set(True)
+    num_present = jnp.sum(present, dtype=jnp.int32)
+    order = _mulmod((offset + jnp.arange(m, dtype=jnp.int32)) % m, stride, m)  # a permutation of [0, m), computed, not stored
+    absent = ~present[order]
+    rank = jnp.cumsum(absent.astype(jnp.int32)) - 1
+    chosen = jnp.zeros((m,), jnp.bool_).at[order].set(absent & (rank < n - num_present), unique_indices=True)
+    cand = jnp.nonzero(present | chosen, size=n, fill_value=0)[0].astype(jnp.int32)
+    return cand, jnp.searchsorted(cand, labels).astype(jnp.int32)
+
+
+def hashed_od_loss(Pos, Embed, h2: NamedArray, tokens: NamedArray, weight: NamedArray, table: NamedArray, out: hnn.Linear, *,
+                   m: int, vocab_size: int, key, dtype, reduction, reduction_axis):
+    """Over-decoding with a real 2-gram output vocabulary: the target of position t is the class
+    c_t = (x_{t+1} + x_{t+2} V) mod m, its output embedding u_c = out(table[c]), and its logit h2_t . u_c. The softmax runs
+    over a per-device candidate set (sampled softmax) with as many classes as the device has positions: every present c_t
+    plus random others. Candidate ids are laid out in the shape of the positions, so the table lookup shards exactly like
+    the input n-gram lookup; the cross-entropy then runs per device on its [positions, P] logits."""
+    Pos = h2.resolve_axis(hax.axis_name(Pos))
+    labels = ngram_index([hax.roll(tokens, -1, Pos).array, hax.roll(tokens, -2, Pos).array], vocab_size, m)
+    labels = hax.named(labels.astype(jnp.int32), tokens.axes)
+    offset = jrandom.randint(key, (), 0, m, dtype=jnp.int32)
+    mesh = _get_mesh()
+    sharded = mesh is not None and not getattr(mesh, "empty", False)
+    axis_mapping = current_thread_local_mapping() or {}
+    batch_mesh_axes: tuple[str, ...] = ()
+    if sharded:
+        for entry in pspec_for(labels, axis_mapping):
+            batch_mesh_axes += tuple(entry) if isinstance(entry, tuple) else ((entry,) if entry is not None else ())
+    num_shards = math.prod(mesh.shape[a] for a in batch_mesh_axes) if batch_mesh_axes else 1
+
+    def build(shard_labels: NamedArray, offset):
+        flat = shard_labels.array.reshape(-1)
+        shard = jax.lax.axis_index(batch_mesh_axes) if batch_mesh_axes else 0
+        cand, where = hashed_candidates(flat, m, (offset + shard * (m // num_shards)) % m)
+        return hax.named(cand.reshape(shard_labels.array.shape), shard_labels.axes), hax.named(where.reshape(shard_labels.array.shape), shard_labels.axes)
+
+    def ce(shard_h: NamedArray, shard_where: NamedArray, shard_u: NamedArray):
+        batch_axes = hax.axis.without_axes(shard_h.axes, Embed)
+        x = shard_h.rearrange((*batch_axes, Embed)).array.reshape(-1, Embed.size)
+        u = shard_u.rearrange((*batch_axes, Embed)).array.reshape(-1, Embed.size)
+        n = x.shape[0]
+        loss = row_tiled_cross_entropy(x, shard_where.rearrange(batch_axes).array.reshape(-1), u.T, row_block(n, n, n), dtype, None)
+        return hax.named(loss.reshape(shard_where.rearrange(batch_axes).array.shape), batch_axes)
+
+    if sharded:
+        cand, where = shard_map(build, in_specs=(pspec_for(labels, axis_mapping), PartitionSpec()), axis_mapping=axis_mapping, check_rep=False)(labels, offset)
+    else:
+        cand, where = build(labels, offset)
+    u = out(table.take(ROWS, cand))  # [batch, position, embed]: each position carries one candidate's output embedding
+    if sharded:
+        loss = shard_map(ce, in_specs=tuple(pspec_for(a, axis_mapping) for a in (h2, where, u)), axis_mapping=axis_mapping, check_rep=False)(h2, where, u)
+    else:
+        loss = ce(h2, where, u)
+    loss = hax.nn.loss.maybe_reduce_loss(loss, reduction, reduction_axis, where=None, weight=weight)
+    return loss, {}
