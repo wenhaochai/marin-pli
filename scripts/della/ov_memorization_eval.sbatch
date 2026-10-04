@@ -2,7 +2,7 @@
 #SBATCH --job-name=ov-mem-eval
 #SBATCH --account=pli
 #SBATCH --partition=pli-c
-#SBATCH --qos=pli-cp
+#SBATCH --qos=pli-short
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:4
@@ -13,7 +13,7 @@
 
 # Seen vs unseen training data for one checkpoint (experiments/references/ov_memorization_eval.py). Array task i runs
 # line i of TABLE: "SIZE MODEL DATA_EPOCHS CKPT [KEY=VALUE ...]" (extra KEY=VALUE pairs are exported, e.g. OV_M=1.28e6).
-# An eval-only probe, hence pli-cp.
+# An eval: pli-short (pli-cp is for smoke tests only, user rule 2026-10-04).
 set -uo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
 module load proxy/default
