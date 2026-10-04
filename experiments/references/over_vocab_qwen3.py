@@ -296,6 +296,8 @@ def hashed_od_loss(Pos, Embed, h2: NamedArray, tokens: NamedArray, weight: Named
 
     def build(shard_labels: NamedArray, offset):
         flat = shard_labels.array.reshape(-1)
+        if m < flat.shape[0]:  # fewer classes than positions: the candidate list would be padded with repeats of class 0
+            raise ValueError(f"od_m = {m} must be at least the positions per device, {flat.shape[0]}")
         shard = jax.lax.axis_index(batch_mesh_axes) if batch_mesh_axes else 0
         cand, where = hashed_candidates(flat, m, (offset + shard * (m // num_shards)) % m)
         return hax.named(cand.reshape(shard_labels.array.shape), shard_labels.axes), hax.named(where.reshape(shard_labels.array.shape), shard_labels.axes)
