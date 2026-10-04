@@ -190,7 +190,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         tr = self.transformer
         x = self.embeddings.embed(input_ids)
         if cast(PerLayerQwen3Config, self.config).depth_arch != "baseline":
-            return hax.stack(self.config.Layers, cast(Any, tr).outputs(x, attn_mask, key=key))
+            return cast(Any, tr).outputs(x, attn_mask, key=key)
         keys = maybe_rng_split(key, self.config.num_layers) if key is not None else None
 
         def step(layer, carry, **kw):

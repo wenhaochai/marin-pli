@@ -35,6 +35,14 @@ from levanter.trainer import TrainerConfig  # noqa: E402
 from levanter.utils.mesh import MeshConfig  # noqa: E402
 
 from experiments.references.depth_arch_qwen3 import ARCHS, DepthArchTransformer  # noqa: E402
+from haliax.nn.scan import Stacked  # noqa: E402
+
+
+def per_layer(layers):
+    """The layers of a Stacked or BlockSeq stack, as a list."""
+    if isinstance(layers, Stacked):
+        return [hax.tree_util.tree_map(lambda a, k=k: a["layer", k] if isinstance(a, hax.NamedArray) else a[k], layers.stacked) for k in range(L)]
+    return list(layers.blocks)
 from experiments.references.per_layer_qwen3 import PerLayerQwen3Config, PerLayerQwen3LMHeadModel  # noqa: E402
 
 jax.config.update("jax_threefry_partitionable", True)
@@ -65,15 +73,12 @@ def model(arch, hybrid=True, **kw):
 
 def with_baseline_weights(m, base):
     """m (a loop design) with the baseline's attention, MLP and norms in every layer, and its embeddings and heads."""
-    st = base.transformer.layers.stacked
-    blocks = []
-    for k, blk in enumerate(m.transformer.layers.blocks):
-        lay = hax.tree_util.tree_map(lambda a, k=k: a["layer", k], st)
-        rep = dict(self_attn=lay.self_attn, mlp=lay.mlp, ln_1=lay.input_layernorm, ln_2=lay.post_attention_layernorm)
-        if blk.post_1 is not None:
-            rep.update(post_1=lay.post_attn_layernorm, post_2=lay.post_mlp_layernorm)
-        blocks.append(dataclasses.replace(blk, **rep))
-    tr = dataclasses.replace(m.transformer, layers=dataclasses.replace(m.transformer.layers, blocks=blocks), norm=base.transformer.norm)
+    st = base.transformer.layers.stacked  # both stacks are Stacked: copy the stacked weights across
+    blk = m.transformer.layers.stacked
+    rep = dict(self_attn=st.self_attn, mlp=st.mlp, ln_1=st.input_layernorm, ln_2=st.post_attention_layernorm)
+    if blk.post_1 is not None:
+        rep.update(post_1=st.post_attn_layernorm, post_2=st.post_mlp_layernorm)
+    tr = dataclasses.replace(m.transformer, layers=dataclasses.replace(m.transformer.layers, stacked=dataclasses.replace(blk, **rep)), norm=base.transformer.norm)
     return dataclasses.replace(m, transformer=tr, embeddings=base.embeddings, lm_head=base.lm_head, aux_norms=base.aux_norms, aux_lm_heads=base.aux_lm_heads)
 
 
@@ -104,10 +109,7 @@ def train_step(m_, example, k):
 def shared_grads(g):
     """Gradients of the parts both models have: embeddings, heads, final norm, and every layer's attention/MLP."""
     tr = g.transformer
-    if isinstance(tr, DepthArchTransformer):
-        layers = [(b.self_attn, b.mlp) for b in tr.layers.blocks]
-    else:
-        layers = [(hax.tree_util.tree_map(lambda a, k=k: a["layer", k], tr.layers.stacked).self_attn, hax.tree_util.tree_map(lambda a, k=k: a["layer", k], tr.layers.stacked).mlp) for k in range(L)]
+    layers = [(b.self_attn, b.mlp) for b in per_layer(tr.layers)]
     return (g.embeddings, g.lm_head, g.aux_lm_heads, g.aux_norms, tr.norm, layers)
 
 
@@ -130,8 +132,9 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
 
     # 3. moda layer 0 == preln layer 0
     pre = model("preln", False)
-    moda = dataclasses.replace(model("moda", False), transformer=dataclasses.replace(model("moda", False).transformer, layers=pre.transformer.layers, norm=pre.transformer.norm))
-    moda = dataclasses.replace(moda, transformer=dataclasses.replace(moda.transformer, layers=dataclasses.replace(pre.transformer.layers, blocks=[dataclasses.replace(b, arch="moda") for b in pre.transformer.layers.blocks])))
+    moda = model("moda", False)
+    moda_blocks = [dataclasses.replace(mb, self_attn=pb.self_attn, mlp=pb.mlp, ln_1=pb.ln_1, ln_2=pb.ln_2) for mb, pb in zip(moda.transformer.layers.blocks, per_layer(pre.transformer.layers))]
+    moda = dataclasses.replace(moda, embeddings=pre.embeddings, transformer=dataclasses.replace(moda.transformer, layers=dataclasses.replace(moda.transformer.layers, blocks=moda_blocks), norm=pre.transformer.norm))
     o_pre, o_moda = outs(pre), outs(moda)
     leaves_close(o_moda["layer", 0].array, o_pre["layer", 0].array, "moda layer 0", rtol=1e-4, atol=1e-5)
     assert float(jnp.abs(o_moda["layer", L - 1].array - o_pre["layer", L - 1].array).max()) > 1e-3  # depth keys change later layers
@@ -139,7 +142,8 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
 
     # 4. hc at init == 4 x preln (same weights)
     hc = model("hc", False)
-    hc = dataclasses.replace(hc, transformer=dataclasses.replace(hc.transformer, layers=dataclasses.replace(hc.transformer.layers, blocks=[dataclasses.replace(h, self_attn=p.self_attn, mlp=p.mlp, ln_1=p.ln_1, ln_2=p.ln_2) for h, p in zip(hc.transformer.layers.blocks, pre.transformer.layers.blocks)])), embeddings=pre.embeddings)
+    ps, hs = pre.transformer.layers.stacked, hc.transformer.layers.stacked
+    hc = dataclasses.replace(hc, transformer=dataclasses.replace(hc.transformer, layers=dataclasses.replace(hc.transformer.layers, stacked=dataclasses.replace(hs, self_attn=ps.self_attn, mlp=ps.mlp, ln_1=ps.ln_1, ln_2=ps.ln_2))), embeddings=pre.embeddings)
     leaves_close(outs(hc).array / 4.0, o_pre.array, "hc / 4 vs preln", rtol=1e-4, atol=1e-5)
     print("4. hc at init: sum of the 4 streams == 4 x preln, every layer")
 
@@ -150,7 +154,7 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
         ev = scalar(m.compute_next_token_loss(es, key=None))
         assert np.isfinite(float(loss)) and np.isfinite(ev), arch
         assert all(bool(jnp.all(jnp.isfinite(x))) for x in jax.tree.leaves(eqx.filter(g, eqx.is_array))), arch
-        b0 = g.transformer.layers.blocks[0]
+        b0 = per_layer(g.transformer.layers)[0]
         new = [b0.post_1, b0.hyper, b0.query, g.transformer.final_query]
         new = [x for x in new if x is not None]
         for x in new:
@@ -158,6 +162,6 @@ with tc.use_device_mesh(), hax.axis_mapping(tc.compute_axis_mapping):
         mp = model(arch, pls_detach_backbone=True)
         _, gp = step(mp, es, key)
         ge = eqx.filter_jit(eqx.filter_grad(lambda mm: scalar(mm.compute_next_token_loss(es, key=None)) if False else mm.compute_next_token_loss(es, key=None).array))(mp)
-        leaves_close([(b.self_attn, b.mlp) for b in gp.transformer.layers.blocks] + [gp.embeddings], [(b.self_attn, b.mlp) for b in ge.transformer.layers.blocks] + [ge.embeddings], f"{arch} probes backbone grad", rtol=1e-4, atol=1e-7)
+        leaves_close([(b.self_attn, b.mlp) for b in per_layer(gp.transformer.layers)] + [gp.embeddings], [(b.self_attn, b.mlp) for b in per_layer(ge.transformer.layers)] + [ge.embeddings], f"{arch} probes backbone grad", rtol=1e-4, atol=1e-7)
         print(f"5. {arch}: train loss {float(loss):.4f}, eval {ev:.4f}, finite grads; new parameters get gradient ({len(new)} groups)")
 print("all depth_arch tests passed")

@@ -27,8 +27,9 @@ meet the residual stream. l is the 1-based layer index, L the number of layers, 
 
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
 the sum of the streams for hc and mhc; for attnres the mix the next layer's attention would read (after the last layer, a
-mix with a final pseudo-query). The layers run as a Python loop (BlockSeq), each checkpointed, since attnres and moda carry
-every earlier layer's outputs. New small parameters (norm scales, pseudo-queries, HC weights) are not Linear layers, so
+mix with a final pseudo-query). Designs with a fixed-size state (preln ... mhc) scan over a Stacked layer stack like the
+baseline (one compiled layer); attnres and moda carry every earlier layer's outputs, so they run as a Python loop
+(BlockSeq), each layer checkpointed (a 48-layer unrolled graph needs ~0.5 TB of host memory and ~30 min to compile). New small parameters (norm scales, pseudo-queries, HC weights) are not Linear layers, so
 MuonH leaves them to Adam, as it does the baseline's norms.
 """
 
@@ -44,7 +45,7 @@ import haliax as hax
 import haliax.nn as hnn
 from haliax import Axis, NamedArray
 from haliax.jax_utils import maybe_rng_split
-from haliax.nn.scan import BlockSeq
+from haliax.nn.scan import BlockSeq, ScanCheckpointPolicy, Stacked
 
 from levanter.layers.attention import Attention
 from levanter.layers.attention_mask import materialize_mask
@@ -52,6 +53,7 @@ from levanter.models.llama import LlamaConfig, LlamaMlp
 
 ARCHS = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc", "attnres", "attnres_block", "moda")
 _POST = ("sandwich", "deepnorm", "keel")
+SCANNED = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc")  # fixed-size state: one compiled layer
 
 
 def _rms(x: NamedArray, Embed: Axis, eps: float = 1e-6) -> NamedArray:
@@ -98,7 +100,7 @@ def _sinkhorn(logits: NamedArray, iters: int = 20) -> NamedArray:
 class DepthArchLayer(eqx.Module):
     config: LlamaConfig = eqx.field(static=True)
     arch: str = eqx.field(static=True)
-    index: int = eqx.field(static=True)  # 0-based
+    index: int = eqx.field(static=True)  # 0-based; -1 in a Stacked stack (the scan passes the index instead)
     self_attn: Attention
     mlp: LlamaMlp
     ln_1: hnn.RmsNorm  # before the attention sublayer (keel: LN_pre; unused by deepnorm)
@@ -124,27 +126,28 @@ class DepthArchLayer(eqx.Module):
             m = cast(Any, config).hc_streams
             hyper = tuple(HyperParams.init(config.Embed, m, 2 * index + j, arch == "mhc") for j in range(2))
         query = hax.zeros((Axis("sub", 2), config.Embed)) if arch.startswith("attnres") else None
-        return DepthArchLayer(config, arch, index, attn, mlp, config.mk_LayerNorm(config.Embed), config.mk_LayerNorm(config.Embed), post[0], post[1], hyper, query)
+        return DepthArchLayer(config, arch, -1 if arch in SCANNED else index, attn, mlp, config.mk_LayerNorm(config.Embed), config.mk_LayerNorm(config.Embed), post[0], post[1], hyper, query)
 
     # ---- the two branches ------------------------------------------------------------------------------------------
-    def branch(self, j: int, x: NamedArray, mask, *, key, pos_ids, depth_kv=None) -> NamedArray:
-        """Sublayer j's branch on its input x (j = 0 attention, 1 MLP), including the pre-norm where the design has one."""
-        arch, l = self.arch, self.index + 1
+    def branch(self, j: int, x: NamedArray, mask, *, key, pos_ids, depth_kv=None, layer=None) -> NamedArray:
+        """Sublayer j's branch on its input x (j = 0 attention, 1 MLP), including the pre-norm where the design has one.
+        layer: the 0-based layer index (traced, from the scan); lns needs it."""
+        arch = self.arch
         if arch != "deepnorm":
             x = (self.ln_1 if j == 0 else self.ln_2)(x)
         if arch == "lns":
-            x = x * (1.0 / math.sqrt(l))
+            x = x * jax.lax.rsqrt(jnp.asarray(layer.array if isinstance(layer, NamedArray) else layer, jnp.float32) + 1.0).astype(x.dtype)
         if j == 1:
             return self.mlp(x, key=key)
         if arch == "moda":
             return _moda_attention(self.self_attn, x, mask, depth_kv, pos_ids=pos_ids, chunk=cast(Any, self.config).moda_chunk)
         return self.self_attn(x=x, mask=mask, key=key, pos_ids=pos_ids)
 
-    def residual_step(self, h: NamedArray, mask, *, key, pos_ids) -> NamedArray:
+    def residual_step(self, h: NamedArray, mask, *, key, pos_ids, layer=None) -> NamedArray:
         L = self.config.num_layers
         keys = maybe_rng_split(key, 2)
         for j in range(2):
-            f = self.branch(j, h, mask, key=keys[j], pos_ids=pos_ids)
+            f = self.branch(j, h, mask, key=keys[j], pos_ids=pos_ids, layer=layer)
             post = self.post_1 if j == 0 else self.post_2
             if self.arch == "sandwich":
                 h = h + cast(hnn.RmsNorm, post)(f)
@@ -238,7 +241,7 @@ def _moda_attention(attn: Attention, x: NamedArray, mask, depth_kv, *, pos_ids, 
 class DepthArchTransformer(eqx.Module):
     config: LlamaConfig = eqx.field(static=True)
     arch: str = eqx.field(static=True)
-    layers: BlockSeq
+    layers: Any  # Stacked for SCANNED designs, else BlockSeq
     norm: hnn.RmsNorm
     final_query: Optional[NamedArray] = None  # attnres*: the mix read after the last layer
 
@@ -249,23 +252,43 @@ class DepthArchTransformer(eqx.Module):
         keys = jrandom.split(key, config.num_layers)
         blocks = [DepthArchLayer.init(config, arch, i, key=keys[i]) for i in range(config.num_layers)]
         fq = hax.zeros(config.Embed) if arch.startswith("attnres") else None
-        return DepthArchTransformer(config, arch, BlockSeq(blocks, config.Layers, cast(Any, None)), config.mk_LayerNorm(config.Embed), fq)
+        if arch in SCANNED:
+            is_named = lambda x: isinstance(x, NamedArray)  # noqa: E731
+            stacked = jax.tree_util.tree_map(lambda *xs: hax.stack(config.Layers, xs) if is_named(xs[0]) else jnp.stack(xs), *blocks, is_leaf=is_named)
+            layers: Any = Stacked(stacked, config.Layers, ScanCheckpointPolicy._mk(config.gradient_checkpointing))
+        else:
+            layers = BlockSeq(blocks, config.Layers, cast(Any, None))
+        return DepthArchTransformer(config, arch, layers, config.mk_LayerNorm(config.Embed), fq)
 
-    def outputs(self, x: NamedArray, attn_mask, *, key=None, pos_ids=None) -> list:
-        """The state read out after every layer (see the module docstring); the last one goes to the final norm."""
+    def outputs(self, x: NamedArray, attn_mask, *, key=None, pos_ids=None) -> NamedArray:
+        """The state read out after every layer, stacked on the layer axis (see the module docstring); the last entry
+        goes to the final norm."""
         cfg, arch, L = self.config, self.arch, self.config.num_layers
-        Embed = cfg.Embed
+        if arch in SCANNED:
+            skeys = maybe_rng_split(key, L) if key is not None else None
+            if arch in ("hc", "mhc"):
+                m = cast(Any, cfg).hc_streams
+
+                def hstep(layer, H, i, *, key):
+                    H = layer.hyper_step(H, attn_mask, key=key, pos_ids=pos_ids).rearrange(H.axes)  # the scan carry keeps its axis order
+                    return H, hax.sum(H, axis="stream")
+
+                _, outs = self.layers.scan_via(hstep)(hax.stack(Axis("stream", m), [x] * m), hax.arange(cfg.Layers), key=skeys)
+                return outs
+
+            def rstep(layer, h, i, *, key):
+                h = layer.residual_step(h, attn_mask, key=key, pos_ids=pos_ids, layer=i)
+                return h, h
+
+            _, outs = self.layers.scan_via(rstep)(x, hax.arange(cfg.Layers), key=skeys)
+            return outs
+        return hax.stack(cfg.Layers, self._loop_outputs(x, attn_mask, key=key, pos_ids=pos_ids))
+
+    def _loop_outputs(self, x: NamedArray, attn_mask, *, key=None, pos_ids=None) -> list:
+        cfg, arch, L = self.config, self.arch, self.config.num_layers
         keys = maybe_rng_split(key, L) if key is not None else [None] * L
         blocks = cast(list, self.layers.blocks)
         outs = []
-        if arch in ("hc", "mhc"):
-            m = cast(Any, cfg).hc_streams
-            H = hax.stack(Axis("stream", m), [x] * m)
-            step = eqx.filter_checkpoint(lambda layer, H, k: layer.hyper_step(H, attn_mask, key=k, pos_ids=pos_ids))
-            for i, layer in enumerate(blocks):
-                H = step(layer, H, keys[i])
-                outs.append(hax.sum(H, axis="stream"))
-            return outs
         if arch.startswith("attnres"):
             return self._attnres_outputs(x, attn_mask, keys, pos_ids)
         if arch == "moda":
@@ -283,11 +306,7 @@ class DepthArchTransformer(eqx.Module):
                 depth_kv.append(new_kv)
                 outs.append(x)
             return outs
-        step = eqx.filter_checkpoint(lambda layer, h, k: layer.residual_step(h, attn_mask, key=k, pos_ids=pos_ids))
-        for i, layer in enumerate(blocks):
-            x = step(layer, x, keys[i])
-            outs.append(x)
-        return outs
+        raise AssertionError(arch)
 
     def _attnres_outputs(self, x: NamedArray, attn_mask, keys, pos_ids) -> list:
         cfg, L = self.config, self.config.num_layers
@@ -331,4 +350,4 @@ class DepthArchTransformer(eqx.Module):
         return outs
 
     def __call__(self, x: NamedArray, attn_mask, *, key=None, pos_ids: NamedArray | None = None) -> NamedArray:
-        return self.norm(self.outputs(x, attn_mask, key=key, pos_ids=pos_ids)[-1])
+        return self.norm(self.outputs(x, attn_mask, key=key, pos_ids=pos_ids)[self.config.Layers.name, -1])
