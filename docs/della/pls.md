@@ -316,5 +316,7 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    width-depth ratio from shallow-wide to deep-narrow, 10 architectures including Pre-LN, LayerNorm Scaling, mHC and
    AttnRes. The question: how does each architecture change each layer's contribution?
    DepthBench's ten designs: Pre-LN, Sandwich-LN, LayerNorm Scaling, DeepNorm, KEEL, Hyper-Connections, mHC, AttnRes
-   (Full), AttnRes (Block), MoDA; shapes at ~400M from (16 layers, width 1216) to (70, 640); 8B tokens, AdamW. The blog
-   holds a placeholder for probes at 48 layers under the nine designs other than Pre-LN, each against Pre-LN.
+   (Full), AttnRes (Block), MoDA; shapes at ~400M from (16 layers, width 1216) to (70, 640); 8B tokens, AdamW. The baseline's
+   own design is Sandwich-LN (hybrid_norm: pre- and post-norm on both sublayers), not Pre-LN. Implemented as ARCH=<design>
+   (experiments/references/depth_arch_qwen3.py, CPU tests scripts/della/depth_arch_cpu_test.py); the blog's Figure 6 shows
+   separate heads against probes at 48 layers under the nine designs other than Sandwich-LN (Figure 5 is Sandwich-LN).
