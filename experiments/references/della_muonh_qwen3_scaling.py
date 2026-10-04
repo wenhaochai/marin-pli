@@ -34,9 +34,9 @@ from datetime import timedelta
 # the run); cuda_async without preallocation +30%; vmm +17%. So unless the job set an allocator itself, 1_2b OV uses
 # cuda_async with a pool sized to its temp (ov 30.2 GiB -> 0.8, ovss 25.1 GiB -> 0.75). It must run before JAX
 # initialises its backend, which reads these variables once.
-if os.environ.get("VARIANT") in ("ov", "ovss", "ovfocal", "ovgram") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
+if os.environ.get("VARIANT") in ("ov", "ovss", "ovfocal", "ovgram", "ovgram3") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75", "ovfocal": "0.8", "ovgram": "0.75"}[os.environ["VARIANT"]]
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75", "ovfocal": "0.8", "ovgram": "0.75", "ovgram3": "0.7"}[os.environ["VARIANT"]]
     print(f"1_2b OV allocator: cuda_async, memory fraction {os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']}", flush=True)
 
 import jmp
@@ -189,13 +189,15 @@ FOCAL_GAMMA = float(os.environ.get("FOCAL_GAMMA", "1"))
 # hashed into OD_M classes, each with its own output embedding, scored jointly by a per-device sampled softmax
 # (over_vocab_qwen3.hashed_od_loss). Run ids end in -odhash<OD_M/1e6>m.
 OD_M = int(float(os.environ.get("OD_M", "12.8e6")))
-OV_VARIANTS = ("ov", "ovss", "ovfocal", "ovgram")
+# VARIANT=ovgram3: OV with real 2-gram AND 3-gram output vocabularies (od_orders (2, 3)), each its own hashed head at
+# weight OV_OD_W; run ids end in -odhash<OD_M/1e6>m-o23.
+OV_VARIANTS = ("ov", "ovss", "ovfocal", "ovgram", "ovgram3")
 # DATA_EPOCHS > 0 trains on a random subset of fineweb-edu-10B sized so the run makes that many passes over it: levanter
 # shuffles (linear permutation, data seed 42), keeps the first steps / DATA_EPOCHS batches (max_train_batches) and
 # restarts at its end. 1.2B makes 2.4 passes over the full 10.0B tokens; DATA_EPOCHS=2.4 reproduces that repetition at
 # a smaller size, every other setting unchanged. Run tag -rep{epochs}.
 DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "focal", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "focal", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -244,8 +246,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "") + (f"-oefreeze{OV_FREEZE_AT}" if OV_FREEZE_AT else "")
     if VARIANT in ("focal", "ovfocal"):
         variant_tags += f"-focal{FOCAL_GAMMA:g}"
-    if VARIANT == "ovgram":
-        variant_tags += f"-odhash{OD_M / 1e6:g}m"
+    if VARIANT in ("ovgram", "ovgram3"):
+        variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -330,7 +332,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             focal_gamma=FOCAL_GAMMA if VARIANT == "ovfocal" else 0.0,
             ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
-            od_mode="hashed" if VARIANT == "ovgram" else "product",
+            od_mode="hashed" if VARIANT in ("ovgram", "ovgram3") else "product",
+            od_orders=(2, 3) if VARIANT == "ovgram3" else (2,),
             od_m=OD_M,
             oe_freeze_step=OV_FREEZE_AT,
         )
