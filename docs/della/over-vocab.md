@@ -105,6 +105,23 @@ at 10k and +0.132 final (3.4929 vs 3.3609, all 16 domains worse). Both OV arms j
 n-grams, so OV overfits once data repeats. The timing evidence is correlational. The isolating test is the same model
 on the same data with and without repetition (`tmp_plots/ss130/epoch_check.py`, `epoch_1_2b.py`).
 
+### Seen vs unseen training data (2026-10-04, eval only)
+
+`experiments/references/ov_memorization_eval.py` rebuilds each run's shuffled fineweb-edu-10B order (checked against the
+run's own mixture) and evaluates 16 evenly spaced slices of 256 x 4096 tokens with known pass counts, plus Paloma c4_en
+(jobs 14953407, 14961897; figure `tmp_plots/ss130/ov_memorization.png`). OT minus ss loss (ss stands in for the baseline):
+
+| run | seen 3x | seen 2x | seen 1x | never seen | c4_en |
+|---|---|---|---|---|---|
+| 300m (0.6 passes) | | | -0.093 | -0.064 | -0.038 |
+| 1.2B (2.4 passes) | -0.174 | -0.163 | | | +0.098 |
+
+ss itself has a seen-unseen gap of 0.009 at 300m; OT has 0.038, so OT already fits the data it saw better than fresh data
+of the same distribution after one pass. At 1.2B OT is 0.17 better on its training data and 0.10 worse on c4_en: it
+overfits. Scrambling the n-gram indices costs OT more on seen data (300m: 0.557 seen, 0.520 unseen, 0.417 c4_en; 1.2B:
+1.11 train, 0.74 c4_en). OT+ss matches OT within 0.004 everywhere. Size and repetition are still confounded at 1.2B; the
+300m 2.4-pass runs (14940537, 14952678) separate them.
+
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
