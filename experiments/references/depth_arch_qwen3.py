@@ -15,9 +15,12 @@ meet the residual stream. l is the 1-based layer index, L the number of layers, 
     keel           h <- LN_post(a h + F(LN_pre(h))),  a = 2L        the number of sublayers
     hc             m = 4 residual streams H; per sublayer x = sum_s r_s H_s, H <- H A + w (x) F(LN(x)), with read r,
                    mixing A and write w each a static part plus a dynamic part s * tanh(RMS(H) W) (Zhu et al. 2024, dynamic
-                   HC; static init r = e_{l mod m}, A = I, w = 1, W = 0, s = 0.01); embedding copied to every stream
-    mhc            hc with r = sigmoid(.), w = 2 sigmoid(.), A = Sinkhorn(exp(.)) (doubly stochastic, 20 iterations);
-                   static logits r: +2 on stream l mod m, -2 elsewhere; A: +2 on the diagonal, -2 elsewhere; w: 0
+                   HC; static init r = e_{(2l+j) mod m}, A = I, w = 1, W = 0, s = 0.01); embedding copied to every stream
+    mhc            hc with r = sigmoid(.), w = 2 sigmoid(.), A = Sinkhorn(exp(.)) (doubly stochastic, 20 log-domain
+                   iterations); static logits r: +2 on stream (2l+j) mod m, -2 elsewhere; A: +2 on the diagonal, -2
+                   elsewhere; w: 0
+                   The static parts are stored as offsets from these constants (init 0), so bf16 compute keeps the small
+                   learned changes, and the constants are added in float32.
     attnres        every sublayer's input is a softmax mix of the embedding and all earlier sublayer outputs,
                    sum_i softmax_i(q . RMS(v_i)) v_i with a learned pseudo-query q per sublayer (init 0, a uniform mean)
     attnres_block  the same mix over the embedding, the finished blocks' summed outputs (8 blocks) and the current block's
@@ -27,29 +30,39 @@ meet the residual stream. l is the 1-based layer index, L the number of layers, 
 
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
 the sum of the streams for hc and mhc; for attnres the mix the next layer's attention would read (after the last layer, a
-mix with a final pseudo-query). Designs with a fixed-size state (preln ... mhc) scan over a Stacked layer stack like the
-baseline (one compiled layer); attnres and moda carry every earlier layer's outputs, so they run as a Python loop
-(BlockSeq), each layer checkpointed (a 48-layer unrolled graph needs ~0.5 TB of host memory and ~30 min to compile). New small parameters (norm scales, pseudo-queries, HC weights) are not Linear layers, so
-MuonH leaves them to Adam, as it does the baseline's norms.
+mix with a final pseudo-query). Every design stores its layers stacked on the layer axis (Stacked), as the baseline
+does, so MuonH's norm-preserving projection treats every weight the same way in every design. Designs with a fixed-size
+state (preln ... mhc) scan over the stack (one compiled layer); attnres and moda carry every earlier layer's outputs, so
+they loop in Python over layer slices of the stack, each layer checkpointed.
+
+Optimizer (DepthArchMuonHConfig): the baseline's parameters keep the baseline's MuonH / AdamH / Adam; the new small
+parameters (HC weights, attnres pseudo-queries) get their own Adam with eps 1e-8. The 130m recipe's Adam eps is 1e-20, and
+at the symmetric hc / mhc init the true gradient of some of these weights is 0, leaving float rounding noise whose
+square underflows: Adam then divides noise by 1e-20 and moves a weight by ~80 x the learning rate in one step.
 """
 
 import math
+from dataclasses import dataclass
 from typing import Any, Optional, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+import optax
 
 import haliax as hax
 import haliax.nn as hnn
 from haliax import Axis, NamedArray
 from haliax.jax_utils import maybe_rng_split
-from haliax.nn.scan import BlockSeq, ScanCheckpointPolicy, Stacked
+from haliax.nn.scan import ScanCheckpointPolicy, Stacked
 
 from levanter.layers.attention import Attention
 from levanter.layers.attention_mask import materialize_mask
 from levanter.models.llama import LlamaConfig, LlamaMlp
+from levanter.optim.config import OptimizerConfig
+from levanter.optim.muonh import MuonHConfig, scale_by_adamh, scale_with_muonh
+from levanter.utils.jax_utils import leaf_key_paths
 
 ARCHS = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc", "attnres", "attnres_block", "moda")
 _POST = ("sandwich", "deepnorm", "keel")
@@ -65,42 +78,42 @@ def _rms(x: NamedArray, Embed: Axis, eps: float = 1e-6) -> NamedArray:
 class HyperParams(eqx.Module):
     """One sublayer's hyper-connection weights: static read / mixing / write plus their dynamic projections."""
 
-    read: NamedArray  # (stream,)
-    res: NamedArray  # (stream, stream_out)
-    write: NamedArray  # (stream_out,)
+    read: NamedArray  # (stream,)  offset from the static read constant
+    res: NamedArray  # (stream, stream_out)  offset from the static mixing constant
+    write: NamedArray  # (stream_out,)  offset from the static write constant
     w_read: NamedArray  # (embed,)
     w_res: NamedArray  # (embed, stream_out)
     w_write: NamedArray  # (embed,)
-    scale: jax.Array  # (2,): dynamic scales of read/mixing and of write
+    scale: NamedArray  # (hp_scale=2,): dynamic scales of read/mixing and of write
 
     @staticmethod
-    def init(Embed: Axis, m: int, layer: int, manifold: bool) -> "HyperParams":
+    def init(Embed: Axis, m: int) -> "HyperParams":
         S, So = Axis("stream", m), Axis("stream_out", m)
-        hot = jnp.zeros((m,)).at[layer % m].set(1.0)
-        if manifold:
-            read, res, write = 4.0 * hot - 2.0, 4.0 * jnp.eye(m) - 2.0, jnp.zeros((m,))
-        else:
-            read, res, write = hot, jnp.eye(m), jnp.ones((m,))
-        z = jnp.zeros
-        return HyperParams(
-            hax.named(read, S), hax.named(res, (S, So)), hax.named(write, So),
-            hax.named(z((Embed.size,)), Embed), hax.named(z((Embed.size, m)), (Embed, So)), hax.named(z((Embed.size,)), Embed),
-            jnp.full((2,), 0.01),
-        )
+        z = hax.zeros
+        return HyperParams(z(S), z((S, So)), z(So), z(Embed), z((Embed, So)), z(Embed), hax.full(Axis("hp_scale", 2), 0.01))
+
+
+def _hyper_constants(m: int, sublayer, manifold: bool):
+    """The static read / mixing / write values at init, in float32; sublayer = 2 l + j (traced)."""
+    S, So = Axis("stream", m), Axis("stream_out", m)
+    hot = (jnp.arange(m) == jnp.mod(sublayer, m)).astype(jnp.float32)
+    if manifold:
+        return hax.named(4.0 * hot - 2.0, S), hax.named(4.0 * jnp.eye(m) - 2.0, (S, So)), hax.named(jnp.zeros((m,)), So)
+    return hax.named(hot, S), hax.named(jnp.eye(m), (S, So)), hax.named(jnp.ones((m,)), So)
 
 
 def _sinkhorn(logits: NamedArray, iters: int = 20) -> NamedArray:
-    m = hax.exp(logits - hax.max(logits, axis=("stream", "stream_out")))
+    """Sinkhorn-Knopp of exp(logits) over (stream, stream_out), in the log domain (no row can underflow to 0/0)."""
+    lg = logits.astype(jnp.float32)
     for _ in range(iters):
-        m = m / hax.sum(m, axis="stream_out")
-        m = m / hax.sum(m, axis="stream")
-    return m
+        lg = lg - hax.nn.logsumexp(lg, axis="stream_out")
+        lg = lg - hax.nn.logsumexp(lg, axis="stream")
+    return hax.exp(lg)
 
 
 class DepthArchLayer(eqx.Module):
     config: LlamaConfig = eqx.field(static=True)
     arch: str = eqx.field(static=True)
-    index: int = eqx.field(static=True)  # 0-based; -1 in a Stacked stack (the scan passes the index instead)
     self_attn: Attention
     mlp: LlamaMlp
     ln_1: hnn.RmsNorm  # before the attention sublayer (keel: LN_pre; unused by deepnorm)
@@ -111,7 +124,7 @@ class DepthArchLayer(eqx.Module):
     query: Optional[NamedArray] = None  # attnres*: (sub=2, embed) pseudo-queries of the two sublayers
 
     @staticmethod
-    def init(config: LlamaConfig, arch: str, index: int, *, key) -> "DepthArchLayer":
+    def init(config: LlamaConfig, arch: str, *, key) -> "DepthArchLayer":
         k_attn, k_mlp = jrandom.split(key, 2)
         attn = Attention.init(config.attention_config(), key=k_attn)
         mlp = LlamaMlp.init(config.Embed, config.Mlp, config.activation_function, key=k_mlp, use_bias=config.use_bias)
@@ -124,9 +137,9 @@ class DepthArchLayer(eqx.Module):
         hyper = None
         if arch in ("hc", "mhc"):
             m = cast(Any, config).hc_streams
-            hyper = tuple(HyperParams.init(config.Embed, m, 2 * index + j, arch == "mhc") for j in range(2))
+            hyper = tuple(HyperParams.init(config.Embed, m) for _ in range(2))
         query = hax.zeros((Axis("sub", 2), config.Embed)) if arch.startswith("attnres") else None
-        return DepthArchLayer(config, arch, -1 if arch in SCANNED else index, attn, mlp, config.mk_LayerNorm(config.Embed), config.mk_LayerNorm(config.Embed), post[0], post[1], hyper, query)
+        return DepthArchLayer(config, arch, attn, mlp, config.mk_LayerNorm(config.Embed), config.mk_LayerNorm(config.Embed), post[0], post[1], hyper, query)
 
     # ---- the two branches ------------------------------------------------------------------------------------------
     def branch(self, j: int, x: NamedArray, mask, *, key, pos_ids, depth_kv=None, layer=None) -> NamedArray:
@@ -159,23 +172,29 @@ class DepthArchLayer(eqx.Module):
                 h = h + f
         return h
 
-    def hyper_step(self, H: NamedArray, mask, *, key, pos_ids) -> NamedArray:
+    def hyper_step(self, H: NamedArray, mask, *, key, pos_ids, layer) -> NamedArray:
+        """layer: the 0-based layer index (traced, from the scan)."""
         Embed = self.config.Embed
+        m = H.resolve_axis("stream").size
+        li = layer.array if isinstance(layer, NamedArray) else layer
         keys = maybe_rng_split(key, 2)
         for j in range(2):
             p = cast(HyperParams, cast(tuple, self.hyper)[j])
-            Hn = _rms(H, Embed).astype(jnp.float32)
-            d_read = hax.dot(Hn, p.w_read.astype(jnp.float32), axis=Embed)  # (..., stream)
-            d_res = hax.dot(Hn, p.w_res.astype(jnp.float32), axis=Embed)  # (..., stream, stream_out)
-            d_write = hax.dot(Hn, p.w_write.astype(jnp.float32), axis=Embed).rename({"stream": "stream_out"})
+            c_read, c_res, c_write = _hyper_constants(m, 2 * li + j, self.arch == "mhc")
+            f32 = lambda a: a.astype(jnp.float32)  # noqa: E731
+            s_rr, s_w = f32(p.scale)["hp_scale", 0], f32(p.scale)["hp_scale", 1]
+            Hn = f32(_rms(H, Embed))
+            d_read = hax.dot(Hn, f32(p.w_read), axis=Embed)  # (..., stream)
+            d_res = hax.dot(Hn, f32(p.w_res), axis=Embed)  # (..., stream, stream_out)
+            d_write = hax.dot(Hn, f32(p.w_write), axis=Embed).rename({"stream": "stream_out"})
             if self.arch == "hc":
-                read = p.read + p.scale[0] * hax.tanh(d_read)
-                res = p.res + p.scale[0] * hax.tanh(d_res)
-                write = p.write + p.scale[1] * hax.tanh(d_write)
+                read = c_read + f32(p.read) + s_rr * hax.tanh(d_read)
+                res = c_res + f32(p.res) + s_rr * hax.tanh(d_res)
+                write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
             else:
-                read = hax.nn.sigmoid(p.read + p.scale[0] * d_read)
-                res = _sinkhorn(p.res + p.scale[0] * d_res)
-                write = 2.0 * hax.nn.sigmoid(p.write + p.scale[1] * d_write)
+                read = hax.nn.sigmoid(c_read + f32(p.read) + s_rr * d_read)
+                res = _sinkhorn(c_res + f32(p.res) + s_rr * d_res)
+                write = 2.0 * hax.nn.sigmoid(c_write + f32(p.write) + s_w * d_write)
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
@@ -241,7 +260,7 @@ def _moda_attention(attn: Attention, x: NamedArray, mask, depth_kv, *, pos_ids, 
 class DepthArchTransformer(eqx.Module):
     config: LlamaConfig = eqx.field(static=True)
     arch: str = eqx.field(static=True)
-    layers: Any  # Stacked for SCANNED designs, else BlockSeq
+    layers: Stacked  # every design: layers stacked on the layer axis, like the baseline
     norm: hnn.RmsNorm
     final_query: Optional[NamedArray] = None  # attnres*: the mix read after the last layer
 
@@ -250,15 +269,16 @@ class DepthArchTransformer(eqx.Module):
         if arch not in ARCHS:
             raise ValueError(f"depth_arch must be one of {ARCHS}, got {arch!r}")
         keys = jrandom.split(key, config.num_layers)
-        blocks = [DepthArchLayer.init(config, arch, i, key=keys[i]) for i in range(config.num_layers)]
+        blocks = [DepthArchLayer.init(config, arch, key=keys[i]) for i in range(config.num_layers)]
         fq = hax.zeros(config.Embed) if arch.startswith("attnres") else None
-        if arch in SCANNED:
-            is_named = lambda x: isinstance(x, NamedArray)  # noqa: E731
-            stacked = jax.tree_util.tree_map(lambda *xs: hax.stack(config.Layers, xs) if is_named(xs[0]) else jnp.stack(xs), *blocks, is_leaf=is_named)
-            layers: Any = Stacked(stacked, config.Layers, ScanCheckpointPolicy._mk(config.gradient_checkpointing))
-        else:
-            layers = BlockSeq(blocks, config.Layers, cast(Any, None))
+        is_named = lambda x: isinstance(x, NamedArray)  # noqa: E731
+        stacked = jax.tree_util.tree_map(lambda *xs: hax.stack(config.Layers, xs), *blocks, is_leaf=is_named)
+        layers = Stacked(stacked, config.Layers, ScanCheckpointPolicy._mk(config.gradient_checkpointing))
         return DepthArchTransformer(config, arch, layers, config.mk_LayerNorm(config.Embed), fq)
+
+    def layer(self, i: int) -> "DepthArchLayer":
+        """Layer i, sliced out of the stack (the loop designs)."""
+        return hax.tree_util.tree_map(lambda a: a[self.config.Layers.name, i], cast(Stacked, self.layers).stacked)
 
     def outputs(self, x: NamedArray, attn_mask, *, key=None, pos_ids=None) -> NamedArray:
         """The state read out after every layer, stacked on the layer axis (see the module docstring); the last entry
@@ -270,7 +290,7 @@ class DepthArchTransformer(eqx.Module):
                 m = cast(Any, cfg).hc_streams
 
                 def hstep(layer, H, i, *, key):
-                    H = layer.hyper_step(H, attn_mask, key=key, pos_ids=pos_ids).rearrange(H.axes)  # the scan carry keeps its axis order
+                    H = layer.hyper_step(H, attn_mask, key=key, pos_ids=pos_ids, layer=i).rearrange(H.axes)  # the scan carry keeps its axis order
                     return H, hax.sum(H, axis="stream")
 
                 _, outs = self.layers.scan_via(hstep)(hax.stack(Axis("stream", m), [x] * m), hax.arange(cfg.Layers), key=skeys)
@@ -287,7 +307,7 @@ class DepthArchTransformer(eqx.Module):
     def _loop_outputs(self, x: NamedArray, attn_mask, *, key=None, pos_ids=None) -> list:
         cfg, arch, L = self.config, self.arch, self.config.num_layers
         keys = maybe_rng_split(key, L) if key is not None else [None] * L
-        blocks = cast(list, self.layers.blocks)
+        blocks = [self.layer(i) for i in range(L)]
         outs = []
         if arch.startswith("attnres"):
             return self._attnres_outputs(x, attn_mask, keys, pos_ids)
@@ -311,7 +331,7 @@ class DepthArchTransformer(eqx.Module):
     def _attnres_outputs(self, x: NamedArray, attn_mask, keys, pos_ids) -> list:
         cfg, L = self.config, self.config.num_layers
         Embed, Sub = cfg.Embed, Axis("sub", 2)
-        blocks = cast(list, self.layers.blocks)
+        blocks = [self.layer(i) for i in range(L)]
         block = self.arch == "attnres_block"
         per_block = max(1, (2 * L) // cast(Any, cfg).attnres_blocks)  # sublayers per block
         values, rkeys = [x], [_rms(x, Embed)]  # full: every source; block: finished blocks (+ the running sum below)
@@ -351,3 +371,46 @@ class DepthArchTransformer(eqx.Module):
 
     def __call__(self, x: NamedArray, attn_mask, *, key=None, pos_ids: NamedArray | None = None) -> NamedArray:
         return self.norm(self.outputs(x, attn_mask, key=key, pos_ids=pos_ids)[self.config.Layers.name, -1])
+
+
+_NEW_PARAMS = ("hyper", "query")  # path fragments of the parameters the designs add (HyperParams, pseudo-queries)
+
+
+@OptimizerConfig.register_subclass("muonH_depth_arch")
+@dataclass(frozen=True)
+class DepthArchMuonHConfig(MuonHConfig):
+    """MuonH exactly as the baseline for the baseline's parameters; the parameters a design adds (paths containing
+    "hyper" or "query") get their own Adam with ``new_param_epsilon`` (see the module docstring for why)."""
+
+    new_param_epsilon: float = 1e-8
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+
+        def optimizer(learning_rate, adam_lr):
+            def clip():
+                return [optax.clip_by_global_norm(self.max_grad_norm)] if self.max_grad_norm else []
+
+            def adam(eps):
+                return optax.chain(*clip(), optax.scale_by_adam(self.beta1, self.beta2, eps), optax.scale(-adam_lr))
+
+            transformations = {
+                "muonh": optax.chain(*clip(), scale_with_muonh(self.momentum, self.nesterov, self.backend_steps, self.muon_epsilon, learning_rate, self.coefficient_type)),
+                "adamh": optax.chain(*clip(), scale_by_adamh(self.beta1, self.beta2, self.epsilon, learning_rate)),
+                "adam": adam(self.epsilon),
+                "adam_new": adam(self.new_param_epsilon),
+            }
+            return optax.multi_transform(transformations, self.create_mask)
+
+        return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
+
+    def create_mask(self, params):
+        base = super().create_mask(params)
+        paths = leaf_key_paths(params, is_leaf=lambda x: isinstance(x, hnn.Linear))
+
+        def relabel(label, path):
+            path_str = ".".join(path) if isinstance(path, (list, tuple)) else str(path)
+            return "adam_new" if label == "adam" and any(f in path_str for f in _NEW_PARAMS) else label
+
+        return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))

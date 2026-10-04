@@ -339,7 +339,13 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         attn_backend=AttentionBackend.JAX_FLASH,
         **model_extra,
     )
-    optimizer = MuonHConfig(
+    # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
+    # every other run, the baseline included, keeps MuonHConfig exactly.
+    if ARCH in ("hc", "mhc", "attnres", "attnres_block"):
+        from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig as _Opt
+    else:
+        _Opt = MuonHConfig
+    optimizer = _Opt(
         learning_rate=s["lr"],
         adam_lr=s["adam_lr"],
         beta1=0.9,
