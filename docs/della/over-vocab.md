@@ -146,6 +146,14 @@ indices costs OT 1.07 on seen data, 0.76 on unseen and 0.62 on c4_en. Literature
 parameters against 2.5B repeated tokens. Next: tables frozen at the pass-2 start (14983240) separates "tables keep
 fitting" (MEDA) from "backbone adapts to trained rows" (Zhang).
 
+### Real 2-gram output vocabulary (od_mode=hashed), 130m (2026-10-04, job 14952023)
+
+Paloma macro minus the seed-0 baseline 4.1798 at the final step: real 2-gram output vocabulary -0.0623, OT (product
+decomposition) -0.0414, OT + ss -0.0595 (pool sd 0.006, one seed each). So predicting (x_{t+1}, x_{t+2}) jointly over
+12.8M hashed classes with a sampled softmax beats the factorised second head by 0.021 at the same time per step
+(0.906 vs 0.890 s). Caveat: od_proj's gradient norm spiked to 2.3-2.9 at steps 600-1500 (peak LR) and was clipped; it
+settled after step 1600. 300m queued (14988894). Page: Figure 7.
+
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
