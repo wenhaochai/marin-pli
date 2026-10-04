@@ -32,6 +32,7 @@ export SMOKE_STEPS=${SMOKE_STEPS:-40}
 export VARIANT=pls RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
 
+failed=0
 # SMOKE_ARCHS="a b ...": repeat every config under each residual design (ARCH, depth_arch_qwen3); empty = the baseline.
 for arch in ${SMOKE_ARCHS:-baseline}; do
 for cfg in ${CONFIGS:-130m:1 300m:1}; do
@@ -47,6 +48,7 @@ for cfg in ${CONFIGS:-130m:1 300m:1}; do
   echo "SMOKE $cfg $run_id START $(date +%H:%M:%S)"
   timeout --signal=TERM ${SMOKE_TIMEOUT:-14m} $PY -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
   rc=$?
+  [ $rc -ne 0 ] && failed=$((failed + 1))
   err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160)
   $PY - "$run_id" "$cfg" "$rc" "$err" <<'PYEOF'
 import sys, wandb
@@ -66,3 +68,5 @@ PYEOF
 done
 done
 echo "SMOKE DONE $(date +%H:%M:%S)"
+# Fail the job when any config failed, so afterok dependants do not start (14949462 OOMed with exit 0).
+exit $failed
