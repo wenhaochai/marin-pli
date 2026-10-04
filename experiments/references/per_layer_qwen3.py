@@ -86,6 +86,10 @@ class PerLayerQwen3Config(Qwen3Config):
     # output, so the backbone and the main head train exactly as the baseline (online tuned-lens probes of an
     # undisturbed model).
     pls_detach_backbone: bool = False
+    # With separate heads: layer k's loss trains its head and layer k only. Its readout recomputes layer k on the
+    # stop-gradient output of layer k-1 (the same values), so no layer loss reaches earlier layers or the embedding;
+    # the final loss trains everything as usual. One extra forward of layers 0..L-2 per step.
+    pls_local_heads: bool = False
     # Weight schedule: pls_weight until step pls_off_start, linear to 0 at step pls_off_end (start == end: a switch), 0
     # after, with the readouts skipped. pls_off_end = 0: always on.
     pls_off_start: int = 0
@@ -115,6 +119,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError(f"depth_arch must be 'baseline' or one of {ARCHS}, got {self.depth_arch!r}")
         if self.pls_separate_heads and self.pls_weight <= 0:
             raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
+        if self.pls_local_heads and (not self.pls_separate_heads or self.pls_detach_backbone or self.depth_arch != "baseline" or self.pls_probe):
+            raise ValueError("pls_local_heads needs pls_separate_heads, without pls_detach_backbone or pls_probe, on the baseline transformer")
         if self.pls_detach_backbone and not self.pls_separate_heads:
             raise ValueError("pls_detach_backbone needs pls_separate_heads: with the shared head the loss would train the baseline's lm_head")
         if self.pls_separate_heads and self.pls_detach_head:
@@ -199,6 +205,20 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
 
         _, outs = tr.layers.scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
         return outs
+
+    def _local_outputs(self, example: LmExample, outs: NamedArray, *, key) -> NamedArray:
+        """pls_local_heads: layer k recomputed on the stop-gradient input it saw (the embedding for k = 0), for k < L-1,
+        with the same per-layer key as layer_outputs; the last entry stays the ordinary output (the final loss)."""
+        L, Block = self.config.num_layers, self.transformer.layers.Block.name
+        keys = maybe_rng_split(key, L) if key is not None else [None] * L
+        x0 = jax.lax.stop_gradient(self.embeddings.embed(example.tokens))
+        local = []
+        for k in range(L - 1):
+            layer = hax.tree_util.tree_map(lambda a, k=k: a[Block, k], self.transformer.layers.stacked)
+            inp = x0 if k == 0 else jax.lax.stop_gradient(outs[Block, k - 1])
+            local.append(layer(inp, mask=example.attn_mask, key=keys[k], pos_ids=None))
+        local.append(outs[Block, L - 1])
+        return hax.stack(self.transformer.layers.Block, local)
 
     def _separate(self, k: int) -> bool:
         return self.aux_lm_heads is not None and k < self.config.num_layers - 1
@@ -344,11 +364,12 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
         outs = self.layer_outputs(example.tokens, example.attn_mask, key=key)
         final = self._readout_ce(outs, L - 1, example, **kw)
+        aux_outs = self._local_outputs(example, outs, key=key) if cfg.pls_local_heads else outs
 
         def supervised(w):
             loss, per = final, []
             for k in range(L - 1):
-                ce = self._readout_ce(outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
+                ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
                 loss = loss + ce * w  # NamedArray on the left: w may be a traced scalar
                 per.append(jnp.asarray(_scalar(ce), jnp.float32))
             return loss, jnp.stack(per)
