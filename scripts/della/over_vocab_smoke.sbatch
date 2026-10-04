@@ -20,7 +20,7 @@ module load proxy/default  # wandb only
 export MARIN_PREFIX=/scratch/gpfs/GROUP/USER/marin_store_big
 export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}  # XLA_PYTHON_CLIENT_ALLOCATOR passes through
+export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}  # never inherited from the submitting shell (a stray .50 halved the GPUs, 2026-10-04)
 export SMOKE_STEPS=${SMOKE_STEPS:-60} RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
 fail=0
