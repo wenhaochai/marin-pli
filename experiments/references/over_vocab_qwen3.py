@@ -72,6 +72,10 @@ class OverVocabQwen3Config(Qwen3Config):
     # (x_{t+1}, x_{t+2}) hashed into od_m classes with an embedding of its own, scored jointly by a sampled softmax.
     od_mode: str = "product"
     od_m: int = 12_800_000
+    # od_mode hashed only: which real n-gram output vocabularies to train, each with its own head projection W_n, table and
+    # output projection, at weight od_weight: (2,) is the 2-gram head alone, (2, 3) adds a 3-gram head whose classes are
+    # (x_{t+1} + x_{t+2} V + x_{t+3} V^2) mod (od_m + 4), a modulus apart from the 2-gram one so their collisions differ.
+    od_orders: tuple[int, ...] = (2,)
     # > 0: the n-gram tables get no gradient from this train step on (a diagnostic: do the tables' updates on repeated
     # data cause the loss under repetition?). Their Adam moments then decay, so the rows stop within ~50 steps.
     oe_freeze_step: int = 0
@@ -84,8 +88,10 @@ class OverVocabQwen3Config(Qwen3Config):
             raise ValueError("focal_gamma must be >= 0 and is not combined with the sampled softmax (its p is a candidate-set probability)")
         if len(self.ss_candidates) != len(self.ss_stage_ends):
             raise ValueError("one stage end per candidate count")
-        if self.od_mode not in ("product", "hashed") or (self.od_mode == "hashed" and (self.od_weight <= 0 or self.focal_gamma > 0 or not 1 <= self.od_m < (1 << 24))):
-            raise ValueError("od_mode is product or hashed; hashed needs od_weight > 0, no focal loss and 1 <= od_m < 2^24")
+        if self.od_mode not in ("product", "hashed") or (self.od_mode == "hashed" and (self.od_weight <= 0 or self.focal_gamma > 0 or not 1 <= self.od_m < (1 << 24) - 4)):
+            raise ValueError("od_mode is product or hashed; hashed needs od_weight > 0, no focal loss and 1 <= od_m < 2^24 - 4")
+        if self.od_orders not in ((2,), (2, 3)) or (self.od_orders != (2,) and self.od_mode != "hashed"):
+            raise ValueError("od_orders is (2,) or (2, 3); the 3-gram output vocabulary exists only in od_mode hashed")
 
     @property
     def k(self) -> int:
@@ -150,6 +156,9 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
     od_lm_head: Optional[hnn.Linear]  # E_2: embed -> vocab, initialised like lm_head (AdamH group, like lm_head)
     od_table: Optional[NamedArray] = None  # od_mode hashed: [oe_rows, oe_dim], one row per hashed 2-gram (Adam, like the OE tables)
     od_out: Optional[hnn.Linear] = None  # od_mode hashed: oe_dim -> embed, the 2-gram output embedding's projection (MuonH)
+    od3_proj: Optional[hnn.Linear] = None  # od_orders (2, 3): W_3, od_in -> embed (MuonH)
+    od3_table: Optional[NamedArray] = None  # od_orders (2, 3): [oe_rows, oe_dim], one row per hashed 3-gram (Adam)
+    od3_out: Optional[hnn.Linear] = None  # od_orders (2, 3): oe_dim -> embed, the 3-gram output embedding's projection (MuonH)
 
     @classmethod
     def init(cls, Vocab, config: OverVocabQwen3Config, *, key):  # type: ignore[override]
@@ -164,6 +173,7 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             projs.append(hnn.Linear.init(In=Dim, Out=config.Embed, key=jrandom.fold_in(k_p, t), use_bias=False, out_first=True))
         od = config.od_weight > 0
         hashed = od and config.od_mode == "hashed"
+        three = hashed and 3 in config.od_orders
         k_h, k_o = jrandom.split(jrandom.fold_in(key, 0x0D), 2)
         return cls(
             base.transformer, base.embeddings, base.lm_head, tables, projs,
@@ -171,7 +181,19 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             hnn.Linear.init(In=config.Embed, Out=Vocab, key=k_e, use_bias=False, out_first=True) if od and not hashed else None,
             hnn.Embedding.init(hax.Axis(ROWS, -(-config.od_m // ROW_ALIGN) * ROW_ALIGN), Dim, key=k_h).weight if hashed else None,
             hnn.Linear.init(In=Dim, Out=config.Embed, key=k_o, use_bias=False, out_first=True) if hashed else None,
+            *OverVocabQwen3LMHeadModel._init_od3(config, Dim, three, jrandom.fold_in(key, 0x3D)),
         )
+
+    @staticmethod
+    def _init_od3(config, Dim, three, key):
+        """The 3-gram head's parameters (None unless od_orders has 3), from a key of their own so the rest of the model
+        initialises exactly as without them."""
+        if not three:
+            return None, None, None
+        k_w, k_h, k_o = jrandom.split(key, 3)
+        return (hnn.Linear.init(In=config.Embed.alias("od_in"), Out=config.Embed, key=k_w, use_bias=False, out_first=True),
+                hnn.Embedding.init(hax.Axis(ROWS, -(-(config.od_m + 4) // ROW_ALIGN) * ROW_ALIGN), Dim, key=k_h).weight,
+                hnn.Linear.init(In=Dim, Out=config.Embed, key=k_o, use_bias=False, out_first=True))
 
     def embed(self, input_ids: NamedArray, attn_mask, table_grad=None) -> NamedArray:
         """Over-encoded input embedding (the baseline's embed() with the hashed n-gram terms added). table_grad (a 0/1
@@ -261,6 +283,19 @@ class OverVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             loss = loss + cfg.od_weight * od
             metrics["od_loss"] = Metric.from_value(_scalar(od), ReductionType.MEAN)
             stats.update({"od_" + name: v for name, v in od_stats.items()})
+            if cfg.od_mode == "hashed" and 3 in cfg.od_orders:
+                # 3-gram head: target (x_{t+1}, x_{t+2}, x_{t+3}); drop positions whose x_{t+3} is past the window or in
+                # another document, and positions whose x_{t+3} carries no weight
+                h3 = cast(hnn.Linear, self.od3_proj)(h.rename({self.Embed.name: "od_in"}))  # W_3 h_t
+                ok3 = ok & (pos < Pos.size - 3)
+                if seg is not None:
+                    ok3 = ok3 & (hax.roll(seg, -3, Pos) == seg)
+                w3 = w * hax.roll(example.loss_weight, -2, Pos) * ok3.astype(example.loss_weight.dtype)
+                od3, _ = hashed_od_loss(Pos, self.Embed, h3, example.tokens, w3, self.od3_table, cast(hnn.Linear, self.od3_out),
+                                        m=cfg.od_m + 4, vocab_size=self.Vocab.size, key=jrandom.fold_in(k_s2, 3), dtype=loss_dtype,
+                                        reduction=reduction, reduction_axis=reduction_axis, order=3)
+                loss = loss + cfg.od_weight * od3
+                metrics["od3_loss"] = Metric.from_value(_scalar(od3), ReductionType.MEAN)
         metrics.update(stats)
         return loss, metrics
 
@@ -289,14 +324,15 @@ def hashed_candidates(labels: jax.Array, m: int, offset: jax.Array) -> tuple[jax
 
 
 def hashed_od_loss(Pos, Embed, h2: NamedArray, tokens: NamedArray, weight: NamedArray, table: NamedArray, out: hnn.Linear, *,
-                   m: int, vocab_size: int, key, dtype, reduction, reduction_axis):
-    """Over-decoding with a real 2-gram output vocabulary: the target of position t is the class
-    c_t = (x_{t+1} + x_{t+2} V) mod m, its output embedding u_c = out(table[c]), and its logit h2_t . u_c. The softmax runs
+                   m: int, vocab_size: int, key, dtype, reduction, reduction_axis, order: int = 2):
+    """Over-decoding with a real n-gram output vocabulary (n = order, 2 or 3): the target of position t is the class
+    c_t = (x_{t+1} + x_{t+2} V [+ x_{t+3} V^2]) mod m, its output embedding u_c = out(table[c]), and its logit h2_t . u_c. The softmax runs
     over a per-device candidate set (sampled softmax) with as many classes as the device has positions: every present c_t
     plus random others. Candidate ids are laid out in the shape of the positions, so the table lookup shards exactly like
     the input n-gram lookup; the cross-entropy then runs per device on its [positions, P] logits."""
     Pos = h2.resolve_axis(hax.axis_name(Pos))
-    labels = ngram_index([hax.roll(tokens, -1, Pos).array, hax.roll(tokens, -2, Pos).array], vocab_size, m)
+    # order n: the class of (x_{t+1}, ..., x_{t+n}) is (x_{t+1} + x_{t+2} V + ... + x_{t+n} V^{n-1}) mod m
+    labels = ngram_index([hax.roll(tokens, -j, Pos).array for j in range(1, order + 1)], vocab_size, m)
     labels = hax.named(labels.astype(jnp.int32), tokens.axes)
     offset = jrandom.randint(key, (), 0, m, dtype=jnp.int32)
     mesh = _get_mesh()
