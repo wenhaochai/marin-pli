@@ -43,6 +43,7 @@ from levanter.utils.tree_utils import inference_mode
 
 from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.della_muonh_qwen3_scaling import SEQ_LEN, SIZES
+import experiments.references.over_vocab_qwen3 as ovq
 from experiments.references.over_vocab_qwen3 import ROWS, OverVocabQwen3Config, _segment_ids, ngram_index, shifted_tokens
 
 CKPT = os.environ["CKPT"]
@@ -171,7 +172,15 @@ def main():
     with trainer.use_device_mesh(), hax.axis_mapping(trainer.compute_axis_mapping):
         tokenizer = data.the_tokenizer
         Vocab = round_axis_for_partitioning(Axis("vocab", len(tokenizer)), trainer.parameter_axis_mapping)
-        model = load_levanter_checkpoint(cfg, CKPT, Vocab=Vocab, axis_mapping=trainer.parameter_axis_mapping, key=jax.random.PRNGKey(0))
+        try:
+            model = load_levanter_checkpoint(cfg, CKPT, Vocab=Vocab, axis_mapping=trainer.parameter_axis_mapping, key=jax.random.PRNGKey(0))
+        except ValueError as e:
+            # OV checkpoints from before the tables' rows were padded to ROW_ALIGN hold exactly m rows per table
+            if not (ov and ROWS in str(e)):
+                raise
+            print(f"unpadded OV tables in this checkpoint ({e}); loading with ROW_ALIGN = 1", flush=True)
+            ovq.ROW_ALIGN = 1
+            model = load_levanter_checkpoint(cfg, CKPT, Vocab=Vocab, axis_mapping=trainer.parameter_axis_mapping, key=jax.random.PRNGKey(0))
         model = inference_mode(model, True)
         mp = trainer.mp
         results = {"ckpt": CKPT, "size": SIZE, "model": MODEL, "N": N, "S": S, "total": total, "slices": meta, "modes": {}}
