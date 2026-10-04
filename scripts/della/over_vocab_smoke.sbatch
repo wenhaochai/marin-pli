@@ -23,6 +23,7 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}  # XLA_PYTHON_CLIENT_ALLOCATOR passes through
 export SMOKE_STEPS=${SMOKE_STEPS:-60} RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
+fail=0
 for SIZE in ${SIZES:-130m 300m}; do
   for VARIANT in ${VARIANTS:-ov ovss}; do
     export SIZE VARIANT
@@ -36,6 +37,7 @@ for SIZE in ${SIZES:-130m 300m}; do
     kill $mpid
     peak=$(sort -n $log.mem | tail -1)
     err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160)
+    [ "$rc" -ne 0 ] || [ -n "$err" ] && fail=1   # any failed run fails the job, so afterok gates on it
     .venv/bin/python - "$run_id" "$rc" "$err" "$peak" <<'PY'
 import sys
 import numpy as np
@@ -53,4 +55,5 @@ PY
     rm -rf "$MARIN_PREFIX/speedrun/${run_id}"
   done
 done
-echo "SMOKE DONE $(date +%H:%M:%S)"
+echo "SMOKE DONE $(date +%H:%M:%S) fail=${fail:-0}"
+exit ${fail:-0}
