@@ -49,6 +49,7 @@ import haliax as hax
 import haliax.nn as hnn
 from haliax import NamedArray
 from haliax.jax_utils import maybe_rng_split
+from haliax.nn.scan import Stacked
 
 import levanter.tracker
 from levanter.callbacks import StepInfo
@@ -119,8 +120,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError(f"depth_arch must be 'baseline' or one of {ARCHS}, got {self.depth_arch!r}")
         if self.pls_separate_heads and self.pls_weight <= 0:
             raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
-        if self.pls_local_heads and (not self.pls_separate_heads or self.pls_detach_backbone or self.depth_arch != "baseline" or self.pls_probe):
-            raise ValueError("pls_local_heads needs pls_separate_heads, without pls_detach_backbone or pls_probe, on the baseline transformer")
+        if self.pls_local_heads and (not self.pls_separate_heads or self.pls_detach_backbone or self.depth_arch != "baseline" or self.pls_probe or self.pls_off_end):
+            raise ValueError("pls_local_heads needs pls_separate_heads, without pls_detach_backbone, pls_probe or a weight schedule, on the baseline transformer")
         if self.pls_detach_backbone and not self.pls_separate_heads:
             raise ValueError("pls_detach_backbone needs pls_separate_heads: with the shared head the loss would train the baseline's lm_head")
         if self.pls_separate_heads and self.pls_detach_head:
@@ -148,7 +149,11 @@ class PerLayerQwen3Config(Qwen3Config):
         if base is None:
             return None
         share = 1.0 if self.pls_weight > 0 and not self.pls_off_end else 1.0 / (3 * self.pls_monitor_stride)
-        return base + (self.num_layers - 1) * 2 * self.hidden_dim * vocab_size * share
+        extra = (self.num_layers - 1) * 2 * self.hidden_dim * vocab_size * share
+        if self.pls_local_heads:  # the recompute of layers 0..L-2: their share of the base backbone
+            backbone = base - 2 * self.hidden_dim * vocab_size
+            extra += backbone * (self.num_layers - 1) / self.num_layers
+        return base + extra
 
     def extra_eval_callbacks(self, EvalBatch, tagged_eval_sets, tokenizer, device_mesh, axis_mapping, max_examples_per_dataset, *, mp):
         """Evaluators the training loop runs next to the main eval (levanter.main.train_lm)."""
@@ -209,16 +214,20 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
     def _local_outputs(self, example: LmExample, outs: NamedArray, *, key) -> NamedArray:
         """pls_local_heads: layer k recomputed on the stop-gradient input it saw (the embedding for k = 0), for k < L-1,
         with the same per-layer key as layer_outputs; the last entry stays the ordinary output (the final loss)."""
-        L, Block = self.config.num_layers, self.transformer.layers.Block.name
-        keys = maybe_rng_split(key, L) if key is not None else [None] * L
+        L, Blk = self.config.num_layers, self.transformer.layers.Block
+        Sub = Blk.resize(L - 1)
         x0 = jax.lax.stop_gradient(self.embeddings.embed(example.tokens))
-        local = []
-        for k in range(L - 1):
-            layer = hax.tree_util.tree_map(lambda a, k=k: a[Block, k], self.transformer.layers.stacked)
-            inp = x0 if k == 0 else jax.lax.stop_gradient(outs[Block, k - 1])
-            local.append(layer(inp, mask=example.attn_mask, key=keys[k], pos_ids=None))
-        local.append(outs[Block, L - 1])
-        return hax.stack(self.transformer.layers.Block, local)
+        # inputs of layers 0..L-2: the embedding, then outputs 0..L-3; all stop-gradient
+        inputs = hax.concatenate(Blk.name, [x0.broadcast_axis(Blk.resize(1)), jax.lax.stop_gradient(outs[Blk.name, hax.dslice(0, L - 2)])]).rename({Blk.name: Sub.name}) if L > 2 else x0.broadcast_axis(Sub)
+        stacked = hax.tree_util.tree_map(lambda a: a[Blk.name, hax.dslice(0, L - 1)], self.transformer.layers.stacked)
+        sub = Stacked(stacked, Sub, self.transformer.layers.gradient_checkpointing)  # the scan's own remat policy
+        keys = maybe_rng_split(key, L)[: L - 1] if key is not None else None
+
+        def recompute(layer, carry, inp, *, key):
+            return carry, layer(inp, mask=example.attn_mask, key=key, pos_ids=None)
+
+        _, local = sub.scan_via(recompute)(jnp.zeros(()), inputs, key=keys)
+        return hax.concatenate(Blk.name, [local, outs[Blk.name, hax.dslice(L - 1, 1)]])
 
     def _separate(self, k: int) -> bool:
         return self.aux_lm_heads is not None and k < self.config.num_layers - 1
