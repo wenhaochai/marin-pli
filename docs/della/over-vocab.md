@@ -82,6 +82,18 @@ their training time is comparable only with each other: a perfectly scaling 8-GP
 ovss's 557.7. Not planned (user, 2026-10-01): extra seeds, 8-GPU baselines, the OE vs OD split. 1.2B is the last
 run; the blog follows it.
 
+## Review notes (2026-10-03)
+
+- 130m deltas name their baseline: the older numbers in this doc (OV -0.044, OV + ss -0.062, focal 2x2) use the `restore`
+  rerun (4.1820) or the 8-run pool mean (4.1865); the blog page uses the seed-0 run `della4xh100` (4.1798), against which
+  ss is +0.0004, OV -0.041 and OV + ss -0.060. All differences between these references are within the pool sd (0.006).
+- Per-GPU speed at 520m mixes microbatching: the 8-GPU OV runs take 1 microbatch of 32 sequences per device, the 4-GPU
+  baseline 2. At 1.2B both take 2 (8 x 16 vs 4 x 32).
+- "Repeats its data": 520m makes 1.04 passes, so it repeats 4% of its data; 1.2B is the only size that repeats most of it.
+- W&B refuses steps below a run's highest logged step, so after each resume the overlap is kept from the earlier segment:
+  the 1.2B OV eval at step 10k (-0.065) comes from segment 2 before its timeout; segment 3 retrained steps 9790-10171 from
+  the same checkpoint and data order without logging them.
+
 ## 1.2B: OV loses under repeated data (2026-10-03, both final)
 
 1.2B trains 22,888 steps x 256 x 4096 = 24.0B tokens on fineweb-edu-10B, which holds 10,000,000,738 tokens (cache
