@@ -10,10 +10,13 @@ and the output heads not counted): per Qwen3 layer 4h^2 (q, k, v, o; 8 heads of 
                ordinary models of 2..6 layers (-d2..-d5 and the 6-layer baseline)
   fig-heads    final training loss by layer under the four setups (separate heads, shared head, shared head stop-grad,
                probes = separate heads on a detached backbone) and the ordinary models
-Curves through final points: L = E + A (C/1e18)^-alpha fitted freely (probes: monotone PCHIP in log-log); the page does not
-label them as fits. Final value = mean of the last 50 logged steps (fig-heads), last point of the running mean (fig-traj).
+Curves through final points: L = E + A exp(-(C/1e18)/u0), fitted freely where it holds (largest residual <= FIT_TOL = 0.005
+nats), else a monotone PCHIP in log-log (the probes always). Of five forms tried on every fitted set, this one holds on all
+with three parameters (largest residual 0.0039 nats, on 300m separate heads); the power law E + A (C/1e18)^-alpha left
+0.021 there with an S-shaped residual pattern. The page does not label either curve as a fit. Final value = mean of the last 50 logged steps (fig-heads), last point of the running mean (fig-traj).
 Placeholders (axes, legend and a status word, no data until the runs finish):
-  fig-traj-300m                   fig-traj at 300m (12 layers, width 768, 6.0B tokens)
+  fig-traj-300m                   fig-traj at 300m (12 layers, width 768, 6.0B tokens), with the 300m baseline's final loss
+                                  as a horizontal line
   fig-d48                         48 layers of width 512 (the 130m layer): separate heads and probes, final loss by layer
   fig-d48-arch                    fig-d48 under the nine DepthBench architectures (arXiv 2609.32534) other than Sandwich-LN,
                                   which is the baseline's own design (hybrid norm) and so fig-d48 itself: separate heads against probes
@@ -37,10 +40,14 @@ BLUE7, RED, GREEN, PURPLE, GREY = "#1967D2", "#D93025", "#1E8E3E", "#9334E6", "#
 def ramp(t):
     a = np.array([0xAE, 0xCB, 0xFA]); b = np.array([0x17, 0x4E, 0xA6]); return "#%02X%02X%02X" % tuple((a + (b - a) * t).round().astype(int))
 SUP = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
-law = lambda c, E, A, a: E + A * (c / 1e18) ** (-a)
+law = lambda c, E, A, u0: E + A * np.exp(-(c / 1e18) / u0)   # saturating in compute; holds on every fitted set (see the docstring)
 def pts(x, y): return [[float(f"{a:.5g}"), round(float(b), 4)] for a, b in zip(x, y)]
+FIT_TOL = 0.005   # nats: draw the fitted law only where it holds; above this largest residual, a monotone PCHIP instead
 def fit(x, y):
-    p, _ = curve_fit(law, x, y, p0=(y.min() - 0.3, 0.3, 0.5), bounds=([0, 0, 0], [y.min(), 10, 5]), maxfev=20000)
+    p, _ = curve_fit(law, x, y, p0=(y.min() - 0.02, 3 * (y.max() - y.min()), float(np.mean(x)) / 1e18), bounds=([0, 0, 1e-6], [y.min(), 100, 1e3]), maxfev=200000)
+    if np.abs(y - law(x, *p)).max() > FIT_TOL:
+        print(f"fit does not hold (max residual {np.abs(y - law(x, *p)).max():.4f} > {FIT_TOL}): PCHIP through the points")
+        return pchip(x, y)
     g = np.geomspace(x.min(), x.max(), 60); return pts(g, law(g, *p))
 def pchip(x, y):
     f = PchipInterpolator(np.log(x), np.log(y)); g = np.geomspace(x.min(), x.max(), 60); return pts(g, np.exp(f(np.log(g))))
@@ -128,7 +135,11 @@ if SEP300.exists() and str(np.load(SEP300)["state"]) == "finished":
         marks.append(line(thin(xs, y), ramp((k - 1) / 10), 1.2, 0.45)); ends.append((xs[-1], y[-1]))
     ex3, ey3 = map(np.array, zip(*ends))
     marks += [line(fit(ex3, ey3), BLUE7), dots(pts(ex3, ey3), BLUE7)]
-    p300 = dict(**view(ex3, ey3), label={"en": "Separate heads", "zh": "独立头"}, marks=marks)
+    b300 = B["300m"]["loss"]   # the 300m baseline's final training loss, a horizontal reference (owner)
+    v3 = view(ex3, np.r_[ey3, b300])
+    marks.insert(0, line([[v3["xlim"][0], b300], [v3["xlim"][1], b300]], GREY))
+    p300 = dict(**v3, label={"en": "Separate heads", "zh": "独立头"}, marks=marks)
+    legend300 = legend300 + [[{"en": "Baseline", "zh": "基线"}, GREY, "line"]]
 else:
     p300 = dict(**empty_view([x / 4 for x in x300] + x300, 2.9, 4.4, RUNNING), label={"en": "Separate heads", "zh": "独立头"})
 figs["fig-traj-300m"] = dict(title={"en": "Per-layer training loss, separate heads, 300m", "zh": "独立头的逐层训练损失，300m"},
@@ -142,6 +153,14 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
                             legend=figs["fig-d48"]["legend"],
                             quantity=CE, xlabel=XL, height=150, cols=3,
                             panels=[dict(**empty_view(x48, 2.9, 5.0, PLANNED, ys=(3, 3.5, 4)), label={"en": a, "zh": a}) for a in ARCH])
+
+# Figure 7 (placeholder until the runs finish): the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (all layers, own layer)
+YELLOW9, CYAN9, PINK7 = "#E37400", "#007B83", "#C2185B"
+figs["fig-fix"] = dict(title={"en": "Final training loss by layer, gradient routing and layer-loss weight, 130m", "zh": "按梯度去向和逐层损失权重的各层最终训练损失，130m"},
+                       legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9, "line"],
+                               [{"en": "Each head trains its own layer", "zh": "每个头只训练自己那一层"}, CYAN9, "line"], [{"en": "Both", "zh": "两者都用"}, PINK7, "line"],
+                               [{"en": "Probes only", "zh": "只加探针"}, RED, "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
+                       quantity=CE, xlabel=XL, height=320, panels=[empty_view(list(x6), 2.9, 5.0, PLANNED)])
 
 OUT.write_text("/* Generated by build_figures_data.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_FIGS = " + json.dumps(figs, ensure_ascii=False, separators=(",", ":")) + ";\n")
 print("N per layer", NL, "| x of layer 2..6 at the end", [f"{v:.3g}" for v in x6], "| wrote", OUT, OUT.stat().st_size, "bytes")
