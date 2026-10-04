@@ -95,13 +95,24 @@ class PerLayerQwen3Config(Qwen3Config):
     # second half of the sequence minus CE on positions [pls_probe_early[0], pls_probe_early[1]).
     pls_probe: bool = False
     pls_probe_early: tuple[int, int] = (32, 64)
+    # Residual design of every layer: "baseline" is the baseline's own Stacked transformer (with hybrid_norm, the
+    # launcher's default, that is Sandwich-LN); any of depth_arch_qwen3.ARCHS (DepthBench, arXiv 2609.32534) runs
+    # depth_arch_qwen3.DepthArchTransformer, a checkpointed Python loop.
+    depth_arch: str = "baseline"
+    hc_streams: int = 4  # hc, mhc: residual streams
+    attnres_blocks: int = 8  # attnres_block: blocks
+    moda_chunk: int = 1024  # moda: query positions per attention chunk
 
     def __post_init__(self):
         super().__post_init__()
         if self.pls_weight < 0:
             raise ValueError(f"pls_weight must be >= 0, got {self.pls_weight}")
-        if not self.scan_layers:
+        if not self.scan_layers and self.depth_arch == "baseline":
             raise ValueError("pls reads every layer's output through Stacked.scan_via, so scan_layers must be True")
+        from experiments.references.depth_arch_qwen3 import ARCHS
+
+        if self.depth_arch != "baseline" and self.depth_arch not in ARCHS:
+            raise ValueError(f"depth_arch must be 'baseline' or one of {ARCHS}, got {self.depth_arch!r}")
         if self.pls_separate_heads and self.pls_weight <= 0:
             raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
         if self.pls_detach_backbone and not self.pls_separate_heads:
@@ -166,13 +177,20 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             keys = jrandom.split(jrandom.fold_in(key, 0x9A), config.num_layers - 1)
             aux_norms = tuple(config.mk_LayerNorm(config.Embed) for _ in range(config.num_layers - 1))
             aux_lm_heads = tuple(hnn.Linear.init(In=config.Embed, Out=Vocab, key=k, use_bias=False, out_first=True) for k in keys)
-        return cls(base.transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads)
+        transformer = base.transformer
+        if config.depth_arch != "baseline":
+            from experiments.references.depth_arch_qwen3 import DepthArchTransformer
+
+            transformer = DepthArchTransformer.init(config, config.depth_arch, key=jrandom.fold_in(key, 0xD7))
+        return cls(transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads)
 
     def layer_outputs(self, input_ids: NamedArray, attn_mask, *, key=None) -> NamedArray:
         """The residual stream after every layer, stacked on the layer axis; the last entry is the final pre-norm state
         (the activations the baseline normalises and decodes). Same embedding, mask and per-layer keys as ``activations``."""
         tr = self.transformer
         x = self.embeddings.embed(input_ids)
+        if cast(PerLayerQwen3Config, self.config).depth_arch != "baseline":
+            return hax.stack(self.config.Layers, cast(Any, tr).outputs(x, attn_mask, key=key))
         keys = maybe_rng_split(key, self.config.num_layers) if key is not None else None
 
         def step(layer, carry, **kw):
