@@ -136,7 +136,15 @@ max_train_batches 4768, passes 2 and 3 start at steps 4768 and 9536). Paloma mac
 Before the subset repeats the two settings match (OT minus baseline -0.04 to -0.05 at steps 1k-5k). After pass 2 starts
 the gap goes +0.014 (6k), +0.059 (7k), +0.076 (10k), and after pass 3 starts +0.151 (11k). So repetition, not size,
 causes the 1.2B loss: repeating the data costs the baseline 0.02 and OT 0.21. Figure `tmp_plots/ss130/rep300_gap.png`.
-Seen/unseen eval of the final checkpoints: 14975608 (pending).
+Variants (14952678, final): 10x smaller tables (1.28M rows) +0.012, no second head (OV_OD_W=0) +0.179, so the input
+tables cause it and their size sets it. Seen/unseen eval of the final checkpoints (14975608), loss minus the baseline's:
+seen 2-3 times -0.216, never seen (same distribution) +0.061, c4_en +0.132. The baseline's own seen-unseen gap is 0.047,
+OT's 0.32: OT fits the repeated subset far better and generalizes worse, textbook overfitting. Scrambling the n-gram
+indices costs OT 1.07 on seen data, 0.76 on unseen and 0.62 on c4_en. Literature: the recsys "one-epoch phenomenon"
+(Zhang et al. 2022, arXiv 2209.06053; MEDA 2305.19531; AdamAR 2511.06374) and MoE under repetition (Xue et al. 2023,
+2305.13230; Jha et al. 2026, 2609.11917): total, not active, parameters set repetition damage; 300m OT tables hold 6.5B
+parameters against 2.5B repeated tokens. Next: tables frozen at the pass-2 start (14983240) separates "tables keep
+fitting" (MEDA) from "backbone adapts to trained rows" (Zhang).
 
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
