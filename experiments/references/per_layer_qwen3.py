@@ -7,9 +7,9 @@ own final RMSNorm and lm_head and trained on the next-token cross-entropy.
 LLAL (Jin et al. 2026, "Mitigate Silent Expert Death in Ultra-Sparse MoE") adds lambda * CE(W_lm h^(l), y) at the first
 MoE layer of an MoE model for a short early window. This is the dense, every-layer, always-on version. With L layers
 
-    loss = CE(h_{L-1}) + pls_weight * sum_{k=0}^{L-2} CE(h_k),    CE(h) = CE(lm_head(final_norm(h)), next token),
+    loss = CE(h_{L-1}) + pls_weight * sum_{k=0}^{L-2} s_k CE(h_k),    CE(h) = CE(lm_head(final_norm(h)), next token),
 
-where h_k is the residual stream after layer k and the k = L-1 term is the ordinary NTP loss, so pls_weight = 1 gives
+where h_k is the residual stream after layer k, s_k = 1 (pls_weight_shape "uniform") or 2(k+1)/L ("depth"), and the k = L-1 term is the ordinary NTP loss, so pls_weight = 1 gives
 every layer's LM loss the final loss's weight. There are no new parameters: the readouts share the final norm and the
 lm_head, and their gradients flow into both (``pls_detach_head=True``: the intermediate losses train the trunk only, and
 the final norm and lm_head get the final layer's gradient alone). Data, batch, schedule and optimizer stay the baseline's,
@@ -145,6 +145,14 @@ class PerLayerQwen3Config(Qwen3Config):
     # after, with the readouts skipped. pls_off_end = 0: always on.
     pls_off_start: int = 0
     pls_off_end: int = 0
+    # Shape of the intermediate weights: "uniform" gives every layer pls_weight; "depth" gives layer k (0-based, k < L-1)
+    # pls_weight * 2(k+1)/L, rising with depth, with the same sum (L-1) * pls_weight (LayerSkip-style, Elhoushi et al. 2024).
+    pls_weight_shape: str = "uniform"
+    # Gradient surgery at every layer output (PCGrad, Yu et al. 2020, on the activation gradient, keeping only the
+    # auxiliary part that agrees with the rest, as Du et al. 2018): per token, the cotangent from that layer's readout
+    # loses its component opposite the cotangent arriving from the layers above (the final loss and the deeper
+    # readouts), when their dot product is negative. The heads' own gradients and the forward pass are unchanged.
+    pls_pcgrad: bool = False
     # Diagnostic: per-layer gradient alignment and in-context scores every train step (no effect on training; one extra
     # forward and L backward passes per step). In-context score = CE on every pls_monitor_stride-th position of the
     # second half of the sequence minus CE on positions [pls_probe_early[0], pls_probe_early[1]).
@@ -162,6 +170,12 @@ class PerLayerQwen3Config(Qwen3Config):
         super().__post_init__()
         if self.pls_weight < 0:
             raise ValueError(f"pls_weight must be >= 0, got {self.pls_weight}")
+        if self.pls_weight_shape not in ("uniform", "depth"):
+            raise ValueError(f"pls_weight_shape must be 'uniform' or 'depth', got {self.pls_weight_shape!r}")
+        if self.pls_weight_shape == "depth" and (self.pls_weight <= 0 or self.pls_probe):
+            raise ValueError("pls_weight_shape='depth' needs pls_weight > 0 and no pls_probe (the probe measures the unshaped sum)")
+        if self.pls_pcgrad and (self.pls_weight <= 0 or self.depth_arch != "baseline" or self.pls_local_heads or self.pls_detach_backbone or self.pls_heads_only or self.pls_probe or self.pls_off_end):
+            raise ValueError("pls_pcgrad needs pls_weight > 0 on the baseline transformer, without pls_local_heads, pls_detach_backbone, pls_heads_only, pls_probe or a weight schedule")
         if not self.scan_layers and self.depth_arch == "baseline":
             raise ValueError("pls reads every layer's output through Stacked.scan_via, so scan_layers must be True")
         from experiments.references.depth_arch_qwen3 import ARCHS
@@ -222,6 +236,28 @@ def _scalar(x):
     return x.array if isinstance(x, NamedArray) else x
 
 
+@partial(jax.custom_vjp, nondiff_argnums=(1,))
+def _junction(x: jax.Array, axis: int):
+    """Identity fork of a layer output into (trunk, readout); backward: the readout's cotangent, per token (all axes
+    but ``axis``), loses its component along the trunk's cotangent when the two point apart (pls_pcgrad)."""
+    return x, x
+
+
+def _junction_fwd(x, axis):
+    return (x, x), None
+
+
+def _junction_bwd(axis, _, cts):
+    trunk, read = cts
+    t, r = trunk.astype(jnp.float32), read.astype(jnp.float32)
+    dot = jnp.sum(r * t, axis=axis, keepdims=True)
+    r = r - jnp.where(dot < 0, dot / (jnp.sum(t * t, axis=axis, keepdims=True) + 1e-30), 0.0) * t
+    return ((t + r).astype(trunk.dtype),)
+
+
+_junction.defvjp(_junction_fwd, _junction_bwd)
+
+
 def _every(x: NamedArray, axis_name: str, stride: int, start: int) -> NamedArray:
     """x at positions start, start + stride, ... of axis axis_name (stride must divide the axis size minus start)."""
     if start:
@@ -250,6 +286,11 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             transformer = DepthArchTransformer.init(config, config.depth_arch, key=jrandom.fold_in(key, 0xD7))
         return cls(transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads)
 
+    def _shape(self, k: int) -> float:
+        """Layer k's share of pls_weight (pls_weight_shape)."""
+        L = self.config.num_layers
+        return 1.0 if cast(PerLayerQwen3Config, self.config).pls_weight_shape == "uniform" else 2.0 * (k + 1) / L
+
     def layer_outputs(self, input_ids: NamedArray, attn_mask, *, key=None) -> NamedArray:
         """The residual stream after every layer, stacked on the layer axis; the last entry is the final pre-norm state
         (the activations the baseline normalises and decodes). Same embedding, mask and per-layer keys as ``activations``."""
@@ -259,9 +300,14 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             return cast(Any, tr).outputs(x, attn_mask, key=key)
         keys = maybe_rng_split(key, self.config.num_layers) if key is not None else None
 
+        pcgrad = cast(PerLayerQwen3Config, self.config).pls_pcgrad
+
         def step(layer, carry, **kw):
             y = layer(carry, **kw)
-            return y, y
+            if not pcgrad:
+                return y, y
+            trunk, read = _junction(y.array, y.axes.index(self.config.Embed))
+            return hax.named(trunk, y.axes), hax.named(read, y.axes)
 
         _, outs = tr.layers.scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
         return outs
@@ -436,7 +482,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             loss, per = final, []
             for k in range(L - 1):
                 ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
-                loss = loss + ce * w  # NamedArray on the left: w may be a traced scalar
+                loss = loss + ce * (w * self._shape(k))  # NamedArray on the left: w may be a traced scalar
                 per.append(jnp.asarray(_scalar(ce), jnp.float32))
             return loss, jnp.stack(per)
 
