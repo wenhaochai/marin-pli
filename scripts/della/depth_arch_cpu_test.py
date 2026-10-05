@@ -15,7 +15,7 @@ process compiling all of them runs out of executable memory maps):
 6. hc and mhc with random parameters == independent einsum references (hc: dynamic HC; mhc: Liger Kernel 0.8.0's
    formula: one projection of the RMS-normalised concatenated streams, sigmoid / 2 sigmoid / Sinkhorn).
 7. The Liger Sinkhorn == a numpy transcription; columns sum to 1; finite on extreme logits, with a finite gradient.
-8. Optimizer labels: the new parameters -> adam_new; the baseline's keep their labels; moda's kv_proj -> muonh.
+8. Optimizer labels: the new parameters -> adam_new; the baseline's keep their labels; moda's kv_k and kv_v -> muonh.
 9. Production regime: 48 layers, bf16, the launcher's 130m optimizer, 8 steps finite (hc, mhc, attnres,
    attnres_block, moda; the two-level scans at 6 x 8).
 10. attnres and moda: the two-level scan == the Python loop, every layer's output and every gradient (random queries,
@@ -223,7 +223,7 @@ if PART == "main":
             assert np.isfinite(float(loss)) and np.isfinite(ev), arch
             assert all(bool(jnp.all(jnp.isfinite(x))) for x in jax.tree.leaves(eqx.filter(g, eqx.is_array))), arch
             b1 = per_layer(g.transformer.layers)[1]
-            new = [b1.post_1, b1.post_2, b1.hyper, b1.query, b1.kv_proj, g.transformer.final_query]
+            new = [b1.post_1, b1.post_2, b1.hyper, b1.query, b1.kv_k, b1.kv_v, g.transformer.final_query]
             new = [x for x in new if x is not None]
             for x in new:
                 assert sum(float(jnp.abs(a).sum()) for a in jax.tree.leaves(eqx.filter(x, eqx.is_array))) > 0, (arch, x)
@@ -312,9 +312,9 @@ if PART == "main":
             assert "adam_new" not in jax.tree.leaves((lb.self_attn, lb.mlp, lb.ln_1, lb.ln_2, lab.embeddings, lab.lm_head))
             assert st.self_attn.q_proj.weight.axes[0].name == "layer" and st.self_attn.o_proj.weight.axes[0].name == "layer"
             print(f"8. {arch}: new parameters -> adam_new (eps 1e-8); baseline parameters keep muonh / adamh / adam; layer weights stacked on the layer axis")
-        lab_moda = MuonHConfig().create_mask(model("moda")).transformer.layers.stacked.kv_proj
-        assert jax.tree.leaves(lab_moda) == ["muonh"], jax.tree.leaves(lab_moda)
-        print("8. moda: kv_proj -> muonh")
+        lab_moda = MuonHConfig().create_mask(model("moda")).transformer.layers.stacked
+        assert jax.tree.leaves((lab_moda.kv_k, lab_moda.kv_v)) == ["muonh", "muonh"], jax.tree.leaves((lab_moda.kv_k, lab_moda.kv_v))
+        print("8. moda: kv_k, kv_v -> muonh, one matrix each")
 
         # 10. two-level scan == Python loop (attnres, moda), outputs and gradients; moda chunk invariance
         Embed = Axis("embed", 48)
@@ -339,7 +339,7 @@ if PART == "main":
                 g_scan = eqx.filter_jit(eqx.filter_grad(scan_f))(tr)
                 g_loop = eqx.filter_jit(eqx.filter_grad(loop_f))(tr)
                 worst = rel_close(eqx.filter(g_scan, eqx.is_inexact_array), eqx.filter(g_loop, eqx.is_inexact_array), f"{arch} L={n_layers} scan vs loop grads", 1e-4)
-                learn = (g_scan.layers.stacked.query, g_scan.layers.stacked.key_gain, g_scan.final_query, g_scan.final_key_gain) if arch == "attnres" else (g_scan.layers.stacked.kv_proj.weight,)
+                learn = (g_scan.layers.stacked.query, g_scan.layers.stacked.key_gain, g_scan.final_query, g_scan.final_key_gain) if arch == "attnres" else (g_scan.layers.stacked.kv_k.weight, g_scan.layers.stacked.kv_v.weight)
                 assert all(float(jnp.abs(x.array).max()) > 0 for x in learn), arch
                 print(f"10. {arch}, {n_layers} layers: two-level scan == Python loop (outputs to relative L2 {wo:.1e}, every gradient to {worst:.1e})")
         tr4 = DepthArchTransformer.init(cfg("moda"), "moda", key=jrandom.PRNGKey(11))
@@ -415,12 +415,11 @@ if PART == "main":
             on = hax.named(jnp.asarray(o, jnp.float32), QA).flatten_axes(("kv_head", "q_heads_per_group"), "heads")
             h = h + att.o_proj(on)
             xf = lay.ln_2(h)
-            kv = lay.kv_proj(xf)
-            kf, vf = att.k_norm(kv["kv2", 0]), kv["kv2", 1]
+            kf, vf = att.k_norm(lay.kv_k(xf)), lay.kv_v(xf)
             h = h + lay.mlp(xf, key=None)
             depth += [(np.asarray(k_pre.rearrange(KA).array, np.float64), va), (np.asarray(kf.rearrange(KA).array, np.float64), np.asarray(vf.rearrange(KA).array, np.float64))]
             leaves_close(got["layer", i].array, h.array, f"moda layer {i}", rtol=2e-4, atol=2e-5)
-        print("11. moda == reference (GQA 4/2; sequence and depth in one softmax; per layer its attention's (k before RoPE, v) and its MLP input's kv_proj (k_norm(k), v))")
+        print("11. moda == reference (GQA 4/2; sequence and depth in one softmax; per layer its attention's (k before RoPE, v) and its MLP input's kv_k, kv_v (k_norm(k), v))")
 
         # attnres, attnres_block: DepthBench's AttnResTransformerBlock.forward, transcribed, with key gains
         def mix_ref(q, g, srcs):

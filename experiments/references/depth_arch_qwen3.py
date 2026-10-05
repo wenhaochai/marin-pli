@@ -5,7 +5,8 @@
 for the per-layer contribution runs (blog: wenhaochai.com/blogs/per-layer-contribution.html, Figure 7).
 
 ``depth_arch`` picks how the two sublayers of every layer (attention, then MLP; F below, each with its own weights)
-meet the residual stream. l is the 1-based layer index, L the number of layers, RN an RMSNorm with a learned scale:
+meet the residual stream. l is the layer index (1-based in lns's factor, 0-based in the sublayer index k = 2l + j of hc
+and mhc, j = 0 attention, 1 MLP), L the number of layers, RN an RMSNorm with a learned scale:
 
     preln          h <- h + F(RN(h))
     sandwich       h <- h + RN_out(F(RN_in(h)))                   the baseline's design (hybrid_norm); this loop computes
@@ -18,13 +19,13 @@ meet the residual stream. l is the 1-based layer index, L the number of layers, 
                                                                   drops the gain (RN_post(h + F(RN_pre(h))))
     hc             m = 4 residual streams H; per sublayer x = sum_s r_s H_s, H <- H A + w (x) F(RN(x)), with read r,
                    mixing A and write w each a static part plus a dynamic part s * tanh(RMS(H_s) W) per stream
-                   (Zhu et al. 2024, dynamic HC; static init r = e_{(2l+j) mod m}, A = I, w = 1, W = 0, s = 0.01);
+                   (Zhu et al. 2024, dynamic HC; static init r = e_{k mod m}, A = I, w = 1, W = 0, s = 0.01);
                    embedding copied to every stream
     mhc            per sublayer one projection phi of the RMS-normalised concatenated streams (m x d -> m + m + m^2)
                    gives read, write and residual logits, each gain * projection + bias (three gains, init 0.01; phi
                    init 0); r = sigmoid, w = 2 sigmoid, A = Sinkhorn (Liger Kernel 0.8.0: a softmax over the inputs,
                    then column and row normalisation, 20 rounds ending on columns, eps 1e-6). Bias init: read +8 on
-                   stream (2l+j) mod m and -8 elsewhere, write 0, residual 0 on the diagonal and -8 off it. Routing
+                   stream k mod m and -8 elsewhere, write 0, residual 0 on the diagonal and -8 off it. Routing
                    and mixing in float32
     hc, mhc        the attention output and MLP down projections are scaled by 1/sqrt(m) at init
     attnres        every sublayer's input is a softmax mix of the embedding and all earlier sublayer outputs,
@@ -34,7 +35,8 @@ meet the residual stream. l is the 1-based layer index, L the number of layers, 
                    running sum
     moda           preln, with one softmax over the causal sequence keys and values and the same token's depth keys and
                    values: two per earlier layer, its attention's (key after the QK-norm, before RoPE) and its MLP
-                   input's from an extra projection kv_proj (key through the attention's QK-norm). The query is rotated.
+                   input's from extra key and value projections kv_k, kv_v (key through the attention's QK-norm). The
+                   query is rotated.
                    The last layer's MLP entry is never read.
 
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
@@ -49,7 +51,9 @@ Optimizer (DepthArchMuonHConfig): the baseline's parameters keep the baseline's 
 parameters (HC / mHC weights, attnres pseudo-queries and key gains) get their own Adam with eps 1e-8. The 130m recipe's
 Adam eps is 1e-20, and at the symmetric hc / mhc init the true gradient of some of these weights is 0, leaving float
 rounding noise whose square underflows: Adam then divides noise by 1e-20 and moves a weight by ~80 x the learning rate in
-one step. moda's kv_proj is a Linear and trains with MuonH like the other projections.
+one step. moda's kv_k and kv_v are Linears and train with MuonH like the attention's k_proj and v_proj, one matrix each.
+Recipe, not design: under MuonH (no weight decay anywhere; the new parameters at the recipe's Adam learning rate, no
+warmup at 130m), where DepthBench trains every design with AdamW (weight decay 0.1, warmup 10%).
 """
 
 import dataclasses
@@ -175,7 +179,8 @@ class DepthArchLayer(eqx.Module):
     hyper: Optional[tuple] = None  # hc: (HyperParams, HyperParams); mhc: (MhcParams, MhcParams), one per sublayer
     query: Optional[NamedArray] = None  # attnres*: (sub=2, embed) pseudo-queries of the two sublayers
     key_gain: Optional[NamedArray] = None  # attnres*: (sub=2, embed) key gains of the two sublayers
-    kv_proj: Optional[hnn.Linear] = None  # moda: the MLP input's depth key and value, Embed -> (kv2, kv_head, head_size)
+    kv_k: Optional[hnn.Linear] = None  # moda: the MLP input's depth key, Embed -> (kv_head, head_size)
+    kv_v: Optional[hnn.Linear] = None  # moda: the MLP input's depth value
 
     @staticmethod
     def init(config: LlamaConfig, arch: str, *, key) -> "DepthArchLayer":
@@ -206,12 +211,14 @@ class DepthArchLayer(eqx.Module):
         attnres = arch.startswith("attnres")
         query = hax.zeros((Axis("sub", 2), config.Embed)) if attnres else None
         key_gain = hax.ones((Axis("sub", 2), config.Embed)) if attnres else None
-        kv_proj = None
+        kv_k = kv_v = None
         if arch == "moda":
             acfg = config.attention_config()
-            kv_proj = hnn.Linear.init(In=config.Embed, Out=(Axis("kv2", 2), acfg.KVHeads, acfg.HeadSize), key=jrandom.fold_in(key, 1), use_bias=config.use_bias, out_first=True)
+            kk, kv = jrandom.split(jrandom.fold_in(key, 1), 2)
+            kv_k = hnn.Linear.init(In=config.Embed, Out=(acfg.KVHeads, acfg.HeadSize), key=kk, use_bias=config.use_bias, out_first=True)
+            kv_v = hnn.Linear.init(In=config.Embed, Out=(acfg.KVHeads, acfg.HeadSize), key=kv, use_bias=config.use_bias, out_first=True)
         return DepthArchLayer(config=config, arch=arch, self_attn=attn, mlp=mlp, ln_1=config.mk_LayerNorm(config.Embed), ln_2=config.mk_LayerNorm(config.Embed),
-                              post_1=post[0], post_2=post[1], hyper=hyper, query=query, key_gain=key_gain, kv_proj=kv_proj)
+                              post_1=post[0], post_2=post[1], hyper=hyper, query=query, key_gain=key_gain, kv_k=kv_k, kv_v=kv_v)
 
     # ---- the two branches ------------------------------------------------------------------------------------------
     def branch(self, j: int, x: NamedArray, mask, *, key, pos_ids, layer=None) -> NamedArray:
@@ -306,9 +313,8 @@ class DepthArchLayer(eqx.Module):
 
     # ---- moda ------------------------------------------------------------------------------------------------------
     def ffn_depth_kv(self, x: NamedArray):
-        """The MLP input's depth key and value (x = ln_2(h)): kv_proj, the key through the attention's QK-norm, no RoPE."""
-        kv = cast(hnn.Linear, self.kv_proj)(x)
-        k, v = kv["kv2", 0], kv["kv2", 1]
+        """The MLP input's depth key and value (x = ln_2(h)): kv_k and kv_v, the key through the attention's QK-norm, no RoPE."""
+        k, v = cast(hnn.Linear, self.kv_k)(x), cast(hnn.Linear, self.kv_v)(x)
         if self.self_attn.config.qk_norm is not None:
             k = cast(Any, self.self_attn.k_norm)(k)
         return k, v
