@@ -2,12 +2,14 @@
 hand-edit). One row per training run behind the page: the setup in words, size, layers, tokens, GPUs, hours, state and
 the figure that uses it, the W&B link once the run exists, the public code commit it ran (W&B's commit mapped through the scrub's commit map). Finished runs: state and wall time (_runtime) from W&B reself/marin-della;
 queued or running jobs: state and elapsed time from sacct (job ids below; run on a node with the Slurm client, it fails rather than guess); runs not yet submitted: "Planned".
-Smoke tests and failed jobs get no rows (template rule, 2026-10-05). The table ends with two lines counted from sacct over
-every GPU job the project started (working directory under project/marin-pls, the pls branch and its worktrees), H100-hours
-= GPUs x elapsed: "smoke tests and failed jobs" (job names with "smoke" or "diag"; FAILED, CANCELLED, OUT_OF_MEMORY,
-NODE_FAIL; a TIMEOUT no later job of the same name continued; the completed runs in RERUN, which a corrected run replaces)
-and "main jobs" (the rest: completed or running, and TIMEOUT segments of resumed chains). The two add up to everything.
-A row whose job failed or is in RERUN shows as planned until its replacement is submitted.
+Smoke tests and jobs that did not finish get no rows. The table ends with two lines counted from sacct over every GPU job
+the project started (working directory under project/marin-pls, the pls branch and its worktrees), smoke tests included,
+H100-hours = GPUs x elapsed (template rule, owner, 2026-10-05): "jobs that finished" did the work they were launched for
+(COMPLETED; a TIMEOUT segment of a resume chain that a later job of the same name continued from its checkpoint; a job in
+STOPPED_AT_TARGET, cancelled by hand after it reached its target), and "jobs that did not finish" are the rest (FAILED,
+OUT_OF_MEMORY, NODE_FAIL, killed, a TIMEOUT nobody continued, cancelled before the target). A job still running is in
+neither line until it ends; once every job has ended the two add up to everything the page cost.
+A row whose job did not finish, or whose run is in RERUN, shows as planned until its replacement is submitted.
 Run as: build_record.py OUT (on a vis node, which has sacct)."""
 import json, subprocess, sys
 from pathlib import Path
@@ -50,6 +52,8 @@ RUNS = [
 # Completed jobs whose run is replaced by a corrected one: the 48-layer Sandwich-LN pair stalled near 6.3 nats on the 130m
 # learning rate (2026-10-05; rerun after the depth_lr_diag sweep).
 RERUN = {14969859, 14969860}
+# Jobs cancelled by hand after they reached their target (count as finished); none so far.
+STOPPED_AT_TARGET: set[int] = set()
 STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), "crashed": S("Failed", "失败"), "failed": S("Failed", "失败"),
          "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中")}
 api = wandb.Api(timeout=300)
@@ -98,7 +102,7 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
         state, hours = r.state, float(r.summary.get("_runtime", 0)) / 3600
     elif kind == "slurm":
         state, hours = sacct(ref)
-        if state not in ("COMPLETED", "RUNNING", "PENDING") or ref in RERUN:   # counted under failed jobs; the row waits for its replacement
+        if state not in ("COMPLETED", "RUNNING", "PENDING") or ref in RERUN:   # did not finish, or replaced: the row waits for its replacement
             state, hours, run = "planned", 0.0, None
     else:
         state, hours = "planned", 0.0
@@ -125,22 +129,26 @@ def project_jobs():
     return jobs
 
 
-def bucket(jobs):
-    """'smoke' (smoke tests and failed jobs) or 'main' per job, by the rules in the module docstring."""
+def outcome(jobs):
+    """'finished', 'unfinished' or 'running' per job, by the rules in the module docstring."""
     out = []
     for jid, name, state, gpus, h in jobs:
         base = int(jid.split("_")[0])
-        later_ok = any(n == name and int(j.split("_")[0]) > base and s in ("COMPLETED", "RUNNING") for j, n, s, _, _ in jobs)
-        failed = ("smoke" in name or "diag" in name or base in RERUN or state in ("FAILED", "CANCELLED", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL", "DEADLINE", "PREEMPTED")
-                  or (state == "TIMEOUT" and not later_ok) or state not in ("COMPLETED", "RUNNING", "TIMEOUT"))
-        out.append(("smoke" if failed else "main", jid, name, state, gpus, h))
+        continued = any(n == name and int(j.split("_")[0]) > base and s in ("COMPLETED", "RUNNING", "TIMEOUT") for j, n, s, _, _ in jobs)
+        if state in ("RUNNING", "REQUEUED", "SUSPENDED"):
+            o = "running"
+        elif state == "COMPLETED" or (state == "TIMEOUT" and continued) or base in STOPPED_AT_TARGET:
+            o = "finished"
+        else:
+            o = "unfinished"
+        out.append((o, jid, name, state, gpus, h))
     return out
 
 
-B = bucket(project_jobs())
-tot = {k: dict(h100_hours=round(sum(g * h for b, _, _, _, g, h in B if b == k)), jobs=sum(b == k for b, *_ in B)) for k in ("smoke", "main")}
+B = outcome(project_jobs())
+tot = {k: dict(h100_hours=round(sum(g * h for b, _, _, _, g, h in B if b == k)), jobs=sum(b == k for b, *_ in B)) for k in ("finished", "unfinished")}
 for b, jid, name, state, g, h in sorted(B, key=lambda x: (x[0], x[1])):
-    print(f"  {b:5s} {jid:12s} {name:28s} {state:14s} {g} x {h:6.2f} h = {g * h:7.1f} H100-h")
+    print(f"  {b:10s} {jid:12s} {name:28s} {state:14s} {g} x {h:6.2f} h = {g * h:7.1f} H100-h")
 rec = dict(rows=rows, total=tot)
 OUT.write_text("/* Generated by build_record.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_RECORD = " + json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + ";\n")
-print("rows", len(rows), "| smoke tests and failed jobs", tot["smoke"], "| main jobs", tot["main"], "->", OUT)
+print("rows", len(rows), "| jobs that finished", tot["finished"], "| jobs that did not finish", tot["unfinished"], "| running", sum(b == "running" for b, *_ in B), "->", OUT)
