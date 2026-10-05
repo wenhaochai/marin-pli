@@ -2,14 +2,14 @@
 hand-edit). One row per training run behind the page: the setup in words, size, layers, tokens, GPUs, hours, state and
 the figure that uses it, the W&B link once the run exists, the public code commit it ran (W&B's commit mapped through the scrub's commit map). Finished runs: state and wall time (_runtime) from W&B reself/marin-della;
 queued or running jobs: state and elapsed time from sacct (job ids below; run on a node with the Slurm client, it fails rather than guess); runs not yet submitted: "Planned".
-Smoke tests and jobs that did not finish get no rows. The table ends with two lines counted from sacct over every GPU job
-the project started (working directory under project/marin-pls, the pls branch and its worktrees), smoke tests included,
-H100-hours = GPUs x elapsed (template rule, owner, 2026-10-05): "jobs that finished" did the work they were launched for
-(COMPLETED; a TIMEOUT segment of a resume chain that a later job of the same name continued from its checkpoint; a job in
-STOPPED_AT_TARGET, cancelled by hand after it reached its target), and "jobs that did not finish" are the rest (FAILED,
-OUT_OF_MEMORY, NODE_FAIL, killed, a TIMEOUT nobody continued, cancelled before the target). A job still running is in
-neither line until it ends; once every job has ended the two add up to everything the page cost.
-A row whose job did not finish, or whose run is in RERUN, shows as planned until its replacement is submitted.
+Smoke tests and jobs outside the rows get no rows. The table ends with two lines counted from sacct over every GPU job the
+project started (working directory under project/marin-pls, the pls branch and its worktrees), H100-hours = GPUs x
+elapsed (template rule, owner, 2026-10-05): "main runs" are the jobs that belong to a run with a row, every resume segment
+included (a slurm row's own job, plus the jobs listed in JOBS for runs launched before the record kept job ids; each
+listed job is checked against its log's W&B run id when the log still exists), and "other compute" is everything else:
+smoke tests, debugging, superseded versions (RERUN), abandoned runs, probes not on the page. The two add up to everything
+the project ran. A row whose job did not finish, or whose run is in RERUN, shows as planned until its replacement is
+submitted; its jobs are other compute.
 Run as: build_record.py OUT (on a vis node, which has sacct)."""
 import json, subprocess, sys
 from pathlib import Path
@@ -52,8 +52,13 @@ RUNS = [
 # Completed jobs whose run is replaced by a corrected one: the 48-layer Sandwich-LN pair stalled near 6.3 nats on the 130m
 # learning rate (2026-10-05; rerun after the depth_lr_diag sweep).
 RERUN = {14969859, 14969860}
-# Jobs cancelled by hand after they reached their target (count as finished); none so far.
-STOPPED_AT_TARGET: set[int] = set()
+# Slurm jobs of the runs whose rows read W&B (launched before the record kept job ids), from sacct's submit lines:
+# job name and --export knobs (2026-10-05). Resume segments included (300m shared head: 14732139 timed out, 14732140
+# continued it). The 130m and 300m baselines ran in project/marin for another page and are reused here, so no job of
+# this project belongs to them.
+JOBS = {"130m-della4xh100-pls1": [14732138], "130m-della4xh100-pls1-dh": [14769012], "130m-della4xh100-pls1-sep": [14769391],
+        "130m-della4xh100-pls1-sep-bbfrozen": [14888104], **{f"130m-della4xh100-d{d}": [f"14886384_{d}"] for d in range(1, 6)},
+        "300m-della4xh100-pls1": [14732139, 14732140], "300m-della4xh100-pls1-sep": [14940604], "300m-della4xh100-pls1-sep-bbfrozen": [14888822]}
 STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), "crashed": S("Failed", "失败"), "failed": S("Failed", "失败"),
          "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中")}
 api = wandb.Api(timeout=300)
@@ -129,26 +134,39 @@ def project_jobs():
     return jobs
 
 
-def outcome(jobs):
-    """'finished', 'unfinished' or 'running' per job, by the rules in the module docstring."""
-    out = []
-    for jid, name, state, gpus, h in jobs:
-        base = int(jid.split("_")[0])
-        continued = any(n == name and int(j.split("_")[0]) > base and s in ("COMPLETED", "RUNNING", "TIMEOUT") for j, n, s, _, _ in jobs)
-        if state in ("RUNNING", "REQUEUED", "SUSPENDED"):
-            o = "running"
-        elif state == "COMPLETED" or (state == "TIMEOUT" and continued) or base in STOPPED_AT_TARGET:
-            o = "finished"
-        else:
-            o = "unfinished"
-        out.append((o, jid, name, state, gpus, h))
-    return out
+import re
+LOGS = Path("/scratch/gpfs/GROUP/USER/project/marin-pls/logs/slurm")
 
 
-B = outcome(project_jobs())
-tot = {k: dict(h100_hours=round(sum(g * h for b, _, _, _, g, h in B if b == k)), jobs=sum(b == k for b, *_ in B)) for k in ("finished", "unfinished")}
+def log_runs(jid: str) -> set:
+    """W&B run ids named in a job's Slurm log (empty when the log is gone)."""
+    a, _, t = jid.partition("_")
+    files = list(LOGS.glob(f"*_{a}_{t}.out")) if t else list(LOGS.glob(f"*_{a}.out"))
+    return {m for f in files for m in re.findall(r"wandb\.ai/reself/marin-della/runs/([A-Za-z0-9_.-]+)", f.read_text(errors="replace"))}
+
+
+MAIN = {}   # job id -> run id of its row
+for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
+    if row["state"]["en"] == "Planned":
+        continue
+    rid = src[1] if src[0] == "wandb" else src[2]
+    for j in ([src[1]] if src[0] == "slurm" else []) + JOBS.get(rid, []):
+        MAIN[str(j)] = rid
+for j, rid in MAIN.items():
+    seen = log_runs(j)
+    if seen and P.split("/")[-1] + rid not in seen:
+        raise RuntimeError(f"job {j} is listed for run {rid}, but its log names {sorted(seen)}")
+missing = [rid for (_, _, _, _, _, src, _), row in zip(RUNS, rows) if row["state"]["en"] == "Done" and src[0] == "wandb" and src[1] not in JOBS and src[1] not in ("130m-della4xh100", "300m-della4xh100")]
+if missing:
+    raise RuntimeError(f"finished rows without their Slurm jobs in JOBS: {missing}")
+jobs = project_jobs()
+absent = sorted(set(MAIN) - {j for j, *_ in jobs})
+if [j for j in absent if sacct(j.split("_")[0])[0] != "PENDING"]:
+    raise RuntimeError(f"jobs listed for rows are not among the project's GPU jobs: {absent}")
+B = [("main" if jid in MAIN else "other", jid, name, state, g, h) for jid, name, state, g, h in jobs]
+tot = {k: dict(h100_hours=round(sum(g * h for b, _, _, _, g, h in B if b == k)), jobs=sum(b == k for b, *_ in B)) for k in ("main", "other")}
 for b, jid, name, state, g, h in sorted(B, key=lambda x: (x[0], x[1])):
     print(f"  {b:10s} {jid:12s} {name:28s} {state:14s} {g} x {h:6.2f} h = {g * h:7.1f} H100-h")
 rec = dict(rows=rows, total=tot)
 OUT.write_text("/* Generated by build_record.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_RECORD = " + json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + ";\n")
-print("rows", len(rows), "| jobs that finished", tot["finished"], "| jobs that did not finish", tot["unfinished"], "| running", sum(b == "running" for b, *_ in B), "->", OUT)
+print("rows", len(rows), "| main runs", tot["main"], "| other compute", tot["other"], "->", OUT)
