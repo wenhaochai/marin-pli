@@ -142,7 +142,10 @@ Variants (14952678, final): 10x smaller tables (1.28M rows) +0.012, no second he
 tables cause it and their size sets it. Seen/unseen eval of the final checkpoints (14975608), loss minus the baseline's:
 seen twice -0.216, three times -0.202, never seen (same distribution) +0.061, c4_en +0.132. The baseline's own
 seen-unseen gap is 0.05-0.06, OT's 0.32: OT fits the repeated subset far better and generalizes worse, textbook overfitting. Scrambling the n-gram
-indices costs OT 1.06-1.08 on seen data, 0.76 on unseen and 0.62 on c4_en. Literature: the recsys "one-epoch phenomenon"
+indices costs OT 1.06-1.08 on seen data, 0.76 on unseen and 0.62 on c4_en. The same eval on the two variants
+(14975609_3, 14997698_4; columns seen 3x / 2x / never / c4_en, minus the baseline): no second head -0.211 / -0.230 /
++0.074 / +0.150, the same overfitting as OT with both heads, so the second head plays no part; 1.28M-row tables -0.055 /
+-0.060 / -0.013 / +0.004, a seen-unseen gap of 0.04-0.05 beyond the baseline's against 0.26-0.29 for 12.8M rows. Literature: the recsys "one-epoch phenomenon"
 (Zhang et al. 2022, arXiv 2209.06053; MEDA 2305.19531; AdamAR 2511.06374) and MoE under repetition (Xue et al. 2023,
 2305.13230; Jha et al. 2026, 2609.11917): total, not active, parameters set repetition damage; 300m OT tables hold 6.5B
 parameters against 2.5B repeated tokens. Next: tables frozen at the pass-2 start (14983240) separates "tables keep
