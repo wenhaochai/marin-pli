@@ -16,7 +16,11 @@
 # and are read from the launcher's own dry run rather than rebuilt here. A SUMMARY line per config gives the exit code,
 # the first OOM/traceback line, W&B MFU and tokens/s, and eval/loss next to eval/L{k}/loss (the last layer's must equal
 # eval/loss). The smoke's output and temporary checkpoints are deleted afterwards (paths containing that exact run id).
-set -uo pipefail
+# Della cancels a job whose GPU sits at 0% for 90 min (mail at 30 min). A config that has not finished its first step
+# after FIRST_STEP_LIMIT (default 25m: compile, data, a hang) is killed and counted as failed; a failed config never
+# idles the GPUs, the next one starts at once; no child outlives the script.
+set -euo pipefail
+trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
 unset TOTAL_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG SEED DRY_RUN
@@ -29,6 +33,9 @@ export WANDB_PROJECT=marin-della
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 export SMOKE_STEPS=${SMOKE_STEPS:-40}
 [ "$SMOKE_STEPS" -gt 0 ] 2>/dev/null || { echo "SMOKE_STEPS must be a positive integer, got '$SMOKE_STEPS'"; exit 1; }
+FIRST_STEP_LIMIT=${FIRST_STEP_LIMIT:-25m}
+case "$FIRST_STEP_LIMIT" in [0-9]*m) first_s=$(( ${FIRST_STEP_LIMIT%m} * 60 )) ;; *) echo "FIRST_STEP_LIMIT must be <minutes>m, got '$FIRST_STEP_LIMIT'"; exit 1 ;; esac
+[ "$first_s" -le 1680 ] || { echo "FIRST_STEP_LIMIT $FIRST_STEP_LIMIT exceeds 28m: a longer 0% stretch draws the idle-GPU mail"; exit 1; }
 export VARIANT=pls RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
 
@@ -38,19 +45,26 @@ for arch in ${SMOKE_ARCHS:-baseline}; do
 for cfg in ${CONFIGS:-130m:1 300m:1}; do
   export SIZE=${cfg%%:*} PLS_W=${cfg##*:}
   if [ "$arch" = baseline ]; then unset ARCH; else export ARCH=$arch; fi
-  out=$(DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's/^output: //p')
+  out=$(DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's/^output: //p' || true)  # a failed dry run shows as a bad run id below
   run_id=$(basename "$(dirname "$out")")
   case "$run_id" in
     *-j${SLURM_JOB_ID}-smoke${SMOKE_STEPS}) ;;
-    *) echo "SUMMARY cfg=$cfg bad run id '$run_id' from dry run output '$out'"; continue ;;
+    *) echo "SUMMARY cfg=$cfg bad run id '$run_id' from dry run output '$out'"; failed=$((failed + 1)); continue ;;
   esac
   log=logs/slurm/pls-smoke_${SLURM_JOB_ID}_${SIZE}_pls${PLS_W}_${arch}.log
   echo "SMOKE $cfg $run_id START $(date +%H:%M:%S)"
-  timeout --signal=TERM ${SMOKE_TIMEOUT:-14m} $PY -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
-  rc=$?
-  [ $rc -ne 0 ] && failed=$((failed + 1))
-  err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160)
-  $PY - "$run_id" "$cfg" "$rc" "$err" <<'PYEOF'
+  timeout --signal=TERM --kill-after=60s ${SMOKE_TIMEOUT:-14m} $PY -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1 &
+  pid=$! t0=$SECONDS killed=0
+  while kill -0 $pid 2>/dev/null; do
+    if (( !killed && SECONDS - t0 > first_s )) && ! grep -q "First train step completed" $log; then
+      echo "SMOKE $cfg $arch: no first step after $FIRST_STEP_LIMIT, killing it $(date +%H:%M:%S)"; kill $pid 2>/dev/null || true; killed=1
+    fi
+    sleep 15
+  done
+  rc=0; wait $pid || rc=$?
+  if [ $rc -ne 0 ]; then failed=$((failed + 1)); fi
+  err=$(grep -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback" $log | cut -c1-160 || true)
+  $PY - "$run_id" "$cfg" "$rc" "$err" <<'PYEOF' || true
 import sys, wandb
 run_id, cfg, rc, err = sys.argv[1:5]
 try:
