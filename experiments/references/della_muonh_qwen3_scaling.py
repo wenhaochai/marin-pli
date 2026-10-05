@@ -151,6 +151,13 @@ SEED = int(os.environ.get("SEED", "0"))
 # LAYERS (default 0 = the size's own depth): a shallower or deeper model at the same width, batch, steps and schedule,
 # e.g. the depth-matched controls for the per-layer readouts of VARIANT=pls. Run tag -d{LAYERS}.
 LAYERS = int(os.environ.get("LAYERS", "0"))
+# LR_MUL (default 1) scales both peak learning rates (MuonH and its Adam group) of the size's recipe; WARMUP (default: the
+# size's own) sets the warmup steps. For depth probes (2026-10-05: at LAYERS=48 the 130m recipe stalls near 6.6 nats).
+# Run tags -lrm{LR_MUL}, -wu{WARMUP}.
+LR_MUL = float(os.environ.get("LR_MUL", "1"))
+WARMUP = int(os.environ["WARMUP"]) if os.environ.get("WARMUP") else None
+if LR_MUL <= 0 or (WARMUP is not None and WARMUP < 0):
+    raise ValueError(f"LR_MUL must be > 0 and WARMUP >= 0, got {LR_MUL}, {WARMUP}")
 # EMA_BETA > 0 keeps an exponential moving average of the weights (levanter ModelAveraging) and evaluates it alongside the
 # raw weights (eval/ema/...). Training is untouched; this is an evaluation-noise reduction (Polyak 1992). Tag -ema{beta}.
 EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
@@ -268,6 +275,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-d{LAYERS}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
+    if LR_MUL != 1:
+        variant_tags += f"-lrm{LR_MUL:g}"
+    if WARMUP is not None:
+        variant_tags += f"-wu{WARMUP}"
     if HEADS_FROM:
         variant_tags += f"-headft{TOTAL_STEPS}"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
@@ -361,8 +372,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     else:
         _Opt = MuonHConfig
     optimizer = _Opt(
-        learning_rate=s["lr"],
-        adam_lr=s["adam_lr"],
+        learning_rate=s["lr"] * LR_MUL,
+        adam_lr=s["adam_lr"] * LR_MUL,
         beta1=0.9,
         beta2=0.98,
         epsilon=s["eps"],
@@ -374,7 +385,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         weight_decay=0.1,
         lr_schedule=s["schedule"],
         decay=s["decay"],
-        warmup=HEADS_WARMUP if HEADS_FROM else s["warmup"],
+        warmup=HEADS_WARMUP if HEADS_FROM else (s["warmup"] if WARMUP is None else WARMUP),
         min_lr_ratio=0.0,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
