@@ -21,6 +21,8 @@ set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
 unset SMOKE_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN PLS_W PLS_SEP PLS_DETACH PLS_OFF PLS_PROBE SEED ARCH PDP WARMUP HEADS_FROM
+# DIAG_PDP=<n>: microbatch per device, for fewer GPUs than 4 (2 GPUs: 32, two microbatches; same math)
+if [ -n "${DIAG_PDP:-}" ]; then export PDP=$DIAG_PDP; fi
 
 module load proxy/default  # wandb only
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}
@@ -32,6 +34,6 @@ arm=${ARMS[$(( ${SLURM_ARRAY_TASK_ID:?} - 1 ))]}
 export VARIANT=baseline SIZE=130m LAYERS=${arm%%:*} LR_MUL=${arm##*:} TOTAL_STEPS=${TOTAL_STEPS:-600}
 export RUN_TAG=-diag$TOTAL_STEPS
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
-echo "depth lr diag: arm $SLURM_ARRAY_TASK_ID LAYERS=$LAYERS LR_MUL=$LR_MUL TOTAL_STEPS=$TOTAL_STEPS RUN_TAG=$RUN_TAG PY=$PY"
+echo "depth lr diag: arm $SLURM_ARRAY_TASK_ID PDP=${PDP:-} LAYERS=$LAYERS LR_MUL=$LR_MUL TOTAL_STEPS=$TOTAL_STEPS RUN_TAG=$RUN_TAG PY=$PY"
 nvidia-smi -L
 $PY -m experiments.references.della_muonh_qwen3_scaling
