@@ -6,6 +6,8 @@ as argv[1], each between its markers:
   <!-- fixes --> ... <!-- /fixes -->  the 2 x 2 of Figure 7: separate heads; layer losses summing to 1 (smaller heads on thin
                                       stems); each head trains its own layer (stop marks on the stream before every layer,
                                       where the layer losses' gradient ends); both
+  <!-- headft --> ... <!-- /headft -->  head refit: the backbone frozen (pale layers, a stop mark on every head stem, the last
+                                      head included), the heads retrained
 Names and one-line descriptions are bilingual HTML under each panel; the setup tag classes match the page's."""
 import re, sys
 INK, IVORY, OAT, MANILLA, KRAFT, CLAY = "#141413", "#F0EEE6", "#E3DACC", "#EBDBBC", "#D4A27F", "#D97757"
@@ -40,12 +42,12 @@ class P:
                 f'<rect width="{W}" height="{H}" fill="{IVORY}"/>' + "".join(self.o) + "</svg>")
 
 
-def three_layers(p, small_heads=False, local=False, probes=False):
+def three_layers(p, small_heads=False, local=False, probes=False, frozen=False):
     """The page's 3-layer vocabulary: stream at y 320, layers at x 82/212/342, heads above; the last head is the model's."""
     p.line(70, 320, 480, 320)
     p.dot(48, 320, 22, KRAFT)
     for i, x in enumerate((82, 212, 342)):
-        p.box(x, 265, 96, 110, MANILLA if i != 1 else OAT, 20)
+        p.box(x, 265, 96, 110, OAT if frozen else (MANILLA if i != 1 else OAT), 20)
         cx = x + 48
         last = i == 2
         if local and not last:
@@ -57,7 +59,7 @@ def three_layers(p, small_heads=False, local=False, probes=False):
             p.dot(cx, 106, 12, CLAY, sw=4)
         else:
             p.line(cx, 265, cx, 178)
-            if probes and not last:
+            if (probes and not last) or frozen:
                 p.stop(cx, 222)
             p.box(cx - 40, 120, 80, 58, INK if last else CLAY, 16)
             p.line(cx, 120, cx, 92)
@@ -101,8 +103,13 @@ for k, (kw, en_n, zh_n, en, zh) in enumerate([
         (dict(local=True), "Each head trains its own layer", "每个头只训练自己那一层", "A layer loss trains its head and its own layer; its gradient stops before reaching the layers below.", "逐层损失只训练它的头和它所在的那一层；梯度不再传到下面的层。"),
         (dict(small_heads=True, local=True), "Both", "两者都用", "Layer losses weighted 0.2, each training only its own layer.", "逐层损失权重为 0.2，并且各自只训练自己那一层。")]):
     p = P(f"sch-fix-{k}", 50 + k); three_layers(p, **kw); cells_fix.append(cell(p.svg(), en_n, zh_n, en, zh))
+cells_headft = []
+p = P("sch-headft-0", 60); three_layers(p, frozen=True)
+cells_headft.append(cell(p.svg(), "Heads retrained, backbone frozen", "冻结骨干，重训读出头",
+                         "Each finished 300m model keeps its backbone; only its heads train for 2,000 more steps.",
+                         "训练好的 300m 模型保留骨干网络，只让读出头再训练 2,000 步。"))
 page = sys.argv[1]; s = open(page).read()
-for fid, cells in (("deep", cells_deep), ("fixes", cells_fix)):
+for fid, cells in (("deep", cells_deep), ("fixes", cells_fix), ("headft", cells_headft)):
     fig = figure(fid, cells)
     if f"<!-- {fid} -->" in s:
         s = re.sub(rf"<!-- {fid} -->.*?<!-- /{fid} -->", lambda m: fig, s, flags=re.S)
