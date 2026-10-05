@@ -18,7 +18,7 @@ experiments.references.sampled_softmax_qwen3 (per-device candidate sets, full so
 SS_SCHEDULE sets its stages and the run id ends in ``-ss<P/1024>k<fraction>...``. VARIANT=ov is the Over-Tokenized
 Transformer's over-encoding + over-decoding (experiments.references.over_vocab_qwen3: hashed 2-/3-gram input embeddings,
 OV_M rows per table; a 2-gram output vocabulary in the paper's product decomposition, weight OV_OD_W); VARIANT=ovss adds
-the sampled softmax to both output heads.
+the sampled softmax to both output heads; VARIANT=ovgramss is ovgram with the sampled softmax on its main head.
 
     SIZE=130m python -m experiments.references.della_muonh_qwen3_scaling        # DRY_RUN=1 prints the plan
 """
@@ -34,9 +34,9 @@ from datetime import timedelta
 # the run); cuda_async without preallocation +30%; vmm +17%. So unless the job set an allocator itself, 1_2b OV uses
 # cuda_async with a pool sized to its temp (ov 30.2 GiB -> 0.8, ovss 25.1 GiB -> 0.75). It must run before JAX
 # initialises its backend, which reads these variables once.
-if os.environ.get("VARIANT") in ("ov", "ovss", "ovfocal", "ovgram", "ovgram3") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
+if os.environ.get("VARIANT") in ("ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss") and os.environ.get("SIZE") == "1_2b" and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ:
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75", "ovfocal": "0.8", "ovgram": "0.75", "ovgram3": "0.7"}[os.environ["VARIANT"]]
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = {"ov": "0.8", "ovss": "0.75", "ovfocal": "0.8", "ovgram": "0.75", "ovgram3": "0.7", "ovgramss": "0.7"}[os.environ["VARIANT"]]
     print(f"1_2b OV allocator: cuda_async, memory fraction {os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']}", flush=True)
 
 import jmp
@@ -191,7 +191,9 @@ FOCAL_GAMMA = float(os.environ.get("FOCAL_GAMMA", "1"))
 OD_M = int(float(os.environ.get("OD_M", "12.8e6")))
 # VARIANT=ovgram3: OV with real 2-gram AND 3-gram output vocabularies (od_orders (2, 3)), each its own hashed head at
 # weight OV_OD_W; run ids end in -odhash<OD_M/1e6>m-o23.
-OV_VARIANTS = ("ov", "ovss", "ovfocal", "ovgram", "ovgram3")
+# VARIANT=ovgramss: ovgram with SS_SCHEDULE on the main head too (the 2-gram head keeps its own per-device sampled
+# softmax), the counterpart of ovss; run ids end in -odhash<OD_M/1e6>m-ss<...>.
+OV_VARIANTS = ("ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss")
 # DATA_EPOCHS > 0 trains on a random subset of fineweb-edu-10B sized so the run makes that many passes over it: levanter
 # shuffles (linear permutation, data seed 42), keeps the first steps / DATA_EPOCHS batches (max_train_batches) and
 # restarts at its end. 1.2B makes 2.4 passes over the full 10.0B tokens; DATA_EPOCHS=2.4 reproduces that repetition at
@@ -235,7 +237,7 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "focal", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -286,9 +288,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "") + (f"-oefreeze{OV_FREEZE_AT}" if OV_FREEZE_AT else "")
     if VARIANT in ("focal", "ovfocal"):
         variant_tags += f"-focal{FOCAL_GAMMA:g}"
-    if VARIANT in ("ovgram", "ovgram3"):
+    if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
-    if VARIANT in ("ss", "ovss"):
+    if VARIANT in ("ss", "ovss", "ovgramss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
         variant_tags += f"-dnr{EBM_RHO:g}w{DENOISE_W or 0.1:g}" + (f"T{EBM_TEMP:g}" if EBM_TEMP != 1 else "") + (f"k{EBM_STEPS}" if EBM_STEPS != 1 else "")
@@ -372,9 +374,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             oe_m=OV_M,
             od_weight=OV_OD_W,
             focal_gamma=FOCAL_GAMMA if VARIANT == "ovfocal" else 0.0,
-            ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
-            ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
-            od_mode="hashed" if VARIANT in ("ovgram", "ovgram3") else "product",
+            ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT in ("ovss", "ovgramss") else (),
+            ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT in ("ovss", "ovgramss") else (),
+            od_mode="hashed" if VARIANT in ("ovgram", "ovgram3", "ovgramss") else "product",
             od_orders=(2, 3) if VARIANT == "ovgram3" else (2,),
             od_m=OD_M,
             oe_freeze_step=OV_FREEZE_AT,

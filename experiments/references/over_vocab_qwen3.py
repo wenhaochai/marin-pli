@@ -23,8 +23,9 @@ realises OD as MTP-DS; here OD is the paper's own n-gram output vocabulary in it
 Everything else is the baseline's: data, steps, batch, schedule, and the optimizer, which labels the new parameters
 by its own rules (tables are plain arrays -> Adam, like the token embedding; W_ij and W_2 are Linears -> MuonH, like
 every other Linear; E_2's path contains "lm_head" -> AdamH, like E_1). Evaluation (``key=None``) is next-token loss on the main head with the full softmax.
-``ss_candidates`` (VARIANT=ovss) puts both heads' training cross-entropy through the sampled softmax of
-experiments.references.sampled_softmax_qwen3, each head with its own candidate sets.
+``ss_candidates`` puts the main head's training cross-entropy through the sampled softmax of
+experiments.references.sampled_softmax_qwen3, and with od_mode "product" (VARIANT=ovss) the second head's too, each head
+with its own candidate sets; with od_mode "hashed" (VARIANT=ovgramss) the 2-gram head keeps its own sampled softmax.
 """
 
 import math
@@ -62,7 +63,8 @@ class OverVocabQwen3Config(Qwen3Config):
     oe_n: int = 3
     oe_k: int = 0  # 0: derived so that hidden_dim / (n k) ~ 256
     od_weight: float = 0.1  # lambda_2 of over-decoding (n = 2); 0 turns OD off
-    # sampled softmax for both heads (empty: full softmax); see experiments.references.sampled_softmax_qwen3
+    # sampled softmax for the main head, and for the product-decomposed second head (empty: full softmax); see
+    # experiments.references.sampled_softmax_qwen3. A hashed 2-gram head always uses its own sampled softmax.
     ss_candidates: tuple[int, ...] = ()
     ss_stage_ends: tuple[int, ...] = ()
     # focal loss (experiments.references.focal_qwen3) on both heads; 0 is plain cross-entropy
