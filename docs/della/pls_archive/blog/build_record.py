@@ -26,18 +26,15 @@ RUNS = [
     (SEP, "130m", 48, 2.6, 8, ("slurm", 14969859, "130m-della4xh100-pls1-sep-d48"), "6"),
     (PROBE, "130m", 48, 2.6, 8, ("slurm", 14969860, "130m-della4xh100-pls1-sep-bbfrozen-d48"), "6"),
     *[(S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 8, ("slurm", j, f"130m-della4xh100-pls1-sep{bb}-a{tag}-d48"), "7")
-      for a, tag, (js, jp) in [("Pre-LN", "preln", (14986868, 14986869)), ("LayerNorm Scaling", "lns", (14986870, 14986871)), ("DeepNorm", "deepnorm", (14986872, 14986873)), ("KEEL", "keel", (14986874, 14986875))]
+      for a, tag, (js, jp) in [("Pre-LN", "preln", (14986868, 14986869)), ("LayerNorm Scaling", "lns", (14986870, 14986871)), ("DeepNorm", "deepnorm", (15011493, 15011494)), ("KEEL", "keel", (15011495, 15011496)),
+                               ("Hyper-Connections", "hc", (15011497, 15011498)), ("mHC", "mhc", (15011499, 15011501)), ("AttnRes (Full)", "attnres", (15011503, 15011504)),
+                               ("AttnRes (Block)", "attnres_block", (15011505, 15011506)), ("MoDA", "moda", (15011724, 15011508))]
       for n, j, bb in ((SEP, js, ""), (PROBE, jp, "-bbfrozen"))],
-    *[(S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 8, ("slurm", j, f"130m-della4xh100-pls1-sep{bb}-a{tag}-d48"), "7")
-      for a, tag, (js, jp) in [("AttnRes (Block)", "attnres_block", (15002426, 15002427))]
-      for n, j, bb in ((SEP, js, ""), (PROBE, jp, "-bbfrozen"))],
-    *[(S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 8, ("planned", None, f"130m-della4xh100-pls1-sep{bb}-a{tag}-d48"), "7")
-      for a, tag in (("Hyper-Connections", "hc"), ("mHC", "mhc"), ("AttnRes (Full)", "attnres"), ("MoDA", "moda")) for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "8"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "8"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "8"),
-    (S("Separate heads, heads retrained (frozen backbone)", "独立头，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("planned", None, "300m-della4xh100-pls1-sep-headft2000"), "9"),
-    (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("planned", None, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "9"),
+    (S("Separate heads, heads retrained (frozen backbone)", "独立头，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011512, "300m-della4xh100-pls1-sep-headft2000"), "9"),
+    (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011513, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "9"),
 ]
 STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), "crashed": S("Failed", "失败"), "failed": S("Failed", "失败"),
          "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中")}
