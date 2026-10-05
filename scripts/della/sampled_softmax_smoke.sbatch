@@ -34,6 +34,7 @@ echo "GPU CHECK rc=${PIPESTATUS[0]} $(date +%H:%M:%S)"
 for VARIANT in ss baseline; do
   export VARIANT
   run_id=$(DRY_RUN=1 .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p')
+  [ -n "$run_id" ] || { echo "SMOKE $SIZE: the dry run gave no run id"; continue; }
   log=logs/slurm/ss-smoke_${SLURM_JOB_ID}_${run_id}.log
   echo "SMOKE $run_id START $(date +%H:%M:%S)"
   timeout --signal=TERM 20m .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
@@ -63,6 +64,6 @@ try:
 except Exception as e:
     print(f"SUMMARY {run_id} rc={rc} wandb_error={str(e)[:160]} err='{err}'", flush=True)
 EOF
-  rm -rf "$MARIN_PREFIX/speedrun/${run_id}"
+  case "$run_id" in *-j${SLURM_JOB_ID}*) rm -rf "$MARIN_PREFIX/speedrun/$run_id" ;; *) echo "kept speedrun/'$run_id': not a run of this job" ;; esac   # never the whole speedrun/ (empty run_id)
 done
 echo "SMOKE DONE $(date +%H:%M:%S)"

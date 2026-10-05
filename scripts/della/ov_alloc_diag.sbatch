@@ -35,6 +35,7 @@ for c in $CONFIGS; do
   esac
   export RUN_TAG=-j${SLURM_JOB_ID}$c
   run_id=$(DRY_RUN=1 .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p')
+  [ -n "$run_id" ] || { echo "DIAG $c: the dry run gave no run id"; continue; }
   log=logs/slurm/ov-allocdiag_${SLURM_JOB_ID}_$c.log
   echo "DIAG $c START $(date +%H:%M:%S) $envs"
   env $envs timeout --signal=TERM ${RUN_TIMEOUT:-32m} .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
@@ -44,6 +45,6 @@ for c in $CONFIGS; do
   mem=$(tac $log | grep -am1 "^MEMSTATS" | cut -c1-200)
   minfree=$(grep -a "^MEMSTATS" $log | grep -oE "largest_free_block_bytes=[0-9.]+" | cut -d= -f2 | sort -g | head -1)
   echo "DIAG $c rc=$rc oom_lines=$oom progress='$prog' min_largest_free=${minfree:-NA}GiB last='$mem'"
-  rm -rf "$MARIN_PREFIX/speedrun/${run_id}"
+  case "$run_id" in *-j${SLURM_JOB_ID}*) rm -rf "$MARIN_PREFIX/speedrun/$run_id" ;; *) echo "kept speedrun/'$run_id': not a run of this job" ;; esac   # never the whole speedrun/ (empty run_id)
 done
 echo "DIAG DONE $(date +%H:%M:%S)"
