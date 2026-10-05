@@ -10,6 +10,8 @@ and the output heads not counted): per Qwen3 layer 4h^2 (q, k, v, o; 8 heads of 
                ordinary models of 2..6 layers (-d2..-d5 and the 6-layer baseline)
   fig-heads    final training loss by layer under the four setups (separate heads, shared head, shared head stop-grad,
                probes = separate heads on a detached backbone) and the ordinary models
+  fig-fix      separate heads at 130m, the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (every layer below, own
+               layer only), final training loss by layer, with probes and the ordinary models (fix.npz)
 Curves through final points: L = E + A exp(-((C/1e18)/u0)^b), a stretched exponential, fitted freely where it holds
 (largest residual <= FIT_TOL = 0.015 nats, a little above the run-to-run noise of a final loss; owner, 2026-10-04), else a monotone PCHIP in log-log (the
 probes always). With layer 1 on the figures, of five forms tried on every fitted set this one fits best (worst 0.010 nats,
@@ -27,7 +29,7 @@ Placeholders (axes, legend and a status word, no data until the runs finish):
                                   held-out loss by layer before and after
   fig-d48-arch                    fig-d48 under the nine DepthBench architectures (arXiv 2609.32534) other than Sandwich-LN,
                                   which is the baseline's own design (hybrid norm) and so fig-d48 itself: separate heads against probes
-Sources: flops.npz, layers.npz, bbfrozen.npz, depth.json, baselines.json (this directory)."""
+Sources: flops.npz, layers.npz, bbfrozen.npz, depth.json, baselines.json, fix.npz (this directory)."""
 import json, sys
 from pathlib import Path
 import numpy as np
@@ -182,13 +184,18 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
                             quantity=CE, xlabel=XL, height=150, cols=3,
                             panels=[dict(**empty_view(x48, 2.9, 5.0, PLANNED, ys=(3, 3.5, 4)), label={"en": a, "zh": a}) for a in ARCH])
 
-# Figure 7 (placeholder until the runs finish): the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (all layers, own layer)
+# Figure 8: the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (all layers below, own layer only), separate
+# heads at 130m (fix.npz, fetch_fix.py), with probes and the ordinary models as references
 YELLOW9, CYAN9, PINK7 = "#E37400", "#007B83", "#C2185B"
+FX = np.load(HERE / "fix.npz")
+SETS8 = [(Z["-pls1-sep/final"], {"en": "Separate heads", "zh": "独立头"}, BLUE7, fit), (FX["-pls0.2-sep/final"], {"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9, fit),
+         (FX["-pls1-sep-local/final"], {"en": "Each head trains its own layer", "zh": "每个头只训练自己那一层"}, CYAN9, fit), (FX["-pls0.2-sep-local/final"], {"en": "Both", "zh": "两者都用"}, PINK7, fit),
+         (Z["-pls1-sep-bbfrozen/final"], {"en": "Probes only", "zh": "只加探针"}, RED, pchip), (cy, {"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, fit)]
+marks8 = sum(([line(f(x6, y), c), dots(pts(x6, y), c)] for y, _, c, f in SETS8), [])
+v8 = view(np.tile(x6, len(SETS8)), np.concatenate([y for y, _, _, _ in SETS8]), endpoints_only=True)
 figs["fig-fix"] = dict(title={"en": "Final training loss by layer, gradient routing and layer-loss weight, 130m", "zh": "按梯度去向和逐层损失权重的各层最终训练损失，130m"},
-                       legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9, "line"],
-                               [{"en": "Each head trains its own layer", "zh": "每个头只训练自己那一层"}, CYAN9, "line"], [{"en": "Both", "zh": "两者都用"}, PINK7, "line"],
-                               [{"en": "Probes only", "zh": "只加探针"}, RED, "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
-                       quantity=CE, xlabel=XL, height=320, panels=[empty_view(list(x6), 2.9, 5.0, PLANNED)])
+                       legend=[[n, c, "line"] for _, n, c, _ in SETS8], quantity=CE, xlabel=XL, height=320, panels=[dict(**v8, marks=marks8)])
+print("fig-fix last layer", {n["en"]: round(float(y[-1]), 3) for y, n, _, _ in SETS8})
 
 # Figure 9 (placeholder until the runs finish): the shape of the layer-loss weights (uniform 0.2, or rising with depth,
 # k/15; both sum to 1) crossed with per-token gradient surgery at every layer output; separate heads at weight 1 and the
