@@ -145,7 +145,7 @@ seen-unseen gap is 0.05-0.06, OT's 0.32: OT fits the repeated subset far better 
 indices costs OT 1.06-1.08 on seen data, 0.76 on unseen and 0.62 on c4_en. The same eval on the two variants
 (14975609_3, 14997698_4; columns seen 3x / 2x / never / c4_en, minus the baseline): no second head -0.211 / -0.230 /
 +0.074 / +0.150, the same overfitting as OT with both heads, so the second head plays no part; 1.28M-row tables -0.055 /
--0.060 / -0.013 / +0.004, a seen-unseen gap of 0.04-0.05 beyond the baseline's against 0.26-0.29 for 12.8M rows. Literature: the recsys "one-epoch phenomenon"
+-0.060 / -0.013 / +0.004, a seen-unseen gap of 0.04-0.05 beyond the baseline's against 0.26-0.28 for 12.8M rows (0.29-0.30 without the second head). Literature: the recsys "one-epoch phenomenon"
 (Zhang et al. 2022, arXiv 2209.06053; MEDA 2305.19531; AdamAR 2511.06374) and MoE under repetition (Xue et al. 2023,
 2305.13230; Jha et al. 2026, 2609.11917): total, not active, parameters set repetition damage; 300m OT tables hold 6.5B
 parameters against 2.5B repeated tokens. Next: tables frozen at the pass-2 start (14983240) separates "tables keep
