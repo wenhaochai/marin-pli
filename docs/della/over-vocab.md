@@ -156,6 +156,14 @@ decomposition) -0.0414, OT + ss -0.0595 (pool sd 0.006, one seed each). So predi
 (0.906 vs 0.890 s). Caveat: od_proj's gradient norm spiked to 2.3-2.9 at steps 600-1500 (peak LR) and was clipped; it
 settled after step 1600. 300m queued (14988894). Page: Figure 7.
 
+Fair comparison (owner, 2026-10-04): OT-2's head always trains by a sampled softmax, and at 130m OT-H + ss (-0.0594)
+already ends close to OT-2 (-0.0622): 0.003 apart, about 0.3 sd of a two-run difference. So the 0.021 gain over OT-H may
+come from the sampled softmax, not from the real 2-gram vocabulary. At 300m ss does not help OT-H (+0.002), so the 300m
+OT-2 run tests the vocabulary more cleanly. VARIANT=ovgramss (a15a909f24) adds SS_SCHEDULE to OT-2's main head and
+completes {OT-H, OT-2} x {main head full, sampled} at 130m and 300m (jobs 15009779/15009780 after smoke 15009778).
+Page Figure 8 now shows OT-2, OT-2 + ss and OT-H + ss, each minus OT-H. Note: OT-H + ss trails OT-H by 0.08-0.10
+through most of training (sampled stages, full-softmax eval) and catches up only after the full-softmax stage.
+
 ### Does a smaller vocabulary make repeated data hurt less? (2026-10-04, jobs 15005159-62)
 
 Owner's question after the 300m result above. The Marin tokenizer is Llama 3 byte-level BPE whose ids 0..127999 are
