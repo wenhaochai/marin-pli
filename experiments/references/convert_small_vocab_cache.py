@@ -41,7 +41,8 @@ def convert_docs(docs, flat, offs):
     starts = np.repeat(offs[ids], e_len)
     within = np.arange(e_len.sum()) - np.repeat(np.cumsum(e_len) - e_len, e_len)
     out = flat[starts + within].astype(np.int32)
-    doc_out_len = np.add.reduceat(e_len, np.concatenate([[0], np.cumsum(lens_in)[:-1]])) if len(docs) else e_len
+    cs, ends = np.concatenate([[0], np.cumsum(e_len)]), np.cumsum(lens_in)
+    doc_out_len = cs[ends] - cs[ends - lens_in]   # per-document output lengths; an empty document gets 0
     return np.split(out, np.cumsum(doc_out_len)[:-1]), int(ids.size), int(out.size)
 
 
