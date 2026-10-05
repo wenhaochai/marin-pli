@@ -20,6 +20,9 @@ Placeholders (axes, legend and a status word, no data until the runs finish):
   fig-traj-300m                   fig-traj at 300m (12 layers, width 768, 6.0B tokens), with the 300m baseline's final loss
                                   as a horizontal line
   fig-d48                         48 layers of width 512 (the 130m layer): separate heads and probes, final loss by layer
+  fig-mix                         130m separate heads: layer-loss weights uniform (0.2) or rising with depth (k/15), each with and
+                                  without per-token gradient surgery at the layer outputs; separate heads at weight 1 and the
+                                  ordinary models as references
   fig-headft                      300m heads retrained on the frozen backbone of each finished run (separate heads, probes):
                                   held-out loss by layer before and after
   fig-d48-arch                    fig-d48 under the nine DepthBench architectures (arXiv 2609.32534) other than Sandwich-LN,
@@ -187,7 +190,16 @@ figs["fig-fix"] = dict(title={"en": "Final training loss by layer, gradient rout
                                [{"en": "Probes only", "zh": "只加探针"}, RED, "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
                        quantity=CE, xlabel=XL, height=320, panels=[empty_view(list(x6), 2.9, 5.0, PLANNED)])
 
-# Figure 9 (placeholder): the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
+# Figure 9 (placeholder until the runs finish): the shape of the layer-loss weights (uniform 0.2, or rising with depth,
+# k/15; both sum to 1) crossed with per-token gradient surgery at every layer output; separate heads at weight 1 and the
+# ordinary models as references (colours as approved in the owner's popup, 2026-10-05)
+figs["fig-mix"] = dict(title={"en": "Final training loss by layer, weight shape and gradient surgery, 130m", "zh": "按权重形状和梯度冲突处理的各层最终训练损失，130m"},
+                       legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9, "line"],
+                               [{"en": "Weights rising with depth", "zh": "权重随深度增加"}, CYAN9, "line"], [{"en": "Summing to 1, gradient surgery", "zh": "合计为 1，处理梯度冲突"}, PURPLE, "line"],
+                               [{"en": "Rising with depth, gradient surgery", "zh": "随深度增加，处理梯度冲突"}, PINK7, "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
+                       quantity=CE, xlabel=XL, height=320, panels=[empty_view(list(x6), 2.9, 5.0, QUEUED)])
+
+# Figure 10 (placeholder): the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
 BLUE3, RED3 = "#8AB4F8", "#F28B82"
 CE_EVAL = {"en": "Held-out cross-entropy (nats, log scale)", "zh": "留出数据上的交叉熵（nats，对数坐标）"}
