@@ -191,6 +191,11 @@ FX = np.load(HERE / "fix.npz")
 SETS8 = [(Z["-pls1-sep/final"], {"en": "Separate heads", "zh": "独立头"}, BLUE7, fit), (FX["-pls0.2-sep/final"], {"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9, fit),
          (FX["-pls1-sep-local/final"], {"en": "Each head trains its own layer", "zh": "每个头只训练自己那一层"}, CYAN9, fit), (FX["-pls0.2-sep-local/final"], {"en": "Both", "zh": "两者都用"}, PINK7, fit),
          (Z["-pls1-sep-bbfrozen/final"], {"en": "Probes only", "zh": "只加探针"}, RED, pchip), (cy, {"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, fit)]
+# the weight sweep (owner, 2026-10-05): weights 0.1 and 0.05 join once finished, in lighter blues than separate heads'
+# (weight 1, blue 700), as the sweep popup described; weight 0.2 keeps its yellow, shared with Figure 9
+for tag, nm, col in (("-pls0.1-sep", {"en": "Layer-loss weight 0.1", "zh": "逐层损失权重 0.1"}, "#4285F4"), ("-pls0.05-sep", {"en": "Layer-loss weight 0.05", "zh": "逐层损失权重 0.05"}, "#8AB4F8")):
+    if tag + "/final" in FX:
+        SETS8.insert(2, (FX[tag + "/final"], nm, col, fit))
 marks8 = sum(([line(f(x6, y), c), dots(pts(x6, y), c)] for y, _, c, f in SETS8), [])
 v8 = view(np.tile(x6, len(SETS8)), np.concatenate([y for y, _, _, _ in SETS8]), endpoints_only=True)
 figs["fig-fix"] = dict(title={"en": "Final training loss by layer, gradient routing and layer-loss weight, 130m", "zh": "按梯度去向和逐层损失权重的各层最终训练损失，130m"},

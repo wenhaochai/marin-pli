@@ -39,6 +39,8 @@ RUNS = [
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "8, 9"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "8"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "8"),
+    (S("Separate heads, layer-loss weight 0.1", "独立头，逐层损失权重 0.1"), "130m", 6, 2.6, 4, ("slurm", 15064965, "130m-della4xh100-pls0.1-sep"), "8"),
+    (S("Separate heads, layer-loss weight 0.05", "独立头，逐层损失权重 0.05"), "130m", 6, 2.6, 4, ("slurm", 15064966, "130m-della4xh100-pls0.05-sep"), "8"),
     (S("Separate heads, weights rising with depth (summing to 1)", "独立头，权重随深度增加（合计为 1）"), "130m", 6, 2.6, 4, ("slurm", 15055614, "130m-della4xh100-pls0.2-sep-shdepth"), "9"),
     (S("Separate heads, weights summing to 1, gradient surgery", "独立头，权重合计为 1，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15055616, "130m-della4xh100-pls0.2-sep-pcg"), "9"),
     (S("Separate heads, weights rising with depth, gradient surgery", "独立头，权重随深度增加，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15055618, "130m-della4xh100-pls0.2-sep-shdepth-pcg"), "9"),

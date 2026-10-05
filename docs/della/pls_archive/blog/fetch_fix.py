@@ -1,5 +1,5 @@
 """Per-layer train CE (train/pls/L0..L5) of the 130m separate-heads variants behind Figures 8 and 9: layer-loss weight
-0.2 (-pls0.2-sep), own-layer heads (-pls1-sep-local), both (-pls0.2-sep-local), and the Figure 9 runs once finished
+0.2, 0.1, 0.05 (-pls0.2-sep, -pls0.1-sep, -pls0.05-sep), own-layer heads (-pls1-sep-local), both (-pls0.2-sep-local), and the Figure 9 runs once finished
 (-pls0.2-sep-shdepth, -pls0.2-sep-pcg, -pls0.2-sep-shdepth-pcg). W&B reself/marin-della -> fix.npz with <tag>/final =
 mean of the last 50 logged steps (as everywhere on the page), <tag>/step, <tag>/ce; only finished runs are written."""
 import numpy as np, wandb
@@ -8,7 +8,7 @@ OUT = Path(__file__).resolve().parent / "fix.npz"
 api = wandb.Api(timeout=300)
 keys = [f"train/pls/L{k}" for k in range(6)]
 out = {}
-for tag in ("-pls0.2-sep", "-pls1-sep-local", "-pls0.2-sep-local", "-pls0.2-sep-shdepth", "-pls0.2-sep-pcg", "-pls0.2-sep-shdepth-pcg"):
+for tag in ("-pls0.1-sep", "-pls0.05-sep", "-pls0.2-sep", "-pls1-sep-local", "-pls0.2-sep-local", "-pls0.2-sep-shdepth", "-pls0.2-sep-pcg", "-pls0.2-sep-shdepth-pcg"):
     try:
         r = api.run("reself/marin-della/muonh-qwen3-130m-della4xh100" + tag)
     except Exception:
