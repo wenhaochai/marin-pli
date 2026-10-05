@@ -197,6 +197,15 @@ if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "pls", *OBJECTIVE_VARI
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
 CPT_TAG = os.environ.get("CPT_TAG", "-cpt") if INIT_FROM else ""
+# HEADS_FROM=<levanter checkpoint dir> (VARIANT=pls with PLS_SEP=1; set the finished run's own PLS_* knobs): refit
+# the readout heads of that run. The model loads its weights only (initialize_model_from_checkpoint_path: fresh
+# optimizer, step 0, data from the start), every readout reads a stop-gradient layer output (pls_heads_only), and
+# HeadsOnlyMuonHConfig freezes every other parameter. The heads keep their pretraining optimizer and peak learning
+# rates on a new schedule of TOTAL_STEPS steps with HEADS_WARMUP warmup steps. Tag -headft{TOTAL_STEPS}.
+HEADS_FROM = os.environ.get("HEADS_FROM") or None
+HEADS_WARMUP = int(os.environ.get("HEADS_WARMUP", "100"))
+if HEADS_FROM and (VARIANT != "pls" or not PLS_SEP or not TOTAL_STEPS or INIT_FROM or ARCH):
+    raise ValueError("HEADS_FROM needs VARIANT=pls, PLS_SEP=1 and TOTAL_STEPS, without INIT_FROM or ARCH")
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
     "130m": dict(hidden=512, inter=1792, layers=6, heads=8, kv=8, batch=128, steps=4959, lr=0.02, adam_lr=0.008, eps=1e-20, momentum=0.95, schedule="linear", decay=0.8, warmup=0, max_grad_norm=1.0, ref_c4_en_bpb=1.16354),
@@ -259,6 +268,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-d{LAYERS}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
+    if HEADS_FROM:
+        variant_tags += f"-headft{TOTAL_STEPS}"
     run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
@@ -324,7 +335,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_probe=PLS_PROBE, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
@@ -345,6 +356,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     # every other run, the baseline included, keeps MuonHConfig exactly.
     if ARCH in ("hc", "mhc", "attnres", "attnres_block"):
         from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig as _Opt
+    elif HEADS_FROM:
+        from experiments.references.per_layer_qwen3 import HeadsOnlyMuonHConfig as _Opt
     else:
         _Opt = MuonHConfig
     optimizer = _Opt(
@@ -361,7 +374,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         weight_decay=0.1,
         lr_schedule=s["schedule"],
         decay=s["decay"],
-        warmup=s["warmup"],
+        warmup=HEADS_WARMUP if HEADS_FROM else s["warmup"],
         min_lr_ratio=0.0,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
@@ -405,6 +418,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 allow_nondivisible_batch_size=True,
             ),
             train_seq_len=SEQ_LEN,
+            initialize_model_from_checkpoint_path=HEADS_FROM,
             model=model,
             optimizer=optimizer,
             z_loss_weight=0.0,

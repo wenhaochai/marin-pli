@@ -42,6 +42,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import jmp
 import numpy as np
+import optax
 from jax.sharding import NamedSharding, PartitionSpec as P
 from tqdm_loggable.auto import tqdm
 
@@ -58,11 +59,56 @@ from levanter.metrics import Metric, ReductionType
 from levanter.models.lm_model import LmConfig, LmExample
 from levanter.models.loss import fused_cross_entropy_loss_and_logsumexp_penalty, maybe_fused_next_token_loss, next_token_loss_weight
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
+from levanter.optim.config import OptimizerConfig
+from levanter.optim.muonh import MuonHConfig, scale_by_adamh, scale_with_muonh
 from levanter.trainer import current_train_step
+from levanter.utils.jax_utils import leaf_key_paths
 from levanter.utils.logging import LoadingTimeTrackerIterator
 from levanter.utils.tree_utils import inference_mode
 
 logger = logging.getLogger(__name__)
+
+
+_HEAD_PATHS = ("aux_lm_heads", "aux_norms", "lm_head", "transformer.norm")  # the readouts' parameters (path prefixes)
+
+
+def _is_head_path(path) -> bool:
+    """path: a leaf_key_paths entry, a string, or for a NamedArray leaf a NamedArray holding the string."""
+    if isinstance(path, NamedArray):
+        path = path.array
+    path_str = ".".join(path) if isinstance(path, (list, tuple)) else str(path)
+    return path_str.startswith(_HEAD_PATHS)
+
+
+@OptimizerConfig.register_subclass("muonH_heads_only")
+@dataclass(frozen=True)
+class HeadsOnlyMuonHConfig(MuonHConfig):
+    """MuonHConfig for the readout heads alone (pls_heads_only): the heads keep the labels and transforms they had in
+    pretraining (AdamH for aux_lm_heads and lm_head, Adam for aux_norms and the final norm); every other parameter is
+    labelled "frozen", a zero update with no optimizer state."""
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+
+        def optimizer(learning_rate, adam_lr):  # MuonHConfig.build's three transforms, plus "frozen"
+            def clip():
+                return [optax.clip_by_global_norm(self.max_grad_norm)] if self.max_grad_norm else []
+
+            transformations = {
+                "muonh": optax.chain(*clip(), scale_with_muonh(self.momentum, self.nesterov, self.backend_steps, self.muon_epsilon, learning_rate, self.coefficient_type)),
+                "adamh": optax.chain(*clip(), scale_by_adamh(self.beta1, self.beta2, self.epsilon, learning_rate)),
+                "adam": optax.chain(*clip(), optax.scale_by_adam(self.beta1, self.beta2, self.epsilon), optax.scale(-adam_lr)),
+                "frozen": optax.set_to_zero(),
+            }
+            return optax.multi_transform(transformations, self.create_mask)
+
+        return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
+
+    def create_mask(self, params):
+        base = super().create_mask(params)
+        paths = leaf_key_paths(params, is_leaf=lambda x: isinstance(x, hnn.Linear))
+        return jax.tree_util.tree_map(lambda label, path: label if _is_head_path(path) else "frozen", base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
 
 
 @LmConfig.register_subclass("qwen3_pls")
@@ -91,6 +137,10 @@ class PerLayerQwen3Config(Qwen3Config):
     # stop-gradient output of layer k-1 (the same values), so no layer loss reaches earlier layers or the embedding;
     # the final loss trains everything as usual. One extra forward of layers 0..L-2 per step.
     pls_local_heads: bool = False
+    # Refit the readout heads of a finished run: every readout reads a stop-gradient layer output, so the losses train
+    # the heads alone (aux_lm_heads, aux_norms, lm_head and the final norm) and no gradient reaches the backbone.
+    # HeadsOnlyMuonHConfig freezes every other parameter; the launcher's HEADS_FROM loads the finished run's weights.
+    pls_heads_only: bool = False
     # Weight schedule: pls_weight until step pls_off_start, linear to 0 at step pls_off_end (start == end: a switch), 0
     # after, with the readouts skipped. pls_off_end = 0: always on.
     pls_off_start: int = 0
@@ -122,6 +172,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
         if self.pls_local_heads and (not self.pls_separate_heads or self.pls_detach_backbone or self.depth_arch != "baseline" or self.pls_probe or self.pls_off_end):
             raise ValueError("pls_local_heads needs pls_separate_heads, without pls_detach_backbone, pls_probe or a weight schedule, on the baseline transformer")
+        if self.pls_heads_only and (not self.pls_separate_heads or self.pls_local_heads or self.pls_probe or self.pls_off_end):
+            raise ValueError("pls_heads_only needs pls_separate_heads, without pls_local_heads, pls_probe or a weight schedule")
         if self.pls_detach_backbone and not self.pls_separate_heads:
             raise ValueError("pls_detach_backbone needs pls_separate_heads: with the shared head the loss would train the baseline's lm_head")
         if self.pls_separate_heads and self.pls_detach_head:
@@ -153,6 +205,9 @@ class PerLayerQwen3Config(Qwen3Config):
         if self.pls_local_heads:  # the recompute of layers 0..L-2: their share of the base backbone
             backbone = base - 2 * self.hidden_dim * vocab_size
             extra += backbone * (self.num_layers - 1) / self.num_layers
+        if self.pls_heads_only:  # the backbone runs forward only: 1 of the 3 forward-equivalents a trained part costs
+            backbone = base - 2 * self.hidden_dim * vocab_size
+            return backbone / 3 + 2 * self.hidden_dim * vocab_size + extra
         return base + extra
 
     def extra_eval_callbacks(self, EvalBatch, tagged_eval_sets, tokenizer, device_mesh, axis_mapping, max_examples_per_dataset, *, mp):
@@ -372,6 +427,8 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         L = cfg.num_layers
         kw = dict(reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
         outs = self.layer_outputs(example.tokens, example.attn_mask, key=key)
+        if cfg.pls_heads_only:  # the heads alone: no readout sends a gradient into the backbone
+            outs = jax.lax.stop_gradient(outs)
         final = self._readout_ce(outs, L - 1, example, **kw)
         aux_outs = self._local_outputs(example, outs, key=key) if cfg.pls_local_heads else outs
 
