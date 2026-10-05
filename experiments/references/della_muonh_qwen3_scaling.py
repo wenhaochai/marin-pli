@@ -197,6 +197,44 @@ OV_VARIANTS = ("ov", "ovss", "ovfocal", "ovgram", "ovgram3")
 # restarts at its end. 1.2B makes 2.4 passes over the full 10.0B tokens; DATA_EPOCHS=2.4 reproduces that repetition at
 # a smaller size, every other setting unchanged. Run tag -rep{epochs}.
 DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
+# VOCAB_K > 0: the Marin tokenizer truncated to its K lowest-ranked tokens (experiments/references/small_vocab_tokenizer.py;
+# specials at K..K+255), on fineweb-edu-10B and the Paloma sets converted to it (convert_small_vocab_cache.py). Fixed
+# text: the step count grows by the token ratio of the converted training data, so a run reads the same text the same
+# number of passes (with DATA_EPOCHS too). Compare runs by bits per byte. Run ids get -v<K/1000>k.
+VOCAB_K = int(os.environ.get("VOCAB_K", "0"))
+_PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
+
+
+def _vocab_ratio(k: int) -> float:
+    """Converted / original training tokens of fineweb-edu-10B for the K-token tokenizer (written by the conversion)."""
+    import json
+    path = f"{_PREFIX}/tokenized/convert_v{k}.json"
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{path} is missing: run scripts/della/convert_small_vocab.sbatch for K={k} first")
+    return json.load(open(path))["fineweb-edu-10B"]["ratio"]
+
+
+def _small_vocab_data(k: int, train_names, validation_names):
+    """The run's data config with every component pointed at its K-token conversion, under the same component names (so
+    the eval metric keys match the full-vocabulary runs)."""
+    from levanter.data.text.datasets import DatasetComponent, LmDataConfig, UrlDatasetSourceConfig
+    from levanter.data.text.formats import TextLmDatasetFormat
+
+    def comp(path):
+        if not os.path.isdir(path):
+            raise FileNotFoundError(f"{path} is missing: run the K={k} conversion first")
+        src = UrlDatasetSourceConfig(tags=[], train_urls=[], validation_urls=[], cache_dir=os.path.dirname(path), format=TextLmDatasetFormat())
+        return DatasetComponent(source=src, cache_dir=src.cache_dir, format=src.format, tags=[])
+
+    components, weights = {}, {}
+    for name in train_names:
+        assert name == "fineweb-edu-10B", name
+        components[name], weights[name] = comp(f"{_PREFIX}/fineweb-edu-10B-v{k}/train"), 1.0
+    for name in validation_names:   # paloma/<subset>-marin-tokenizer
+        sub = name.split("/", 1)[1].rsplit("-marin-tokenizer", 1)[0]
+        components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
+    return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
+                        cache_dir=None, shuffle=True, permutation_type="linear")
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "focal", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -222,6 +260,8 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
+    if VOCAB_K:
+        s = dict(s, steps=round(s["steps"] * _vocab_ratio(VOCAB_K)))   # fixed text: more steps for the same text
     variant_tags = (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + ("-tied" if TIE else "")
     if VARIANT == "fbt":
         variant_tags += ("-nonoise" if FBT_NOISE == 0 else "") + ("-res" if FBT_RESIDUAL else "")
@@ -260,6 +300,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-L{AUX_LAYER}"
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
+    if VOCAB_K:
+        variant_tags += f"-v{VOCAB_K // 1000}k"
     if DATA_EPOCHS > 0:
         variant_tags += f"-rep{DATA_EPOCHS:g}"
     if EMA_BETA > 0:
@@ -374,7 +416,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
 
     def build_config(ctx: StepContext) -> TrainLmOnPodConfig:
-        data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
+        if VOCAB_K:
+            data = _small_vocab_data(VOCAB_K, [d.name for d in train], [d.name for d in validation])
+        else:
+            data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
         if DATA_EPOCHS > 0:
             steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
             data = dataclasses.replace(data, max_train_batches={d.name: round(steps / DATA_EPOCHS) for d in train})
