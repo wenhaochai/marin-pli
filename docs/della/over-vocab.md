@@ -156,6 +156,27 @@ decomposition) -0.0414, OT + ss -0.0595 (pool sd 0.006, one seed each). So predi
 (0.906 vs 0.890 s). Caveat: od_proj's gradient norm spiked to 2.3-2.9 at steps 600-1500 (peak LR) and was clipped; it
 settled after step 1600. 300m queued (14988894). Page: Figure 7.
 
+### Does a smaller vocabulary make repeated data hurt less? (2026-10-04, jobs 15005159-62)
+
+Owner's question after the 300m result above. The Marin tokenizer is Llama 3 byte-level BPE whose ids 0..127999 are
+BPE ranks, so keeping the K lowest-ranked tokens and the merges among them is the tokenizer BPE training would have
+produced at K (`experiments/references/small_vocab_tokenizer.py`; K = 64K/32K/16K/8K, specials moved to K..K+255).
+Pretokenized data converts without the text: inside a pre-token, every token of id >= K re-encodes on its own, so a
+fixed table expand[t] maps the stored ids (validated exact against re-encoding decoded text). Converted caches
+(`convert_small_vocab_cache.py`, job 15003340): fineweb-edu-10B and the 16 Paloma subsets, each checked for document
+count, identical decoded text, and equality with re-encoding where the source ids are canonical (Paloma was tokenized
+in newline chunks, so only some documents are). Tokens per text, fineweb-edu-10B: 64K x1.0313, 32K x1.1025,
+16K x1.2043, 8K x1.3513.
+
+Design (owner's picks): all four K; fixed text and passes, so steps scale by the token ratio and every K sees the
+same bytes. Per K one 8-GPU pair at 300m baseline: full data (0.6 passes) and the 2.5B-token-text subset (2.4
+passes); the 128K pair is rep-300m (14940537, run b) with baseline 300m s0. Launcher: `VOCAB_K=K` (run tag -v{K}k).
+Metric: Paloma bits per byte. Levanter's byte count overcounts partial UTF-8 tokens (U+FFFD counts 3 bytes), more so
+at small K; Levanter/exact bytes, mean over subsets: 128K 1.0019, 64K 1.0035, 32K 1.0048, 16K 1.0064, 8K 1.0090
+(`tmp_plots/ss130/bpb_bytes_check.py`). Multiply each logged subset bpb by its factor before any difference.
+Confound to state with the result: at a smaller K one pass over the text is more steps, so the model takes more
+updates per repeated byte.
+
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
