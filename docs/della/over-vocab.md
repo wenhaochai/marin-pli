@@ -177,6 +177,14 @@ at small K; Levanter/exact bytes, mean over subsets: 128K 1.0019, 64K 1.0035, 32
 Confound to state with the result: at a smaller K one pass over the text is more steps, so the model takes more
 updates per repeated byte.
 
+Power check before the runs started: with the Marin tokenizer, 2.4 passes cost the 300m baseline only +0.0078 bits
+per byte at the end (repeated minus full, exact bytes), and the gap wanders by up to 0.013 during passes 1 and 2. The
+300m baseline seed sd is 0.0024 bpb (s0-s3: 1.3867, 1.3862, 1.3915, 1.3880), so the difference of two repetition costs
+has sd ~0.0048 with one seed per run: even a K with no harm at all would differ by only ~1.6 sd. 2.4 passes can show a
+K that hurts much more, not one that hurts less. Owner's call: run both 2.4 and 8 passes. The 8-pass arm uses a
+0.75B-token part (round(steps / 8) batches) for every K including 128K (jobs 15006934-36); Muennighoff et al. 2023
+find repetition nearly free up to about 4 epochs, so 8 passes should cost clearly more.
+
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
