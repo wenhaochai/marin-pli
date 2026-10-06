@@ -202,14 +202,16 @@ Results (2026-10-06; final Paloma bits per byte, exact bytes, one seed each; cos
 |---|---|---|---|---|---|
 | 128K | 1.3867 | 1.3945 | +0.0078 | 1.4695 | +0.0828 |
 | 64K | 1.3939 | 1.3992 | +0.0053 | 1.4690 | +0.0751 |
-| 32K | 1.4058 | 1.4223 | +0.0165 | queued | |
-| 16K | 1.4267 | 1.4399 | +0.0132 | queued | |
+| 32K | 1.4058 | 1.4223 | +0.0165 | 1.4649 | +0.0591 |
+| 16K | 1.4267 | 1.4399 | +0.0132 | 1.4709 | +0.0442 |
 | 8K | 1.4552 | 1.4539 | -0.0013 | 1.4814 | +0.0262 |
 
 At 2.4 passes the costs scatter around the 128K one (-0.009 to +0.009, within ~2 sd of 0.0048) with no trend in K, as
-the power check predicted. At 8 passes 8K pays 0.057 less than 128K (~12 sd): a small vocabulary does make heavy
-repetition hurt less, but 128K still ends 0.012 lower in absolute terms (the full-data gap of 0.069 shrinks to 0.012).
-The 32K and 16K 8-pass pair (15006935) decides whether the cost falls steadily with K. Job 15006934 ended FAILED (rc 134,
+the power check predicted. At 8 passes the cost falls with every halving of K (0.083, 0.075, 0.059, 0.044, 0.026 from
+128K to 8K, about 0.008-0.018 per halving; 8K pays 0.057 less than 128K, ~12 sd). The final value at 8 passes is
+U-shaped with its minimum at 32K (1.4649, 0.0046 below 128K, ~1.4 sd of a two-run difference): a smaller vocabulary is
+worse on fresh data and loses less to repetition, and the two balance near 32K at 300m and 8 passes. Confound: at a
+smaller K the same text is more tokens, so the model takes more steps per repeated byte. Job 15006934 ended FAILED (rc 134,
 "terminate called without an active exception" on exit) after both runs logged "succeeded" and W&B finished at the last
 step; the record counts it as completed.
 
