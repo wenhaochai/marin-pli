@@ -196,6 +196,23 @@ K that hurts much more, not one that hurts less. Owner's call: run both 2.4 and 
 0.75B-token part (round(steps / 8) batches) for every K including 128K (jobs 15006934-36); Muennighoff et al. 2023
 find repetition nearly free up to about 4 epochs, so 8 passes should cost clearly more.
 
+Results (2026-10-06; final Paloma bits per byte, exact bytes, one seed each; cost = repeated minus full):
+
+| K | full (0.6 passes) | 2.4 passes | cost 2.4 | 8 passes | cost 8 |
+|---|---|---|---|---|---|
+| 128K | 1.3867 | 1.3945 | +0.0078 | 1.4695 | +0.0828 |
+| 64K | 1.3939 | 1.3992 | +0.0053 | 1.4690 | +0.0751 |
+| 32K | 1.4058 | 1.4223 | +0.0165 | queued | |
+| 16K | 1.4267 | 1.4399 | +0.0132 | queued | |
+| 8K | 1.4552 | 1.4539 | -0.0013 | 1.4814 | +0.0262 |
+
+At 2.4 passes the costs scatter around the 128K one (-0.009 to +0.009, within ~2 sd of 0.0048) with no trend in K, as
+the power check predicted. At 8 passes 8K pays 0.057 less than 128K (~12 sd): a small vocabulary does make heavy
+repetition hurt less, but 128K still ends 0.012 lower in absolute terms (the full-data gap of 0.069 shrinks to 0.012).
+The 32K and 16K 8-pass pair (15006935) decides whether the cost falls steadily with K. Job 15006934 ended FAILED (rc 134,
+"terminate called without an active exception" on exit) after both runs logged "succeeded" and W&B finished at the last
+step; the record counts it as completed.
+
 ## Focal loss + OV (2026-10-02, done: negative, stopped at 130m)
 
 User call: focal loss on the baseline's one head (VARIANT=focal) and on both of OV's heads (VARIANT=ovfocal), gamma 0.5
