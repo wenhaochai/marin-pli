@@ -8,7 +8,7 @@ OUT = Path(__file__).resolve().parent / "fix.npz"
 api = wandb.Api(timeout=300)
 keys = [f"train/pls/L{k}" for k in range(6)]
 out = {}
-for tag in ("-pls0.1-sep", "-pls0.05-sep", "-pls0.2-sep", "-pls1-sep-local", "-pls0.2-sep-local", "-pls0.2-sep-shdepth", "-pls0.2-sep-pcg", "-pls0.2-sep-shdepth-pcg"):
+for tag in ("-pls0.1-sep", "-pls0.05-sep", "-pls0.2-sep", "-pls1-sep-local", "-pls0.2-sep-local", "-pls0.2-sep-shdepth", "-pls0.2-sep-pcg", "-pls0.2-sep-shdepth-pcg", "-pls1-sep-pcg"):
     try:
         r = api.run("reself/marin-della/muonh-qwen3-130m-della4xh100" + tag)
     except Exception:
