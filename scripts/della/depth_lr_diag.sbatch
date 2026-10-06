@@ -32,7 +32,7 @@ export WANDB_PROJECT=marin-della
 ARMS=(0:1 12:1 24:1 48:1 48:0.5 48:0.25 48:0.125)
 arm=${ARMS[$(( ${SLURM_ARRAY_TASK_ID:?} - 1 ))]}
 export VARIANT=baseline SIZE=130m LAYERS=${arm%%:*} LR_MUL=${arm##*:} TOTAL_STEPS=${TOTAL_STEPS:-600}
-export RUN_TAG=-diag$TOTAL_STEPS
+export RUN_TAG=-diag$TOTAL_STEPS${DIAG_TAG:-}  # DIAG_TAG: a suffix for a repeat of an arm under other job settings (e.g. -pdp4)
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 echo "depth lr diag: arm $SLURM_ARRAY_TASK_ID PDP=${PDP:-} LAYERS=$LAYERS LR_MUL=$LR_MUL TOTAL_STEPS=$TOTAL_STEPS RUN_TAG=$RUN_TAG PY=$PY"
 nvidia-smi -L
