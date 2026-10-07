@@ -17,7 +17,7 @@
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
-unset INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN LAYERS ARCH PDP PLS_LOCAL PLS_PROBE PLS_OFF PLS_DETACH RUN_TAG
+unset INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN LAYERS ARCH PDP PLS_LOCAL PLS_PROBE PLS_OFF PLS_ON PLS_DETACH RUN_TAG
 
 module load proxy/default  # wandb only
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}

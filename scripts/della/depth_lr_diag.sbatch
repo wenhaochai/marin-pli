@@ -20,7 +20,7 @@
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
-unset SMOKE_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN PLS_W PLS_SEP PLS_DETACH PLS_OFF PLS_PROBE SEED ARCH PDP WARMUP HEADS_FROM
+unset SMOKE_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN PLS_W PLS_SEP PLS_DETACH PLS_OFF PLS_ON PLS_PROBE SEED ARCH PDP WARMUP HEADS_FROM
 # DIAG_PDP=<n>: microbatch per device, for fewer GPUs than 4 (2 GPUs: 32, two microbatches; same math)
 if [ -n "${DIAG_PDP:-}" ]; then export PDP=$DIAG_PDP; fi
 

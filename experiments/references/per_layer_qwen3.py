@@ -23,7 +23,10 @@ with the main eval's keys (loss, macro_loss, per-dataset loss and bpb); ``eval/L
 
 Schedule (``pls_off_start``/``pls_off_end``): the intermediate weight holds at pls_weight, falls linearly to 0 between the
 two steps and stays 0 after, when the readouts are skipped (a ``lax.cond`` on the traced train step) and train/pls/L{k}
-falls back to the stride-sampled monitor. Probe (``pls_probe``, diagnostic runs): every train step, the cosine between
+falls back to the stride-sampled monitor. Late start (``pls_on_start``/``pls_on_end``, separate heads): the heads train
+from step 0 at pls_weight, but their gradient into the backbone is 0 until pls_on_start and rises linearly to full at
+pls_on_end (the readouts read sg(h) + a (h - sg(h)): same values, backbone gradient times a), so the run is probes
+first and separate heads after. Probe (``pls_probe``, diagnostic runs): every train step, the cosine between
 each intermediate loss's gradient and the final loss's gradient on the trunk they share, their norm ratio, and every
 readout's in-context score (late-position minus early-position CE), all stop-gradient: the candidate signals for a
 metric-driven schedule.
@@ -145,6 +148,11 @@ class PerLayerQwen3Config(Qwen3Config):
     # after, with the readouts skipped. pls_off_end = 0: always on.
     pls_off_start: int = 0
     pls_off_end: int = 0
+    # Late start (pls_separate_heads): the heads train at pls_weight from step 0, but their gradient into the backbone is
+    # 0 through step pls_on_start, rises linearly, and is full from step pls_on_end on (start == end: a switch at that step). Before
+    # pls_on_start the run is the probes (pls_detach_backbone); after pls_on_end it is separate heads. 0: always full.
+    pls_on_start: int = 0
+    pls_on_end: int = 0
     # Shape of the intermediate weights: "uniform" gives every layer pls_weight; "depth" gives layer k (0-based, k < L-1)
     # pls_weight * 2(k+1)/L, rising with depth, with the same sum (L-1) * pls_weight (LayerSkip-style, Elhoushi et al. 2024).
     pls_weight_shape: str = "uniform"
@@ -198,6 +206,12 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError(f"a weight schedule needs 0 <= pls_off_start <= pls_off_end and pls_weight > 0, got {self.pls_off_start}, {self.pls_off_end}, {self.pls_weight}")
         if not self.pls_off_end and self.pls_off_start:
             raise ValueError("pls_off_start without pls_off_end")
+        if self.pls_on_end and not (0 <= self.pls_on_start <= self.pls_on_end):
+            raise ValueError(f"a late start needs 0 <= pls_on_start <= pls_on_end, got {self.pls_on_start}, {self.pls_on_end}")
+        if not self.pls_on_end and self.pls_on_start:
+            raise ValueError("pls_on_start without pls_on_end")
+        if self.pls_on_end and (not self.pls_separate_heads or self.pls_detach_backbone or self.pls_local_heads or self.pls_heads_only or self.pls_off_end or self.pls_pcgrad or self.pls_probe):
+            raise ValueError("a late start needs pls_separate_heads, without pls_detach_backbone, pls_local_heads, pls_heads_only, pls_off_*, pls_pcgrad or pls_probe")
         half = self.max_seq_len // 2
         a, b = self.pls_probe_early
         if self.pls_probe and (half % self.pls_monitor_stride or not 0 <= a < b <= half):
@@ -477,6 +491,17 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             outs = jax.lax.stop_gradient(outs)
         final = self._readout_ce(outs, L - 1, example, **kw)
         aux_outs = self._local_outputs(example, outs, key=key) if cfg.pls_local_heads else outs
+        bb_gain = None
+        if cfg.pls_on_end:  # late start: the readouts' gradient into the backbone scaled by bb_gain, the values unchanged
+            step = current_train_step()
+            if step is None:
+                raise RuntimeError("the pls late start follows the train step, but levanter.trainer.current_train_step() is None")
+            ramp = max(cfg.pls_on_end - cfg.pls_on_start, 1)
+            t = jnp.asarray(step, jnp.float32)
+            gain = jnp.where(t >= cfg.pls_on_end, 1.0, jnp.clip((t - cfg.pls_on_start) / ramp, 0.0, 1.0)).astype(outs.dtype)
+            bb_gain = gain.astype(jnp.float32)  # logged as applied (rounded to the activations' dtype)
+            frozen_outs = jax.lax.stop_gradient(outs)
+            aux_outs = frozen_outs + (outs - frozen_outs) * gain
 
         def supervised(w):
             loss, per = final, []
@@ -505,6 +530,8 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         values[f"pls/L{L - 1}"] = jnp.asarray(_scalar(final), jnp.float32)
         if weight is not None:
             values["pls/weight"] = weight
+        if bb_gain is not None:
+            values["pls/bb_gain"] = bb_gain
         if cfg.pls_probe:
             values.update(self._probe_stats(outs, example, key=key, kw=kw))
         stats = {k: Metric.from_value(jnp.asarray(v, jnp.float32), ReductionType.MEAN) for k, v in sorted(values.items())}
