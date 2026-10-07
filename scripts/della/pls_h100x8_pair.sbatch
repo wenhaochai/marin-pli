@@ -46,7 +46,8 @@ export VARIANT=pls
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 GRACE=$(( ${PAIR_GRACE_MIN:-75} * 60 ))
 SMOKE=${PAIR_SMOKE_STEPS:-30}
-TRAIN_LIMIT=${PAIR_TRAIN_LIMIT:-3h}
+JOB_MIN=${PAIR_JOB_MIN:-200}           # the job's --time in minutes (03:20:00); training stops 5 min before it, so
+                                      # timeout, not Slurm, ends it and packed_task.sh writes its ledger line
 FIRST_MIN=${PAIR_FIRST_STEP_MIN:-25}   # a training task with no first step by then is stopped (hang watchdog)
 STALL_MIN=${PAIR_STALL_MIN:-30}        # ... and one whose log stops growing for this long
 export PACKED_LEDGER_DIR=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed   # never the submit dir
@@ -69,12 +70,13 @@ stop() {   # $1 = a task's packed_task.sh pid. TERM its timeout (which passes it
   local t; t=$(pgrep -P "$1" -x timeout 2>/dev/null | head -1 || true)
   if [ -n "$t" ]; then kill -TERM "$t" 2>/dev/null || true; fi
   for _ in $(seq 1 18); do kill -0 "$1" 2>/dev/null || return 0; sleep 5; done
-  if [ -n "$t" ]; then kill -KILL -- "-$t" 2>/dev/null || true; fi; kill -KILL "$1" 2>/dev/null || true
+  if [ -n "$t" ]; then kill -KILL -- "-$t" 2>/dev/null || true; fi
+  sleep 5; kill -KILL "$1" 2>/dev/null || true   # packed_task.sh first gets to write its ledger line
 }
 trap 'for d in ${dogs[*]:-}; do kill "$d" 2>/dev/null || true; done; for p in ${pids[*]:-}; do stop "$p"; done' EXIT
 run_id() {   # the run id the launcher builds for spec $1 plus extra assignments; a dry run on the CPU, no GPU touched
   # shellcheck disable=SC2086
-  basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>/dev/null | sed -n 's/^output: //p' || true)")"
+  basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>>"logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_dryrun.log" | sed -n 's/^output: //p' || true)")"
 }
 watchdog() {   # $1 pid, $2 log: stop a training task that hangs (no first step after FIRST_MIN, or a silent log for STALL_MIN),
   # so a hung half cannot hold 4 GPUs at 0% until Della cancels the whole job
@@ -119,7 +121,9 @@ done
 pids=()
 [ $smoke_ok = 1 ] || { echo "a smoke copy failed: no training"; exit 4; }
 
-# 2. training
+# 2. training, limited to the job's remaining time minus 5 min
+TRAIN_LIMIT=${PAIR_TRAIN_LIMIT:-$(( JOB_MIN * 60 - SECONDS - 300 ))s}
+echo "training limit $TRAIN_LIMIT"
 for i in 0 1; do
   log=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}.log
   # shellcheck disable=SC2086  # word-split the VAR=value assignments on purpose
