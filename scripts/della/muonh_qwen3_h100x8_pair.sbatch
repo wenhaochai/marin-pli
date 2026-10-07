@@ -14,7 +14,7 @@
 # Two muonh_qwen3_h100x4.sbatch runs packed on one 8xH100 node (GPUs 0-3 and 4-7), for when the per-user pli-short
 # node cap binds. PAIR_A and PAIR_B hold each run's own knobs as space-separated VAR=value assignments (e.g.
 # PAIR_A="VARIANT=baseline SEED=0 RUN_TAG=-restore" PAIR_B="VARIANT=ss SEED=0"); knobs common to both come from
-# --export as for the 4-GPU script, and the training command is the same. Logs: logs/slurm/<job-name>_<jobid>_{a,b}.log.
+# --export as for the 4-GPU script, and the training command is the same. Logs: logs/slurm/<job-name>_<jobid>[PAIR_LOG_TAG]_{a,b}.log.
 # Levanter does not initialise jax.distributed here (no cluster detected, as in the 4-GPU runs), so the two
 # single-process runs share nothing but the host.
 set -uo pipefail
@@ -35,7 +35,7 @@ for i in 0 1; do
   gpus=$([ $i = 0 ] && echo 0,1,2,3 || echo 4,5,6,7)
   # shellcheck disable=SC2086  # word-split the VAR=value assignments on purpose
   env ${specs[$i]} CUDA_VISIBLE_DEVICES=$gpus .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling \
-    > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}.log 2>&1 &
+    > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}${PAIR_LOG_TAG:-}_${names[$i]}.log 2>&1 &
   pids+=($!)
   echo "run ${names[$i]} [${specs[$i]}] on GPUs $gpus: pid ${pids[$i]} $(date +%H:%M:%S)"
 done
