@@ -65,7 +65,10 @@ parameter-count control (low-rank tables).
 ## Open risks
 
 - why-* jobs hold one run per lane: a run that fails twice (deterministic crash) leaves its 4 GPUs idle; Della cancels the
-  job after 90 idle minutes, taking the healthy partner with it. The retry covers transient crashes only.
+  job after 90 idle minutes, taking the healthy partner with it. The retry covers transient crashes only. Decision
+  (2026-10-07, delegated by the owner): keep the 8-GPU jobs. Each job first runs its own smoke copy of the same setting,
+  which catches a deterministic crash before either full run starts; an 8-GPU job starts sooner than two 4-GPU jobs, and
+  resubmitting would reset the queue age.
 - tools/packed_task.sh writes a ledger line only when timeout returns: a job ended by Slurm (wall, idle cancel, scancel)
   loses the running tasks' lines, and their hours count as other compute (tool owned by the controller).
 - The vo130 job's last step (128K, 8 passes) runs on 4 GPUs for about an hour while the other 4 idle (under 90 min).
