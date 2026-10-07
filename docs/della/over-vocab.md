@@ -151,6 +151,22 @@ indices costs OT 1.06-1.08 on seen data, 0.76 on unseen and 0.62 on c4_en. The s
 parameters against 2.5B repeated tokens. Next: tables frozen at the pass-2 start (14983240) separates "tables keep
 fitting" (MEDA) from "backbone adapts to trained rows" (Zhang).
 
+Tables frozen from pass 2 (14998403, OV_FREEZE_AT=4768; seen/unseen eval 15122853; 2026-10-07): final Paloma macro
++0.071 vs the baseline (OT +0.153), so freezing removes about half of the repetition damage. Its training loss tracks OT
+to step 9535 (-0.036, frozen slightly better) and jumps to +0.210 at exactly step 9536, the first step of pass 3, then
+shrinks slowly (+0.14 by the end). Not the data: the mixture feeds the same 2048 sequences per 16-step block in every
+pass (only the order inside a block changes, equally between passes 1/2 and 2/3; scripts/della/pass_order_check.py),
+and nothing in the forward pass reads the step. Cause: a frozen table keeps the rows it had when pass 1 ended, and a
+row was last trained when its text came by in pass 1. Rows of the first text were trained at steps 0-15 under a
+warmup-stage backbone; rows of the last text at step ~4767 under a trained one. OT refreshes every row in pass 2; the
+frozen run cannot, so at pass 3's start (the first text again) its tables hold almost nothing useful. Per-slice eval of
+the final checkpoints confirms the gradient: frozen minus OT on trained text falls smoothly with the pass-1 step of the
+slice, +0.196 (step 0), +0.181, +0.160, +0.136, +0.119, +0.097, +0.072, +0.036 (step 4449), with no break between
+slices seen 3x and 2x (so the "3x fits worse than 2x" result is a position effect); on the first slice the frozen
+model is even 0.032 worse than the baseline. On never-seen text it is 0.04 better than OT (less overfitting). Open:
+why the held-out loss drops sharply right after step 9536 (a guess: on early text the stale rows push the backbone to
+lean less on the tables).
+
 ### Real 2-gram output vocabulary (od_mode=hashed), 130m (2026-10-04, job 14952023)
 
 Paloma macro minus the seed-0 baseline 4.1798 at the final step: real 2-gram output vocabulary -0.0623, OT (product
