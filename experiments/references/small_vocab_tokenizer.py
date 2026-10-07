@@ -15,6 +15,7 @@ tokens map to their new ids. validate() checks this against encoding the decoded
 
     python -m experiments.references.small_vocab_tokenizer build K OUT_DIR
     python -m experiments.references.small_vocab_tokenizer validate K OUT_DIR N_DOCS
+    python -m experiments.references.small_vocab_tokenizer expansion-npz K OUT_DIR   (composed_vocab_qwen3.py's map)
 """
 
 import copy
@@ -129,3 +130,10 @@ if __name__ == "__main__":
         build(k, out)
     elif cmd == "validate":
         validate(k, out, int(sys.argv[4]))
+    elif cmd == "expansion-npz":   # the map of composed_vocab_qwen3.py: every full token's pieces under the K-token BPE
+        flat, offs = expansion(k, out)
+        np.savez(os.path.join(out, "expand_full.npz"), flat=flat, offs=offs)
+        lens = np.diff(offs)
+        print(f"K={k}: {len(lens)} tokens, {len(flat)} pieces, max {lens.max()} pieces, mean {lens[k:N_ORDINARY].mean():.2f} above K")
+    else:
+        raise SystemExit(f"unknown command {cmd!r}")
