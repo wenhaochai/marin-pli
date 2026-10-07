@@ -47,8 +47,8 @@ RUNS = [
     (S("Separate heads, weights summing to 1, gradient surgery", "独立头，权重合计为 1，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15055616, "130m-della4xh100-pls0.2-sep-pcg"), "9"),
     (S("Separate heads, weights rising with depth, gradient surgery", "独立头，权重随深度增加，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15055618, "130m-della4xh100-pls0.2-sep-shdepth-pcg"), "9"),
     (S("Separate heads, weight 1, gradient surgery", "独立头，权重 1，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15083130, "130m-della4xh100-pls1-sep-pcg"), "9"),
-    (S("Separate heads from step 300 (probes before)", "第 300 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15160667, "130m-della4xh100-pls1-sep-on300-400"), "10"),
-    (S("Separate heads from step 1,500 (probes before)", "第 1,500 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15160668, "130m-della4xh100-pls1-sep-on1500-1600"), "10"),
+    (S("Separate heads from step 300 (probes before)", "第 300 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15167337, "130m-della4xh100-pls1-sep-on300-400"), "10"),
+    (S("Separate heads from step 1,500 (probes before)", "第 1,500 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15167337, "130m-della4xh100-pls1-sep-on1500-1600"), "10"),
     (S("Separate heads, heads retrained (frozen backbone)", "独立头，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011512, "300m-della4xh100-pls1-sep-headft2000"), "11"),
     (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011513, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "11"),
 ]
@@ -144,11 +144,11 @@ LOGS = Path("/scratch/gpfs/GROUP/USER/project/marin-pls/logs/slurm")
 def log_runs(jid: str) -> set:
     """W&B run ids named in a job's Slurm log (empty when the log is gone)."""
     a, _, t = jid.partition("_")
-    files = list(LOGS.glob(f"*_{a}_{t}.out")) if t else list(LOGS.glob(f"*_{a}.out"))
+    files = list(LOGS.glob(f"*_{a}_{t}.out")) if t else list(LOGS.glob(f"*_{a}.out")) + list(LOGS.glob(f"*_{a}_[ab].log"))   # a pair job logs each run apart
     return {m for f in files for m in re.findall(r"wandb\.ai/reself/marin-della/runs/([A-Za-z0-9_.-]+)", f.read_text(errors="replace"))}
 
 
-MAIN = {}   # job id -> run id of its row
+MAIN = {}   # job id -> run id of its row (a pair job serves two rows; any one of them names it)
 for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
     if row["state"]["en"] == "Planned":
         continue
