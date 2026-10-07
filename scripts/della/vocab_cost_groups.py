@@ -29,7 +29,7 @@ TOK = {128000: os.path.dirname(glob.glob("/scratch/gpfs/GROUP/USER/cache/hugging
 TRAIN = {128000: f"{PREFIX}/fineweb-edu-10B/2026.06.28/train", 8000: f"{PREFIX}/fineweb-edu-10B-v8000/train"}
 # pair name -> (tokenizer K, full-data run, 8-pass run); a pair is skipped until both npz files exist
 PAIRS = {
-    "128K": (128000, "muonh-qwen3-300m-della4xh100-s1", "muonh-qwen3-300m-della4xh100-rep8-s1"),
+    "128K": (128000, "muonh-qwen3-300m-della4xh100-s1-rerun", "muonh-qwen3-300m-della4xh100-rep8-s1"),
     "8K": (8000, "muonh-qwen3-300m-della4xh100-v8k", "muonh-qwen3-300m-della4xh100-v8k-rep8"),
     "8K-s1": (8000, "muonh-qwen3-300m-della4xh100-v8k-s1", "muonh-qwen3-300m-della4xh100-v8k-rep8-s1"),
 }
