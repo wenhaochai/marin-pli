@@ -58,10 +58,10 @@ waitall() {   # start the lanes, then wait -n: report each background task or la
     unset "bgname[$pid]"
   done
 }
-retry_once() {   # a par or lane task: one more attempt after a failure that is not its time limit (124/137) or a run-id mismatch (3)
+retry_once() {   # a par or lane task: one more attempt after a failure that is not its time limit (124/137), a Slurm stop (143) or a run-id mismatch (3)
   local task=$1; shift
   "$@"; local rc=$?
-  if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 137 ] && [ $rc -ne 3 ]; then echo "TASK $task failed rc=$rc, retrying once $(date +%H:%M:%S)"; "$@"; rc=$?; fi
+  if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 137 ] && [ $rc -ne 143 ] && [ $rc -ne 3 ]; then echo "TASK $task failed rc=$rc, retrying once $(date +%H:%M:%S)"; "$@"; rc=$?; fi
   return $rc
 }
 while read -r mode task run kind gpus limit script vars; do
