@@ -47,8 +47,8 @@ RUNS = [
     (S("Separate heads, weights summing to 1, gradient surgery", "独立头，权重合计为 1，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15055616, "130m-della4xh100-pls0.2-sep-pcg"), "9"),
     (S("Separate heads, weights rising with depth, gradient surgery", "独立头，权重随深度增加，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15055618, "130m-della4xh100-pls0.2-sep-shdepth-pcg"), "9"),
     (S("Separate heads, weight 1, gradient surgery", "独立头，权重 1，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15083130, "130m-della4xh100-pls1-sep-pcg"), "9"),
-    (S("Separate heads from step 300 (probes before)", "第 300 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15167572, "130m-della4xh100-pls1-sep-on300-400"), "10"),
-    (S("Separate heads from step 1,500 (probes before)", "第 1,500 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15167572, "130m-della4xh100-pls1-sep-on1500-1600"), "10"),
+    (S("Separate heads from step 300 (probes before)", "第 300 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15168919, "130m-della4xh100-pls1-sep-on300-400"), "10"),
+    (S("Separate heads from step 1,500 (probes before)", "第 1,500 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15168919, "130m-della4xh100-pls1-sep-on1500-1600"), "10"),
     (S("Separate heads, heads retrained (frozen backbone)", "独立头，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011512, "300m-della4xh100-pls1-sep-headft2000"), "11"),
     (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011513, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "11"),
 ]
@@ -169,13 +169,27 @@ if [j for j in absent if sacct(j.split("_")[0])[0] != "PENDING"]:
 PACKED = Path(os.environ.get("PLS_PACKED_DIR", "/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed"))   # env: tests only
 
 
-def ledger(jid: str) -> list:
-    """A packed job's task ledger (tools/packed_task.sh): [{task, run, kind, gpus, start, end, exit}], or [] for a plain job."""
+LEDGER_COLS = ["task", "run", "kind", "gpus", "start", "end", "exit"]
+
+
+def ledger(jid: str):
+    """A packed job's task ledger (tools/packed_task.sh): [{task, run, kind, gpus, start, end, exit}], [] when the file
+    holds no task yet (every hour then goes to other), or None for a plain job. Header lines are skipped wherever they
+    stand (two tasks starting together can both write one); any other line that is not a full, numeric task line
+    raises (a truncated write is a loss to look at, not to guess around)."""
     f = PACKED / f"{jid}.tsv"
     if not f.exists():
-        return []
-    head, *lines = [l.split("\t") for l in f.read_text().splitlines() if l.strip()]
-    return [dict(zip(head, l)) for l in lines]
+        return None
+    out = []
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        cols = line.split("\t")
+        if not line.strip() or cols == LEDGER_COLS:
+            continue
+        ok = len(cols) == 7 and cols[2] in ("main", "other") and all(c.lstrip("-").isdigit() for c in cols[3:])
+        if not ok or int(cols[5]) < int(cols[4]):
+            raise RuntimeError(f"ledger {f} line {n} is not a task line: {line!r}")
+        out.append(dict(zip(LEDGER_COLS, cols)))
+    return out
 
 
 # H100-hours by line (template dcfd5a1, owner 2026-10-07). A plain job goes whole to main (it belongs to a row) or other.
@@ -185,7 +199,7 @@ def ledger(jid: str) -> list:
 hours = {"main": 0.0, "other": 0.0}; njobs = {"main": 0, "other": 0}; total = 0.0
 for jid, name, state, g, h in jobs:
     gh = g * h; total += gh; L = ledger(jid)
-    if not L:
+    if L is None:
         k = "main" if jid in MAIN else "other"; hours[k] += gh; njobs[k] += 1
         continue
     main_gh = sum(int(t["gpus"]) * (int(t["end"]) - int(t["start"])) / 3600 for t in L if t["kind"] == "main" and t["exit"] == "0")
@@ -199,13 +213,23 @@ if abs(hours["main"] + hours["other"] - total) > 1e-6:
 tot = {k: dict(h100_hours=round(hours[k]), jobs=njobs[k]) for k in ("main", "other")}
 print(f"check: main {hours['main']:.3f} + other {hours['other']:.3f} = {hours['main'] + hours['other']:.3f} GPU-h = sacct total {total:.3f}")
 for jid, name, state, g, h in sorted(jobs, key=lambda x: x[0]):
-    print(f"  {'packed' if ledger(jid) else 'main' if jid in MAIN else 'other':10s} {jid:12s} {name:28s} {state:14s} {g} x {h:6.2f} h = {g * h:7.1f} H100-h")
-# a row whose job is packed shows its own task's wall time, not the whole job's
+    print(f"  {'packed' if ledger(jid) is not None else 'main' if jid in MAIN else 'other':10s} {jid:12s} {name:28s} {state:14s} {g} x {h:6.2f} h = {g * h:7.1f} H100-h")
+# a row whose job is packed takes its own task's state and wall time, not the whole job's (audit 2026-10-07: a pair job
+# that ends FAILED or exits 3 can hold one finished run)
 for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
-    if src[0] == "slurm" and ledger(str(src[1])):
-        mine = [t for t in ledger(str(src[1])) if t["run"] == src[2]]
-        if mine:
-            row["hours"] = round(sum(int(t["end"]) - int(t["start"]) for t in mine) / 3600, 1)
+    L = ledger(str(src[1])) if src[0] == "slurm" else None
+    if L is None:
+        continue
+    mine = [t for t in L if t["run"] == src[2]]
+    if mine:
+        row["hours"] = round(sum(int(t["end"]) - int(t["start"]) for t in mine) / 3600, 1)
+        if mine[-1]["exit"] == "0":   # finished: links as for any finished run
+            run = wandb_run(src[2])
+            row.update(state=STATE["COMPLETED"], url=WB + src[2] if run is not None else "", code=code_url(run))
+        else:                         # stopped or failed: the row waits for its rerun; its time went to other
+            row.update(state=STATE["planned"], url="", code="", hours=0.0)
+    elif sacct(src[1])[0] not in ("PENDING", "RUNNING"):   # the job ended before this task did: rerun
+        row.update(state=STATE["planned"], url="", code="", hours=0.0)
 rec = dict(rows=rows, total=tot)
 OUT.write_text("/* Generated by build_record.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_RECORD = " + json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + ";\n")
 print("rows", len(rows), "| main runs", tot["main"], "| other compute", tot["other"], "->", OUT)
