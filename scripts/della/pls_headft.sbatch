@@ -32,4 +32,10 @@ echo "headft knobs: SIZE=$SIZE HEADS_FROM=$HEADS_FROM TOTAL_STEPS=$TOTAL_STEPS H
 ls -d "$HEADS_FROM"/step-* | tail -1
 
 nvidia-smi -L
-$PY -m experiments.references.della_muonh_qwen3_scaling
+if [ -z "${SMOKE_STEPS:-}" ]; then exec $PY -m experiments.references.della_muonh_qwen3_scaling; fi
+# smoke: a throwaway run; remove its checkpoints afterwards, only by this job's exact tagged name (audit 2026-10-07:
+# two 14 GB smoke dirs were left behind)
+rid=$(basename "$(dirname "$(DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's/^output: //p' || true)")")   # a failed dry run keeps the dir
+rc=0; $PY -m experiments.references.della_muonh_qwen3_scaling || rc=$?
+[[ $rid == *-j${SLURM_JOB_ID}-smoke${SMOKE_STEPS} ]] && rm -rf -- "$MARIN_PREFIX/speedrun/$rid" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$rid" || echo "smoke dir kept: run id '$rid' not this job's tagged smoke"
+exit $rc

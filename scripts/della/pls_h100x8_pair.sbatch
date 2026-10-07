@@ -25,8 +25,10 @@
 #   - a run that fails stops the other at once, and the job exits with its code;
 #   - after one run ends cleanly the other gets PAIR_GRACE_MIN (75) minutes; still running then, it is stopped
 #     (it resumes from its last checkpoint, saved every 10 min) and the job exits 3.
-# A task is stopped by TERM to its training process only, so packed_task.sh still writes its ledger line.
-set -uo pipefail
+# A task is stopped by TERM to its timeout, which passes it on, so packed_task.sh still writes its ledger line.
+# A training task with no first step after PAIR_FIRST_STEP_MIN (25) min or a silent log for PAIR_STALL_MIN (30) min is
+# stopped (a hung half must not hold 4 GPUs at 0%). Run ids come from CPU dry runs before any GPU task starts.
+set -euo pipefail   # every command that may fail below is written as `x=0; cmd || x=$?` or `|| true`
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
 PY=${PAIR_TEST_PY:-$PY}   # tests only: a stub in place of the launcher
@@ -45,6 +47,9 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 GRACE=$(( ${PAIR_GRACE_MIN:-75} * 60 ))
 SMOKE=${PAIR_SMOKE_STEPS:-30}
 TRAIN_LIMIT=${PAIR_TRAIN_LIMIT:-3h}
+FIRST_MIN=${PAIR_FIRST_STEP_MIN:-25}   # a training task with no first step by then is stopped (hang watchdog)
+STALL_MIN=${PAIR_STALL_MIN:-30}        # ... and one whose log stops growing for this long
+export PACKED_LEDGER_DIR=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed   # never the submit dir
 
 [ -n "${PAIR_A:-}" ] && [ -n "${PAIR_B:-}" ] || { echo "set PAIR_A and PAIR_B"; exit 2; }
 for s in "$PAIR_A" "$PAIR_B"; do
@@ -53,55 +58,80 @@ for s in "$PAIR_A" "$PAIR_B"; do
 done
 nvidia-smi -L || true
 
-specs=("$PAIR_A" "$PAIR_B"); names=(a b); gpus=(0,1,2,3 4,5,6,7); pids=()
+# the ledger header first: packed_task.sh writes it when the file is empty, and two tasks starting in the same second
+# could both do so (audit 2026-10-07)
+mkdir -p "$PACKED_LEDGER_DIR"; ledger=$PACKED_LEDGER_DIR/$SLURM_JOB_ID.tsv
+[[ -s $ledger ]] || printf 'task\trun\tkind\tgpus\tstart\tend\texit\n' > "$ledger"
+
+specs=("$PAIR_A" "$PAIR_B"); names=(a b); gpus=(0,1,2,3 4,5,6,7); pids=(); dogs=()
 stop() {   # $1 = a task's packed_task.sh pid. TERM its timeout (which passes it to the training process and then lets
   # packed_task.sh write the ledger line); after 90 s KILL what is left. timeout runs in its own process group.
-  local t; t=$(pgrep -P "$1" -x timeout 2>/dev/null | head -1)
-  [ -n "$t" ] && kill -TERM "$t" 2>/dev/null
+  local t; t=$(pgrep -P "$1" -x timeout 2>/dev/null | head -1 || true)
+  if [ -n "$t" ]; then kill -TERM "$t" 2>/dev/null || true; fi
   for _ in $(seq 1 18); do kill -0 "$1" 2>/dev/null || return 0; sleep 5; done
-  [ -n "$t" ] && kill -KILL -- "-$t" 2>/dev/null; kill -KILL "$1" 2>/dev/null || true
+  if [ -n "$t" ]; then kill -KILL -- "-$t" 2>/dev/null || true; fi; kill -KILL "$1" 2>/dev/null || true
 }
-trap 'for p in ${pids[*]:-}; do stop "$p"; done' EXIT
-run_id() {   # the run id the launcher builds for spec $1 plus extra assignments
+trap 'for d in ${dogs[*]:-}; do kill "$d" 2>/dev/null || true; done; for p in ${pids[*]:-}; do stop "$p"; done' EXIT
+run_id() {   # the run id the launcher builds for spec $1 plus extra assignments; a dry run on the CPU, no GPU touched
   # shellcheck disable=SC2086
-  basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 "$PY" -m $LAUNCH 2>/dev/null | sed -n 's/^output: //p')")"
+  basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>/dev/null | sed -n 's/^output: //p' || true)")"
 }
+watchdog() {   # $1 pid, $2 log: stop a training task that hangs (no first step after FIRST_MIN, or a silent log for STALL_MIN),
+  # so a hung half cannot hold 4 GPUs at 0% until Della cancels the whole job
+  local t0=$SECONDS
+  while kill -0 "$1" 2>/dev/null; do
+    sleep 60
+    if ! grep -q "First train step completed" "$2" 2>/dev/null && (( SECONDS - t0 > FIRST_MIN * 60 )); then
+      echo "watchdog: no first step in $2 after $FIRST_MIN min, stopping it $(date +%H:%M:%S)"; stop "$1"; return 0
+    fi
+    if (( $(date +%s) - $(stat -c %Y "$2" 2>/dev/null || date +%s) > STALL_MIN * 60 )); then
+      echo "watchdog: $2 silent for $STALL_MIN min, stopping it $(date +%H:%M:%S)"; stop "$1"; return 0
+    fi
+  done
+}
+
+# every run id first (dry runs on the CPU), before any task holds a GPU
+for i in 0 1; do
+  smoke_ids[$i]=$(run_id "${specs[$i]}" "SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}${names[$i]}")
+  [[ ${smoke_ids[$i]} == *-j${SLURM_JOB_ID}${names[$i]}-smoke$SMOKE ]] || { echo "bad smoke run id '${smoke_ids[$i]}' for ${specs[$i]}"; exit 2; }
+  run_ids[$i]=$(run_id "${specs[$i]}")
+  [[ ${run_ids[$i]} == muonh-qwen3-* ]] || { echo "bad run id '${run_ids[$i]}' for ${specs[$i]}"; exit 2; }
+done
+[ "${run_ids[0]}" != "${run_ids[1]}" ] || { echo "both halves would write run ${run_ids[0]}"; exit 2; }
 
 # 1. smoke copies, both halves at once
 for i in 0 1; do
-  sid=$(run_id "${specs[$i]}" "SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}${names[$i]}")
-  [[ $sid == *-j${SLURM_JOB_ID}${names[$i]}-smoke$SMOKE ]] || { echo "bad smoke run id '$sid' for ${specs[$i]}"; exit 2; }
-  smoke_ids[$i]=$sid
   # shellcheck disable=SC2086
   setsid env ${specs[$i]} SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}${names[$i]} CUDA_VISIBLE_DEVICES=${gpus[$i]} \
     bash $PT smoke-${names[$i]} - other 4 15m -- "$PY" -m $LAUNCH > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}-smoke.log 2>&1 &
   pids[$i]=$!
-  echo "smoke ${names[$i]} $sid on GPUs ${gpus[$i]}: pid ${pids[$i]} $(date +%H:%M:%S)"
+  echo "smoke ${names[$i]} ${smoke_ids[$i]} on GPUs ${gpus[$i]}: pid ${pids[$i]} $(date +%H:%M:%S)"
 done
 smoke_ok=1
 for i in 0 1; do
-  wait "${pids[$i]}"; r=$?
+  r=0; wait "${pids[$i]}" || r=$?
   echo "smoke ${names[$i]} exited rc=$r $(date +%H:%M:%S)"; [ $r -eq 0 ] || smoke_ok=0
-  # throwaway checkpoints: only this job's tagged smoke directory (never an empty or foreign id)
-  [[ ${smoke_ids[$i]} == *-j${SLURM_JOB_ID}${names[$i]}-smoke$SMOKE ]] && rm -rf -- "$MARIN_PREFIX/speedrun/${smoke_ids[$i]}"
+  # throwaway checkpoints, final and temporary: only this job's tagged smoke directory (never an empty or foreign id)
+  if [[ ${smoke_ids[$i]} == *-j${SLURM_JOB_ID}${names[$i]}-smoke$SMOKE ]]; then
+    rm -rf -- "$MARIN_PREFIX/speedrun/${smoke_ids[$i]}" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/${smoke_ids[$i]}"
+  fi
 done
 pids=()
 [ $smoke_ok = 1 ] || { echo "a smoke copy failed: no training"; exit 4; }
 
 # 2. training
 for i in 0 1; do
-  rid=$(run_id "${specs[$i]}")
-  [ -n "$rid" ] || { echo "no run id for ${specs[$i]}"; exit 2; }
+  log=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}.log
   # shellcheck disable=SC2086  # word-split the VAR=value assignments on purpose
   setsid env ${specs[$i]} CUDA_VISIBLE_DEVICES=${gpus[$i]} \
-    bash $PT train-${names[$i]} "${rid#muonh-qwen3-}" main 4 "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH \
-    > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}.log 2>&1 &
+    bash $PT train-${names[$i]} "${run_ids[$i]#muonh-qwen3-}" main 4 "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
   pids[$i]=$!
-  echo "run ${names[$i]} $rid [${specs[$i]}] on GPUs ${gpus[$i]}: pid ${pids[$i]} $(date +%H:%M:%S)"
+  watchdog "${pids[$i]}" "$log" & dogs[$i]=$!
+  echo "run ${names[$i]} ${run_ids[$i]} [${specs[$i]}] on GPUs ${gpus[$i]}: pid ${pids[$i]} $(date +%H:%M:%S)"
 done
 
-wait -n "${pids[@]}"; rc=$?
-first=-1; for i in 0 1; do kill -0 "${pids[$i]}" 2>/dev/null || first=$i; done
+rc=0; done_pid=; wait -n -p done_pid "${pids[@]}" || rc=$?
+first=0; [ "$done_pid" = "${pids[1]}" ] && first=1
 other=$((1 - first))
 echo "run ${names[$first]} exited first, rc=$rc $(date +%H:%M:%S)"
 if [ "$rc" -ne 0 ]; then
@@ -114,6 +144,6 @@ if kill -0 "${pids[$other]}" 2>/dev/null; then
   echo "run ${names[$other]} still running after ${PAIR_GRACE_MIN:-75} min alone: stopping it so the idle GPUs do not cancel the job; resume it"
   stop "${pids[$other]}"; wait "${pids[$other]}" 2>/dev/null || true; pids=(); exit 3
 fi
-wait "${pids[$other]}"; rc2=$?
+rc2=0; wait "${pids[$other]}" || rc2=$?
 echo "run ${names[$other]} exited rc=$rc2 $(date +%H:%M:%S)"
 pids=(); exit "$rc2"
