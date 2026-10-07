@@ -26,9 +26,14 @@ SRC = {"128K": (f"{PREFIX}/fineweb-edu-10B/2026.06.28/train", f"{PREFIX}/../cach
 EPOCHS, BATCH, SEQ = 8, 128, 4096
 
 
-def token_bytes(tok_dir: str) -> np.ndarray:
+def tok_path(tok_dir: str) -> str:
+    """The directory holding tokenizer.json (an HF snapshot for the Marin tokenizer)."""
     import glob
-    path = (glob.glob(f"{tok_dir}/snapshots/*/tokenizer.json") or [f"{tok_dir}/tokenizer.json"])[0]
+    return os.path.dirname((glob.glob(f"{tok_dir}/snapshots/*/tokenizer.json") or [f"{tok_dir}/tokenizer.json"])[0])
+
+
+def token_bytes(tok_dir: str) -> np.ndarray:
+    path = os.path.join(tok_path(tok_dir), "tokenizer.json")
     t = json.load(open(path))
     vocab = t["model"]["vocab"]
     n = max(max(vocab.values()), max(a["id"] for a in t["added_tokens"])) + 1
@@ -40,10 +45,10 @@ def token_bytes(tok_dir: str) -> np.ndarray:
     return out
 
 
-def part(path: str, steps: int):
+def part(path: str, tok_dir: str, steps: int):
     src = UrlDatasetSourceConfig(tags=[], train_urls=[], validation_urls=[], cache_dir=os.path.dirname(path), format=TextLmDatasetFormat())
     comp = DatasetComponent(source=src, cache_dir=src.cache_dir, format=src.format, tags=[])
-    cfg = LmDataConfig(components={"fineweb-edu-10B": comp}, train_weights={"fineweb-edu-10B": 1.0}, tokenizer=None, cache_dir=None,
+    cfg = LmDataConfig(components={"fineweb-edu-10B": comp}, train_weights={"fineweb-edu-10B": 1.0}, tokenizer=tok_path(tok_dir), cache_dir=None,
                        shuffle=True, permutation_type="linear", max_train_batches={"fineweb-edu-10B": round(steps / EPOCHS)})
     _, shuffle_key = jax.random.split(jax.random.PRNGKey(42))
     return cfg.train_sets(Axis("position", SEQ), initial_batch_size=BATCH, key=shuffle_key)["fineweb-edu-10B"]
@@ -62,7 +67,7 @@ async def count(ds, table):
 
 res = {}
 for name, (path, tok_dir, steps) in SRC.items():
-    ds = part(path, steps)
+    ds = part(path, tok_dir, steps)
     n, toks, b = asyncio.run(count(ds, token_bytes(tok_dir)))
     res[name] = dict(sequences=n, tokens=toks, bytes=b, bytes_per_token=b / toks)
     print(name, res[name], flush=True)
