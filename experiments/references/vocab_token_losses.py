@@ -77,7 +77,7 @@ def model_config():
     common = dict(max_seq_len=SEQ_LEN, hidden_dim=h, intermediate_dim=inter, num_layers=layers, num_heads=heads, num_kv_heads=kv,
                   hybrid_norm=True, attn_backend=AttentionBackend.JAX_FLASH)
     if VARIANT == "cv":
-        return ComposedVocabQwen3Config(**common, cv_map=f"{PREFIX}/tokenizers/marin-small/v8000/expand_full.npz",
+        return ComposedVocabQwen3Config(**common, cv_map=f"{PREFIX}/tokenizers/marin-small/v{int(os.environ.get('CV_K', '8000'))}/expand_full.npz",
                                         cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"))
     assert VARIANT == "baseline", VARIANT
     return Qwen3Config(**common)

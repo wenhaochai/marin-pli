@@ -11,12 +11,17 @@ import sys
 plans = sys.argv[1:] or sorted(glob.glob("logs/plans/*.txt"))
 bad = 0
 for plan in plans:
-    block = []
+    block, lanes = [], {}
     for n, line in enumerate(open(plan), 1):
         f = line.split()
         if not f or f[0].startswith("#"):
             continue
         if f[0] == "wait":
+            for ln, sets in lanes.items():
+                if len(sets) != 1:
+                    print(f"BAD {plan}:{n}: {ln} uses several GPU sets {sets}"); bad += 1
+            block += [next(iter(v)).split(",") for v in lanes.values()]
+            lanes = {}
             gpus = [g for t in block for g in t]
             if len(gpus) != len(set(gpus)):
                 print(f"BAD {plan}:{n}: par tasks share GPUs {gpus}"); bad += 1
@@ -24,12 +29,15 @@ for plan in plans:
             continue
         mode, task, run, kind, ngpu, limit, script, *vars_ = f
         env = dict(v.replace("+", " ").split("=", 1) for v in vars_)
-        if mode not in ("smoke", "seq", "par") or kind not in ("main", "other") or ngpu not in ("4", "8") or not re.fullmatch(r"\d+[smhd]?(\d+m)?", limit.replace("h", "h", 1)) and not re.fullmatch(r"\d+h\d+m", limit):
+        # timeout(1) takes one number with one optional unit: 390m, 6.5h, 7h; "6h30m" is rejected (rc 125)
+        if not (mode in ("smoke", "seq", "par") or mode.startswith("lane=")) or kind not in ("main", "other") or ngpu not in ("4", "8") or not re.fullmatch(r"\d+(\.\d+)?[smhd]?", limit):
             print(f"BAD {plan}:{n}: fields {f[:7]}"); bad += 1
         if not os.path.exists(script):
             print(f"BAD {plan}:{n}: no script {script}"); bad += 1
         if mode == "par":
             block.append(env.get("CUDA_VISIBLE_DEVICES", "all").split(","))
+        elif mode.startswith("lane="):   # one lane runs its tasks in turn on one GPU set; lanes must not share GPUs
+            lanes.setdefault(mode, set()).add(env.get("CUDA_VISIBLE_DEVICES", "all"))
         if mode == "smoke":
             continue
         out = subprocess.run([".venv/bin/python", "-m", "experiments.references.della_muonh_qwen3_scaling"], env={**os.environ, **env, "DRY_RUN": "1"},

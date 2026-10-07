@@ -1,10 +1,13 @@
 """Grouped cost of 8 passes for blogs/vocab-overfitting.html Q4-Q6, from vocab_token_losses.py outputs.
 
 For a tokenizer's pair (full-data run, 8-pass run), the per-position Paloma losses line up position by position. The
-cost of a group of positions is sum(loss_rep - loss_full) / ln 2 / sum(bytes of the predicted tokens), in bits per byte,
-over all 16 Paloma subsets pooled (positions with loss weight 0 excluded). Groups:
+cost of a group of positions in one Paloma subset is sum(loss_rep - loss_full) / ln 2 / sum(bytes of the predicted
+tokens), in bits per byte (positions with loss weight 0 excluded); the reported cost is the mean over the 16 subsets
+(macro, as the page's bars and W&B's paloma macro), and the cost over all positions pooled is kept as "pooled". The
+128K-vs-8K comparison uses seed-matched pairs (seed 1 for both); the 8K seed-0 pair is kept as a check. Groups:
   input:   frequency decile of the input token at the position (1 = rarest), by its count in the first 200M tokens of
-           the tokenizer's fineweb-edu-10B training cache; deciles hold equal numbers of positions;
+           the tokenizer's fineweb-edu-10B training cache; deciles hold equal numbers of positions over all subsets,
+           ties at a decile boundary broken at random (fixed seed);
   target:  the same for the token being predicted;
   context: bytes of context before the predicted token (from the window start or the last end-of-text token, whichever
            is later), in bins 0-64, 64-128, ... doubling, 16K and above.
@@ -71,22 +74,26 @@ def train_counts(k, n_vocab, n_tokens=200_000_000):
 
 
 def pooled(npz_full, npz_rep):
-    """Concatenated (tokens [n,T], loss diff [n,T], weight [n,T]) over the 16 subsets, checking the windows match."""
+    """Concatenated (tokens [n,T], loss diff [n,T], weight [n,T], subset index [n]) over the 16 subsets, checking the
+    windows match."""
     f, r = np.load(npz_full), np.load(npz_rep)
     subs = sorted(k[:-len("/loss")] for k in f.files if k.endswith("/loss"))
-    tok, d, w = [], [], []
-    for s in subs:
+    tok, d, w, sub = [], [], [], []
+    for i, s in enumerate(subs):
         assert np.array_equal(f[f"{s}/tokens"], r[f"{s}/tokens"]), f"{s}: the two runs saw different windows"
         tok.append(f[f"{s}/tokens"]); d.append(r[f"{s}/loss"].astype(np.float64) - f[f"{s}/loss"]); w.append(f[f"{s}/weight"].astype(np.float64))
-    return np.concatenate(tok), np.concatenate(d), np.concatenate(w)
+        sub.append(np.full(len(tok[-1]), i))
+    assert len(subs) == 16, subs
+    return np.concatenate(tok), np.concatenate(d), np.concatenate(w), np.concatenate(sub)
 
 
-def group_cost(key, d, w, b, edges=None, deciles=False):
-    """Cost in bits per byte of each group of positions. key: the grouping value per position."""
+def group_cost(key, d, w, b, sub, edges=None, deciles=False):
+    """Cost in bits per byte of each group of positions: macro (mean over subsets of each subset's cost) and pooled.
+    key: the grouping value per position; sub: the subset index per position."""
     m = w > 0
-    key, d, w, b = key[m], d[m], w[m], b[m]
-    if deciles:   # equal numbers of positions, rarest first
-        order = np.argsort(key, kind="stable")
+    key, d, w, b, sub = key[m], d[m], w[m], b[m], sub[m]
+    if deciles:   # equal numbers of positions, rarest first; random order among equal keys
+        order = np.lexsort((np.random.default_rng(0).random(len(key)), key))
         gid = np.empty(len(key), np.int64)
         gid[order] = np.arange(len(key)) * 10 // len(key)
         G = 10
@@ -96,7 +103,12 @@ def group_cost(key, d, w, b, edges=None, deciles=False):
     num = np.bincount(gid, weights=w * d, minlength=G) / np.log(2)
     den = np.bincount(gid, weights=w * b, minlength=G)
     n = np.bincount(gid, minlength=G)
-    return [float(x) for x in num / np.maximum(den, 1)], [int(x) for x in n]
+    S = int(sub.max()) + 1
+    cell = gid * S + sub
+    snum = np.bincount(cell, weights=w * d, minlength=G * S).reshape(G, S) / np.log(2)
+    sden = np.bincount(cell, weights=w * b, minlength=G * S).reshape(G, S)
+    macro = [float(np.mean(snum[g][sden[g] > 0] / sden[g][sden[g] > 0])) if (sden[g] > 0).any() else None for g in range(G)]
+    return macro, [float(x) for x in num / np.maximum(den, 1)], [int(x) for x in n]
 
 
 res = json.load(open(OUT)) if os.path.exists(OUT) else {}
@@ -107,7 +119,8 @@ for pair, (k, full, rep) in PAIRS.items():
         continue
     nbytes, eos, nv = tables(k)
     counts = train_counts(k, nv)
-    tok, d, w = pooled(pf, pr)
+    tok, d, w, sub = pooled(pf, pr)
+    sub = np.repeat(sub[:, None], tok.shape[1], axis=1)
     tgt = np.roll(tok, -1, axis=1)                  # loss at position t predicts token t+1
     b_tgt = nbytes[tgt].astype(np.float64)
     # bytes of context before the predicted token: bytes of tokens 0..t since the window start or the last end-of-text
@@ -116,12 +129,16 @@ for pair, (k, full, rep) in PAIRS.items():
     reset = np.where(tok == eos, cum, 0)
     last = np.maximum.accumulate(reset, axis=1)
     ctx = (cum - last).astype(np.float64)
-    out = {"input": dict(zip(("cost", "n"), group_cost(counts[tok].astype(np.float64), d, w, b_tgt, deciles=True))),
-           "target": dict(zip(("cost", "n"), group_cost(counts[tgt].astype(np.float64), d, w, b_tgt, deciles=True))),
-           "context": dict(zip(("cost", "n"), group_cost(ctx, d, w, b_tgt, edges=CTX_EDGES)), edges=CTX_EDGES[:-1]),
-           "total": float((w * d).sum() / np.log(2) / (w * b_tgt).sum())}
+    keys = ("cost", "pooled", "n")
+    out = {"input": dict(zip(keys, group_cost(counts[tok].astype(np.float64), d, w, b_tgt, sub, deciles=True))),
+           "target": dict(zip(keys, group_cost(counts[tgt].astype(np.float64), d, w, b_tgt, sub, deciles=True))),
+           "context": dict(zip(keys, group_cost(ctx, d, w, b_tgt, sub, edges=CTX_EDGES)), edges=CTX_EDGES[:-1]),
+           "pooled_total": float((w * d).sum() / np.log(2) / (w * b_tgt).sum())}
+    m = w > 0
+    per_sub = [((w * d)[(sub == i) & m].sum() / np.log(2)) / (w * b_tgt)[(sub == i) & m].sum() for i in range(16)]
+    out["macro_total"] = float(np.mean(per_sub))
     res[pair] = out
-    print(pair, "total", round(out["total"], 4), "| input", [round(x, 3) for x in out["input"]["cost"]], "| target", [round(x, 3) for x in out["target"]["cost"]],
+    print(pair, "macro total", round(out["macro_total"], 4), "pooled", round(out["pooled_total"], 4), "| input", [round(x, 3) for x in out["input"]["cost"]], "| target", [round(x, 3) for x in out["target"]["cost"]],
           "| context", [round(x, 3) for x in out["context"]["cost"]], flush=True)
 json.dump(res, open(OUT, "w"), indent=1)
 print("written", OUT)
