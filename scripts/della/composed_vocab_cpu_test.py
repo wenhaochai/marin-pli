@@ -10,6 +10,8 @@ Run from the marin repo on a vis node: nice -n 19 .venv/bin/python scripts/della
    the plain model's table gradient pulled back through the mean (numpy).
 4. MuonH labels the small input table 'adam' and the small head 'adamh', as for the baseline's tables, and the trunk 'muonh'.
 5. Parameter counts: the composed side holds 8,256 rows instead of 128,256.
+6. Init: the small rows equal the baseline's rows of the tokens below 8K and the specials (same key), the other
+   table and the trunk equal the baseline's; a bf16 table composes in f32 and comes back as bf16.
 """
 import os
 
@@ -79,6 +81,28 @@ ex = LmExample(tokens=tokens, loss_weight=hax.ones((Batch, Pos)).at[Pos, T - 1].
 for side in ("in", "out", "both"):
     cfg = ComposedVocabQwen3Config(**common, cv_map=MAP, cv_input=side in ("in", "both"), cv_output=side in ("out", "both"))
     m = ComposedVocabQwen3LMHeadModel.init(Vocab, cfg, key=jrandom.PRNGKey(0))
+    # 2a. init: the small rows are the baseline's rows of the tokens below K and the specials (same key)
+    base = Qwen3LMHeadModel.init(Vocab, Qwen3Config(**common), key=jrandom.PRNGKey(0))
+    own = np.concatenate([np.arange(K), np.arange(V - 256, V)])
+    if cfg.cv_input:
+        bw = np.asarray(base.embeddings.token_embeddings.weight.rearrange(("vocab", "embed")).array)[own]
+        check(f"[{side}] init: input small rows = baseline rows", np.array_equal(np.asarray(m.embeddings.token_embeddings.weight.rearrange(("small_vocab", "embed")).array), bw))
+    else:
+        check(f"[{side}] init: input table = baseline", np.array_equal(np.asarray(m.embeddings.token_embeddings.weight.array), np.asarray(base.embeddings.token_embeddings.weight.array)))
+    if cfg.cv_output:
+        bw = np.asarray(base.lm_head.weight.rearrange(("vocab", "embed")).array)[own]
+        check(f"[{side}] init: output small rows = baseline rows", np.array_equal(np.asarray(m.lm_head.weight.rearrange(("small_vocab", "embed")).array), bw))
+    else:
+        check(f"[{side}] init: head = baseline", np.array_equal(np.asarray(m.lm_head.weight.array), np.asarray(base.lm_head.weight.array)))
+    tb = jax.tree_util.tree_leaves(base.transformer); tm = jax.tree_util.tree_leaves(m.transformer)
+    check(f"[{side}] init: trunk = baseline", all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(tm, tb)))
+    # 2b. bf16 tables compose in f32 and come back in bf16
+    if cfg.cv_output:
+        from experiments.references.composed_vocab_qwen3 import compose
+        wb = m.lm_head.weight.astype(jnp.bfloat16)
+        cb = compose(wb, Vocab, cfg.Embed, MAP)
+        ref = mean_rows(np.asarray(wb.rearrange(("small_vocab", "embed")).array, np.float64))
+        check(f"[{side}] bf16 compose: dtype bf16, f32-accurate mean", cb.dtype == jnp.bfloat16 and np.allclose(np.asarray(cb.rearrange(("vocab", "embed")).array, np.float64), ref, atol=1e-2, rtol=1e-2))
     # 2. composition, against numpy
     full = plain_with(m)
     if cfg.cv_input:
