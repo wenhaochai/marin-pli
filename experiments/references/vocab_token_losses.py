@@ -25,7 +25,7 @@ import numpy as np
 import haliax as hax
 from haliax import Axis
 from haliax.partitioning import ResourceAxis, round_axis_for_partitioning
-from levanter.data import DataLoader
+from levanter.data.loader import DataLoader
 from levanter.data.text.datasets import DatasetComponent, LmDataConfig, UrlDatasetSourceConfig
 from levanter.data.text.formats import TextLmDatasetFormat
 from levanter.layers.attention import AttentionBackend
@@ -47,6 +47,8 @@ CV_SIDE = os.environ.get("CV_SIDE", "in")
 SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
 PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
 EVAL_BATCH = int(os.environ.get("EVAL_BATCH", "8"))
+ONLY = os.environ.get("ONLY", "").split()          # test: these subsets only
+MAX_WINDOWS = int(os.environ.get("MAX_WINDOWS", "0"))   # test: the first windows of each subset only
 HIDDEN = {"130m": (512, 1792, 6, 8, 8), "300m": (768, 2688, 12, 12, 12), "520m": (1024, 3584, 24, 16, 8)}
 
 
@@ -104,8 +106,13 @@ def main():
             return loss.array, ex.loss_weight.array, ex.tokens.array
 
         for name, ds in data.validation_sets(Pos).items():
+            if ONLY and name not in ONLY:
+                continue
             t0 = time.time()
             n = len(ds.as_sync_dataset())
+            if MAX_WINDOWS:
+                n = min(n, MAX_WINDOWS)
+                ds = ds.slice_dataset(end_index=n)
             losses, weights, tokens = [], [], []
             for batch in DataLoader(ds, trainer.EvalBatch, mesh=trainer.device_mesh, axis_resources=trainer.compute_axis_mapping):
                 l, w, t = per_position(model, batch)
