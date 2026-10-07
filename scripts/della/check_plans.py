@@ -30,7 +30,7 @@ for plan in plans:
         mode, task, run, kind, ngpu, limit, script, *vars_ = f
         env = dict(v.replace("+", " ").split("=", 1) for v in vars_)
         # timeout(1) takes one number with one optional unit: 390m, 6.5h, 7h; "6h30m" is rejected (rc 125)
-        if not (mode in ("smoke", "seq", "par") or mode.startswith("lane=")) or kind not in ("main", "other") or ngpu not in ("4", "8") or not re.fullmatch(r"\d+(\.\d+)?[smhd]?", limit):
+        if not (mode in ("smoke", "seq", "par") or mode.startswith("lane=")) or kind not in ("main", "other") or ngpu not in ("1", "4", "8") or not re.fullmatch(r"\d+(\.\d+)?[smhd]?", limit):
             print(f"BAD {plan}:{n}: fields {f[:7]}"); bad += 1
         if not os.path.exists(script):
             print(f"BAD {plan}:{n}: no script {script}"); bad += 1
