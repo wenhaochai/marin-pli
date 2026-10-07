@@ -24,16 +24,20 @@ export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FR
 export SMOKE_STEPS=${SMOKE_STEPS:-60} RUN_TAG=-j${SLURM_JOB_ID}
 nvidia-smi -L
 fail=0
+# SMOKE_ENVS: ';'-separated sets of VAR=value assignments, each run as its own smoke for every SIZE x VARIANT (e.g.
+# "VARIANT=cv CV_SIDE=in;BATCH=96"); empty runs each SIZE x VARIANT once as before.
+IFS=';' read -ra ENVSETS <<< "${SMOKE_ENVS:-}"; [ ${#ENVSETS[@]} -eq 0 ] && ENVSETS=("")
 for SIZE in ${SIZES:-130m 300m}; do
   for VARIANT in ${VARIANTS:-ov ovss}; do
+  for ENVSET in "${ENVSETS[@]}"; do
     export SIZE VARIANT
-    run_id=$(DRY_RUN=1 .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p')
-    [ -n "$run_id" ] || { echo "SMOKE $SIZE $VARIANT: the dry run gave no run id"; fail=1; continue; }
+    run_id=$(env $ENVSET DRY_RUN=1 .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p')
+    [ -n "$run_id" ] || { echo "SMOKE $SIZE $VARIANT $ENVSET: the dry run gave no run id"; fail=1; continue; }
     log=logs/slurm/ov-smoke_${SLURM_JOB_ID}_${run_id}.log
     echo "SMOKE $run_id START $(date +%H:%M:%S)"
     nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -l 2 > $log.mem &
     mpid=$!
-    timeout --signal=TERM ${RUN_TIMEOUT:-20m} .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
+    timeout --signal=TERM ${RUN_TIMEOUT:-20m} env $ENVSET .venv/bin/python -m experiments.references.della_muonh_qwen3_scaling > $log 2>&1
     rc=$?
     kill $mpid
     peak=$(sort -n $log.mem | tail -1)
@@ -54,6 +58,7 @@ except Exception as e:
     print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} wandb_error={str(e)[:160]} err='{err}'", flush=True)
 PY
     case "$run_id" in *-j${SLURM_JOB_ID}*) rm -rf "$MARIN_PREFIX/speedrun/$run_id" ;; *) echo "kept speedrun/'$run_id': not a run of this job" ;; esac   # never the whole speedrun/ (empty run_id)
+  done
   done
 done
 echo "SMOKE DONE $(date +%H:%M:%S) fail=${fail:-0}"

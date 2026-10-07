@@ -63,6 +63,7 @@ from experiments.datasets.prebuilt_caches import fineweb_edu_10B_dataset
 from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
+from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.focal_qwen3 import FocalQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
 from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
@@ -92,7 +93,11 @@ VERSION = "2026.09.13"
 # accumulation. Used by OV at 520m/1_2b, whose hashed n-gram tables need the memory. Run ids carry della{NUM_GPUS}x.
 NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 PDP = int(os.environ["PDP"]) if os.environ.get("PDP") else None
-SEQ_LEN = 4096
+# SEQ_LEN / BATCH override the sequence length (default 4096) and sequences per step (default the size's); the step count
+# scales so a run reads the same tokens (vocabulary Q6: a 3072-token window holds about the bytes of 4096 8K tokens;
+# Q7: batch 96 gives 128K about the 8K run's step count). Run tags -sl<SEQ_LEN>, -b<BATCH>.
+SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
+BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
@@ -204,6 +209,12 @@ DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
 # text: the step count grows by the token ratio of the converted training data, so a run reads the same text the same
 # number of passes (with DATA_EPOCHS too). Compare runs by bits per byte. Run ids get -v<K/1000>k.
 VOCAB_K = int(os.environ.get("VOCAB_K", "0"))
+# VARIANT=cv: the Marin tokenizer with its input embedding (CV_SIDE=in), output head (out) or both composed from the rows of
+# its CV_K-token truncation (composed_vocab_qwen3.py; vocabulary Q4 and Q5). Run tag -cv<side><CV_K/1000>k.
+CV_SIDE = os.environ.get("CV_SIDE", "in")
+CV_K = int(os.environ.get("CV_K", "8000"))
+if CV_SIDE not in ("in", "out", "both"):
+    raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
 _PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
 
 
@@ -237,7 +248,9 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", *OBJECTIVE_VARIANTS):
+if VARIANT == "cv" and VOCAB_K:
+    raise ValueError("VARIANT=cv keeps the Marin tokenizer: unset VOCAB_K")
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -264,6 +277,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
     if VOCAB_K:
         s = dict(s, steps=round(s["steps"] * _vocab_ratio(VOCAB_K)))   # fixed text: more steps for the same text
+    if BATCH or SEQ_LEN != 4096:   # the same tokens in steps of BATCH x SEQ_LEN
+        b = BATCH or s["batch"]
+        s = dict(s, batch=b, steps=round(s["steps"] * s["batch"] * 4096 / (b * SEQ_LEN)))
     variant_tags = (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + ("-tied" if TIE else "")
     if VARIANT == "fbt":
         variant_tags += ("-nonoise" if FBT_NOISE == 0 else "") + ("-res" if FBT_RESIDUAL else "")
@@ -288,6 +304,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "") + (f"-oefreeze{OV_FREEZE_AT}" if OV_FREEZE_AT else "")
     if VARIANT in ("focal", "ovfocal"):
         variant_tags += f"-focal{FOCAL_GAMMA:g}"
+    if VARIANT == "cv":
+        variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -308,6 +326,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-rep{DATA_EPOCHS:g}"
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
+    if SEQ_LEN != 4096:
+        variant_tags += f"-sl{SEQ_LEN}"
+    if BATCH:
+        variant_tags += f"-b{BATCH}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
     run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
@@ -368,6 +390,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         )
     elif VARIANT == "focal":
         model_cls, model_extra = FocalQwen3Config, dict(focal_gamma=FOCAL_GAMMA)
+    elif VARIANT == "cv":
+        cv_map = f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz"
+        if not os.path.exists(cv_map):
+            raise FileNotFoundError(f"{cv_map} is missing: run small_vocab_tokenizer expansion-npz {CV_K} first")
+        model_cls, model_extra = ComposedVocabQwen3Config, dict(cv_map=cv_map, cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"))
     elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
         model_cls, model_extra = OverVocabQwen3Config, dict(
