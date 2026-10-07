@@ -205,12 +205,19 @@ print("fig-fix last layer", {n["en"]: round(float(y[-1]), 3) for y, n, _, _ in S
 # Figure 9 (placeholder until the runs finish): the shape of the layer-loss weights (uniform 0.2, or rising with depth,
 # k/15; both sum to 1) crossed with per-token gradient surgery at every layer output, plus surgery at weight 1 (owner,
 # 2026-10-05: every layer should sit low, not only the last); separate heads at weight 1 and the ordinary models as references (colours as approved in the owner's popup, 2026-10-05)
+MIX = [(Z["-pls1-sep/final"], {"en": "Separate heads", "zh": "独立头"}, BLUE7), ("-pls0.2-sep", {"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9),
+       ("-pls0.2-sep-shdepth", {"en": "Weights rising with depth", "zh": "权重随深度增加"}, CYAN9), ("-pls0.2-sep-pcg", {"en": "Summing to 1, gradient surgery", "zh": "合计为 1，处理梯度冲突"}, PURPLE),
+       ("-pls0.2-sep-shdepth-pcg", {"en": "Rising with depth, gradient surgery", "zh": "随深度增加，处理梯度冲突"}, PINK7), ("-pls1-sep-pcg", {"en": "Weight 1, gradient surgery", "zh": "权重 1，处理梯度冲突"}, "#0D652D")]
+legend9 = [[n, c, "line"] for _, n, c in MIX] + [[{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]]
+done9 = [(src if not isinstance(src, str) else FX[src + "/final"], c) for src, _, c in MIX if not isinstance(src, str) or src + "/final" in FX] + [(cy, GREY)]
+if len(done9) > 3:   # some Figure 9 run has finished: draw the finished ones, the rest join as they finish
+    marks9 = sum(([line(fit(x6, y), c), dots(pts(x6, y), c)] for y, c in done9), [])
+    v9 = view(np.tile(x6, len(done9)), np.concatenate([y for y, _ in done9]), endpoints_only=True)
+    p9 = dict(**v9, marks=marks9)
+else:
+    p9 = empty_view(list(x6), 2.9, 5.0, QUEUED)
 figs["fig-mix"] = dict(title={"en": "Final training loss by layer, weight shape and gradient surgery, 130m", "zh": "按权重形状和梯度冲突处理的各层最终训练损失，130m"},
-                       legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Layer losses summing to 1", "zh": "各层损失权重合计为 1"}, YELLOW9, "line"],
-                               [{"en": "Weights rising with depth", "zh": "权重随深度增加"}, CYAN9, "line"], [{"en": "Summing to 1, gradient surgery", "zh": "合计为 1，处理梯度冲突"}, PURPLE, "line"],
-                               [{"en": "Rising with depth, gradient surgery", "zh": "随深度增加，处理梯度冲突"}, PINK7, "line"],
-                               [{"en": "Weight 1, gradient surgery", "zh": "权重 1，处理梯度冲突"}, "#0D652D", "line"], [{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]],
-                       quantity=CE, xlabel=XL, height=320, panels=[empty_view(list(x6), 2.9, 5.0, QUEUED)])
+                       legend=legend9, quantity=CE, xlabel=XL, height=320, panels=[p9])
 
 # Figure 10: the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
