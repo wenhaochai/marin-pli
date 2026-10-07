@@ -14,7 +14,8 @@ uses them. The question is whether the rows of rare tokens are where repeated da
 ``cv_input`` composes the input embedding (Q4), ``cv_output`` the output head (Q5). The small tables live where the full
 ones did (``embeddings.token_embeddings`` and ``lm_head``), so MuonH's mask keeps them on Adam and AdamH, as for the
 baseline. The full table is rebuilt every forward pass from the small one (a gather of every token's pieces and a
-segment mean, about 0.3M rows), and the gradient flows back through the mean. Evaluation goes through the same two
+segment mean in f32, about 0.37M rows), and the gradient flows back through the mean. The small tables start as the
+baseline's own rows of the tokens below K and the specials (same key, same draw). Evaluation goes through the same two
 entry points (``activations`` and ``get_lm_head``), so eval/paloma numbers are the composed model's.
 
 The map is ``expand_full.npz`` (flat piece ids and per-token offsets) in the K-token tokenizer's directory, written by
@@ -29,7 +30,6 @@ from typing import Optional
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
 import numpy as np
 
 import haliax as hax
@@ -82,8 +82,22 @@ def compose(small: NamedArray, Full: Axis, Embed: Axis, path: str) -> NamedArray
     w = small.rearrange((SMALL, Embed.name)).array
     if w.shape[0] != n_small:
         raise ValueError(f"small table has {w.shape[0]} rows, the map uses {n_small}")
-    summed = jax.ops.segment_sum(w[jnp.asarray(flat)], jnp.asarray(rows), num_segments=Full.size, indices_are_sorted=True)
-    return hax.named(summed / jnp.asarray(counts, dtype=summed.dtype)[:, None], (Full, Embed))
+    # f32: the trainer hands the model over in bf16, and the backward of the gather scatter-adds ~0.37M rows into 8,256;
+    # in bf16 a common piece's thousands of terms would lose the small ones (the baseline's head gradient is an f32-accumulated matmul)
+    w32 = w.astype(jnp.float32)
+    summed = jax.ops.segment_sum(w32[jnp.asarray(flat)], jnp.asarray(rows), num_segments=Full.size, indices_are_sorted=True)
+    return hax.named((summed / jnp.asarray(counts, dtype=jnp.float32)[:, None]).astype(w.dtype), (Full, Embed))
+
+
+def own_rows(path: str, V: int) -> np.ndarray:
+    """Full-token id of each small row: the K tokens below K, then the 256 specials (checked against the map)."""
+    flat, rows, counts, n_small = load_map(path)
+    k = n_small - 256
+    own = np.concatenate([np.arange(k), np.arange(V - 256, V)])
+    offs = np.concatenate([[0], np.cumsum(counts.astype(np.int64))])
+    if not all(counts[t] == 1 and flat[offs[t]] == s for s, t in enumerate(own)):
+        raise ValueError(f"{path}: small row s is not the own piece of token own[s]")
+    return own
 
 
 class ComposedVocabQwen3LMHeadModel(Qwen3LMHeadModel):
@@ -100,12 +114,18 @@ class ComposedVocabQwen3LMHeadModel(Qwen3LMHeadModel):
         if Vocab.size != len(counts):
             raise ValueError(f"vocabulary axis has {Vocab.size} entries, the map {len(counts)}")
         Small = Axis(SMALL, n_small)
-        k_in, k_out = jrandom.split(jrandom.fold_in(key, 0xC0), 2)
+        # the small tables are the baseline's own rows of the tokens below K and the specials, so every such row starts
+        # bit-identical to the baseline, and the baseline's init correlation between embedding and head (both drawn
+        # from one key) is kept
+        own = jnp.asarray(own_rows(config.cv_map, Vocab.size))
         embeddings, lm_head = base.embeddings, base.lm_head
         if config.cv_input:
-            embeddings = dataclasses.replace(embeddings, token_embeddings=hnn.Embedding.init(Small, config.Embed, key=k_in))
+            te = embeddings.token_embeddings
+            w = hax.named(te.weight.rearrange((Vocab.name, config.Embed.name)).array[own], (Small, config.Embed))
+            embeddings = dataclasses.replace(embeddings, token_embeddings=dataclasses.replace(te, weight=w, Vocab=Small))
         if config.cv_output:
-            lm_head = hnn.Linear.init(In=config.Embed, Out=Small, key=k_out, use_bias=False, out_first=True)
+            w = hax.named(lm_head.weight.rearrange((Vocab.name, config.Embed.name)).array[own], (Small, config.Embed))
+            lm_head = dataclasses.replace(lm_head, weight=w, Out=Small)
         return cls(base.transformer, embeddings, lm_head, Vocab)
 
     def _full(self) -> Qwen3LMHeadModel:
