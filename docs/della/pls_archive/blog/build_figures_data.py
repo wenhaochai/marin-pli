@@ -195,7 +195,7 @@ SETS8 = [(Z["-pls1-sep/final"], {"en": "Separate heads", "zh": "独立头"}, BLU
 # (weight 1, blue 700), as the sweep popup described; weight 0.2 keeps its yellow, shared with Figure 9
 for tag, nm, col in (("-pls0.1-sep", {"en": "Layer-loss weight 0.1", "zh": "逐层损失权重 0.1"}, "#4285F4"), ("-pls0.05-sep", {"en": "Layer-loss weight 0.05", "zh": "逐层损失权重 0.05"}, "#8AB4F8")):
     if tag + "/final" in FX:
-        SETS8.insert(2, (FX[tag + "/final"], nm, col, fit))
+        SETS8.insert(2 + sum(1 for q in SETS8 if q[1]['en'].startswith('Layer-loss weight')), (FX[tag + "/final"], nm, col, fit))
 marks8 = sum(([line(f(x6, y), c), dots(pts(x6, y), c)] for y, _, c, f in SETS8), [])
 v8 = view(np.tile(x6, len(SETS8)), np.concatenate([y for y, _, _, _ in SETS8]), endpoints_only=True)
 figs["fig-fix"] = dict(title={"en": "Final training loss by layer, gradient routing and layer-loss weight, 130m", "zh": "按梯度去向和逐层损失权重的各层最终训练损失，130m"},
