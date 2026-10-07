@@ -219,6 +219,22 @@ else:
 figs["fig-mix"] = dict(title={"en": "Final training loss by layer, weight shape and gradient surgery, 130m", "zh": "按权重形状和梯度冲突处理的各层最终训练损失，130m"},
                        legend=legend9, quantity=CE, xlabel=XL, height=320, panels=[p9])
 
+# Figure 11 (placeholder until the runs finish; owner-approved popup 2026-10-07): late start. Separate heads at weight 1 whose
+# gradient into the backbone is 0 until step S and full from S + 100 (probes before, separate heads after), S = 300 or 1500;
+# separate heads from step 0, probes and the ordinary models as references
+LATE = [(Z["-pls1-sep/final"], {"en": "Separate heads", "zh": "独立头"}, BLUE7, fit), ("-pls1-sep-on300-400", {"en": "Separate heads from step 300", "zh": "第 300 步起用独立头"}, "#681DA8", fit),
+        ("-pls1-sep-on1500-1600", {"en": "Separate heads from step 1,500", "zh": "第 1,500 步起用独立头"}, "#AF5CF7", fit), (Z["-pls1-sep-bbfrozen/final"], {"en": "Probes only", "zh": "只加探针"}, RED, pchip)]
+legend11 = [[n, c, "line"] for _, n, c, _ in LATE] + [[{"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, "line"]]
+done11 = [(src if not isinstance(src, str) else FX[src + "/final"], c, f) for src, _, c, f in LATE if not isinstance(src, str) or src + "/final" in FX] + [(cy, GREY, fit)]
+if len(done11) > 3:   # a late-start run has finished
+    marks11 = sum(([line(f(x6, y), c), dots(pts(x6, y), c)] for y, c, f in done11), [])
+    v11 = view(np.tile(x6, len(done11)), np.concatenate([y for y, _, _ in done11]), endpoints_only=True)
+    p11 = dict(**v11, marks=marks11)
+else:
+    p11 = empty_view(list(x6), 2.9, 5.0, QUEUED)
+figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step separate heads start, 130m", "zh": "按独立头开始步数的各层最终训练损失，130m"},
+                        legend=legend11, quantity=CE, xlabel=XL, height=320, panels=[p11])
+
 # Figure 10: the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
 BLUE3, RED3 = "#8AB4F8", "#F28B82"
