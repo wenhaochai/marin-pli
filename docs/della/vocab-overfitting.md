@@ -49,9 +49,23 @@ parameter-count control (low-rank tables).
 12. New page card first in the lists (owner) -> index.html, blogs/experiments.html (85e5945).
 13. Standalone artifact of the page only, every file republished -> website build_vocab_artifact.sh.
 14. Never push the website; marin only to the private archive remote (checked PRIVATE).
+15. Plan durations: timeout(1) takes one number and one unit (390m, 6.5h); "6h30m" exits 125 at once (found by the
+    review; would have killed why-b96 and both vo520 segments) -> plans fixed; check_plans.py regex.
+16. Knobs never inherited from the submitting shell (--export=ALL) -> packed_job.sbatch unsets them; every training task
+    trains only if its dry-run run id equals the plan's RUN (run_checked.sh, exit 3, no retry) -> dummy test with
+    VOCAB_K/DATA_EPOCHS exported (scrubbed; a wrong RUN refused).
+17. A failed run must not idle its GPUs: lanes (lane=<name>) run their tasks in turn, so a failed run frees its GPUs for
+    the lane's next task; vo130 runs as two lanes -> dummy test (failed and timed-out tasks, lane goes on).
+18. Cost lines: timed-out main segments (124/137) count as main, as plain TIMEOUT jobs; a packed job counts by its ledger
+    even when no run id reached its logs -> test_ledger.py (14 cases); record hours per run from W&B _runtime or the
+    ledger, not the whole packed job.
+19. Grouped analysis: macro over the 16 subsets (as the bars); seed-matched 128K/8K pairs; seeded tie-break -> invariance:
+    a checkpoint against itself gives 0 in every group; the 8K pair's macro total 0.0262 equals the page's 8K cost.
 
 ## Open risks
 
-- A side-by-side partner that fails twice leaves 4 GPUs idle; Della cancels the job after 90 idle minutes, taking the
-  healthy run with it. The retry covers transient crashes only.
+- why-* jobs hold one run per lane: a run that fails twice (deterministic crash) leaves its 4 GPUs idle; Della cancels the
+  job after 90 idle minutes, taking the healthy partner with it. The retry covers transient crashes only.
+- tools/packed_task.sh writes a ledger line only when timeout returns: a job ended by Slurm (wall, idle cancel, scancel)
+  loses the running tasks' lines, and their hours count as other compute (tool owned by the controller).
 - The vo130 job's last step (128K, 8 passes) runs on 4 GPUs for about an hour while the other 4 idle (under 90 min).
