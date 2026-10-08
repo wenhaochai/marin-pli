@@ -214,7 +214,14 @@ if VOCAB_K and VOCAB_K < 1000 and VOCAB_K != 256:
     raise ValueError(f"VOCAB_K={VOCAB_K}: 256 (bytes, run tag -bytes) or a multiple of 1000 (tag -v<K/1000>k)")
 # VARIANT=cv: the Marin tokenizer with its input embedding (CV_SIDE=in), output head (out) or both composed from the rows of
 # its CV_K-token truncation (composed_vocab_qwen3.py; vocabulary Q4 and Q5). Run tag -cv<side><CV_K/1000>k.
+# CV_OUT_REDUCE=sum: an output row is the sum of its pieces' rows, not their mean (the mean caps a token's logit at its
+# largest piece's); run tag -sum.
 CV_SIDE = os.environ.get("CV_SIDE", "in")
+CV_OUT_REDUCE = os.environ.get("CV_OUT_REDUCE", "mean")
+if CV_OUT_REDUCE not in ("mean", "sum"):
+    raise ValueError(f"CV_OUT_REDUCE={CV_OUT_REDUCE!r}: mean or sum")
+if CV_OUT_REDUCE != "mean" and (os.environ.get("VARIANT") != "cv" or CV_SIDE == "in"):
+    raise ValueError("CV_OUT_REDUCE=sum needs VARIANT=cv with a composed output head (CV_SIDE=out or both)")
 CV_K = int(os.environ.get("CV_K", "8000"))
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
@@ -312,7 +319,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("focal", "ovfocal"):
         variant_tags += f"-focal{FOCAL_GAMMA:g}"
     if VARIANT == "cv":
-        variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k"
+        variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k" + ("-sum" if CV_OUT_REDUCE == "sum" else "")
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -401,7 +408,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         cv_map = f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz"
         if not os.path.exists(cv_map):
             raise FileNotFoundError(f"{cv_map} is missing: run small_vocab_tokenizer expansion-npz {CV_K} first")
-        model_cls, model_extra = ComposedVocabQwen3Config, dict(cv_map=cv_map, cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"))
+        model_cls, model_extra = ComposedVocabQwen3Config, dict(cv_map=cv_map, cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"),
+                                                               cv_output_reduce=CV_OUT_REDUCE)
     elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
         model_cls, model_extra = OverVocabQwen3Config, dict(
