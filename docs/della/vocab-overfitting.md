@@ -16,6 +16,8 @@
 | Q6 | Fewer bytes per window? | grouped by context bytes; 128K at SEQ_LEN 3072, batch 172 (-sl3072-b172) | why-sl3072 |
 | Q7 | More optimizer steps? | 128K at batch 96 (1.33x steps, same text; warmup stays 1000 steps, as in the 8K runs) | why-b96 |
 
+| Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions) | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h |
+
 Not done (owner): reasons 4 (Adam on rare rows), 6 (shorter token strings), 7 (weaker model), 8 (composing words), the
 parameter-count control (low-rank tables).
 
@@ -62,7 +64,22 @@ parameter-count control (low-rank tables).
 19. Grouped analysis: macro over the 16 subsets (as the bars); seed-matched 128K/8K pairs; seeded tie-break -> invariance:
     a checkpoint against itself gives 0 in every group; the 8K pair's macro total 0.0262 equals the page's 8K cost.
 
+20. Bytes (owner, 2026-10-08): K=256 tokenizer = small_vocab_tokenizer build 256 (0 merges, specials 256..511) -> review:
+    all 128,000 expansions equal the token's bytes; HF and Levanter load 512 ids, BOS 256, EOS 257. Data: conversion job
+    15211747 (decode-equality check on sampled documents; the canonical check is implied for bytes). Run tag -bytes;
+    eval every round(ratio) x 1000 steps (5000 for bytes; 1000 for every existing K, so queued runs are unchanged:
+    check_plans.py). Every chained segment carries its own smoke copy (review: afterany would train after a failed
+    segment-1 smoke). Levanter's bpb counts each non-ASCII byte token as 3 bytes: bpb_bytes_check.py with KS=256 before
+    any figure (per-subset factor; residual bias up to +0.6% on code, ~+0.07% macro, mostly cancelling in rep8 - full).
+
 ## Open risks
+
+- Bytes keep the 1000-step warmup of every run here: 1/54 of training at 300m against 1/11 at 128K. Consistent with the
+  truncated tokenizers; Q7 (more steps) speaks to the step count, not to the warmup share.
+- Bytes frequency deciles (Q4/Q5 analysis) over 256 types: frequent bytes straddle decile edges and are split by the
+  seeded tie-break; read the byte panels as coarse.
+- Analysis scripts still need K=256 entries (vocab_cost_groups.py TOK/TRAIN/PAIRS) and SEQ_LEN=16384 in the token-loss
+  specs (vocab_token_losses.py defaults to 4096); figure/record builders need a bytes point (RATIO/VOC/KTICKS, rid()).
 
 - why-* jobs hold one run per lane: a run that fails twice (deterministic crash) leaves its 4 GPUs idle; Della cancels the
   job after 90 idle minutes, taking the healthy partner with it. The retry covers transient crashes only. Decision
