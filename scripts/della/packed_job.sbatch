@@ -25,6 +25,9 @@
 # Exit code: 0 only if every task passed. No set -e: a failed task is handled here.
 set -uo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
+JOB_TMP_TAG=job source scripts/della/job_tmpdir.sh   # TMPDIR under scratch (never the shared /tmp); its tasks make their own
+# subdirectories in $JOBTMP; the whole job directory goes when the job ends, leftovers of killed tasks included
+trap 'case "$JOBTMP" in /scratch/gpfs/GROUP/USER/tmp/job/[0-9]*) rm -rf "$JOBTMP" ;; esac' EXIT
 # experiment knobs never come from the submitting shell (--export=ALL): each task sets its own
 unset SIZE SIZES VARIANT VARIANTS VOCAB_K DATA_EPOCHS SEED BATCH SEQ_LEN RUN_TAG CV_SIDE CV_K NUM_GPUS TOTAL_STEPS INIT_FROM \
       SMOKE_STEPS SMOKE_ENVS PRECISION TIE EMA_BETA DEVICE_TAG PAIR_A PAIR_B PDP SS_SCHEDULE OV_M OV_OD_W OD_M FOCAL_GAMMA

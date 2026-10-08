@@ -16,6 +16,7 @@
 # Bytes (task 5, ~4.7x the tokens) ran with --array=5 --time=03:00:00 (job 15211747).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
+source scripts/della/job_tmpdir.sh   # TMPDIR under scratch, per task, removed at exit (never the shared /tmp)
 export JAX_PLATFORMS=cpu HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export MARIN_PREFIX=/scratch/gpfs/GROUP/USER/marin_store_big
 KS=(0 64000 32000 16000 8000 256)   # 256: bytes, the tokenizer with no merges (array task 5)
