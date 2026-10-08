@@ -123,12 +123,13 @@ for L, steps in ((6, 25), (48, 25)):
     tm = train(probe, recipe(MuonHConfig, 1.0, steps), steps)
     d_split = max(maxdiff(backbone(a), backbone(b)) for a, b in zip(tb, ts))
     d_mix = max(maxdiff(backbone(a), backbone(b)) for a, b in zip(tb, tm))
-    check(d_split < 1e-4, f"2. L={L}, clip 1.0, {steps} steps: SplitAux probes backbone == baseline (max diff {d_split:.2e})")
-    check(d_mix > 100 * max(d_split, 1e-7), f"2. L={L}: MuonHConfig probes backbone drifts from the baseline (max diff {d_mix:.2e}), so the check is not vacuous")
     tn_s = train(probe, recipe(SplitAuxMuonHConfig, None, steps), steps)
     tn_m = train(probe, recipe(MuonHConfig, None, steps), steps)
     d1 = maxdiff(eqx.filter(tn_s[0], eqx.is_array), eqx.filter(tn_m[0], eqx.is_array))
     d_noclip = max(maxdiff(eqx.filter(a, eqx.is_array), eqx.filter(b, eqx.is_array)) for a, b in zip(tn_s, tn_m))
+    check(d_split < 1e-4, f"2. L={L}, clip 1.0, {steps} steps: SplitAux probes backbone == baseline (max diff {d_split:.2e})")
+    check(d_mix > 100 * max(d_split, d_noclip), f"2. L={L}: MuonHConfig probes backbone drifts from the baseline (max diff {d_mix:.2e}), "
+                                                f"over 100x the rounding drift of test 3 ({d_noclip:.1e}), so the check is not vacuous")
     check(d1 < 1e-6, f"3. L={L}, no clipping: SplitAux == MuonHConfig for every parameter after step 1 up to rounding (max diff {d1:.1e}; "
                      f"after {steps} steps {d_noclip:.1e}: the two optax graphs round differently and training amplifies it)")
 
