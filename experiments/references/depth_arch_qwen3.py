@@ -645,3 +645,41 @@ class DepthArchMuonHConfig(MuonHConfig):
             return "adam_new" if label == "adam" and any(f in path_str for f in _NEW_PARAMS) else label
 
         return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
+
+
+@OptimizerConfig.register_subclass("muonH_depth_arch_split")
+@dataclass(frozen=True)
+class DepthArchSplitAuxMuonHConfig(DepthArchMuonHConfig):
+    """DepthArchMuonHConfig with the intermediate readouts' own parameters in groups of their own, as
+    per_layer_qwen3.SplitAuxMuonHConfig does for MuonHConfig."""
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+
+        def optimizer(learning_rate, adam_lr):
+            def clip():
+                return [optax.clip_by_global_norm(self.max_grad_norm)] if self.max_grad_norm else []
+
+            def adam(eps):
+                return optax.chain(*clip(), optax.scale_by_adam(self.beta1, self.beta2, eps), optax.scale(-adam_lr))
+
+            def adamh():
+                return optax.chain(*clip(), scale_by_adamh(self.beta1, self.beta2, self.epsilon, learning_rate))
+
+            transformations = {
+                "muonh": optax.chain(*clip(), scale_with_muonh(self.momentum, self.nesterov, self.backend_steps, self.muon_epsilon, learning_rate, self.coefficient_type)),
+                "adamh": adamh(),
+                "adam": adam(self.epsilon),
+                "adam_new": adam(self.new_param_epsilon),
+                "aux_adamh": adamh(),
+                "aux_adam": adam(self.epsilon),
+            }
+            return optax.multi_transform(transformations, self.create_mask)
+
+        return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
+
+    def create_mask(self, params):
+        from experiments.references.per_layer_qwen3 import split_aux_labels
+
+        return split_aux_labels(super().create_mask(params), params)

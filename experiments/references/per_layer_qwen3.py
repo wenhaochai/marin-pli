@@ -114,6 +114,65 @@ class HeadsOnlyMuonHConfig(MuonHConfig):
         return jax.tree_util.tree_map(lambda label, path: label if _is_head_path(path) else "frozen", base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
 
 
+_AUX_PATHS = ("aux_lm_heads", "aux_norms")  # the intermediate readouts' own parameters (separate heads)
+
+
+@OptimizerConfig.register_subclass("muonH_pls_split")
+@dataclass(frozen=True)
+class SplitAuxMuonHConfig(MuonHConfig):
+    """MuonHConfig with the intermediate readouts' own parameters (aux_lm_heads, aux_norms) in groups of their own.
+    MuonHConfig clips by global norm inside each of its groups and puts the aux heads beside lm_head (AdamH) and the aux
+    norms beside the embeddings and every norm scale (Adam), so the readouts' gradients set the clip factor of the
+    baseline's parameters and probes change the backbone's training. Here the baseline's parameters keep the baseline's
+    groups, transforms and clipping exactly; aux_lm_heads get the same AdamH and aux_norms the same Adam, each group
+    clipped on its own."""
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+
+        def optimizer(learning_rate, adam_lr):  # MuonHConfig.build's three transforms, plus one copy each for the aux heads
+            def clip():
+                return [optax.clip_by_global_norm(self.max_grad_norm)] if self.max_grad_norm else []
+
+            def adamh():
+                return optax.chain(*clip(), scale_by_adamh(self.beta1, self.beta2, self.epsilon, learning_rate))
+
+            def adam():
+                return optax.chain(*clip(), optax.scale_by_adam(self.beta1, self.beta2, self.epsilon), optax.scale(-adam_lr))
+
+            transformations = {
+                "muonh": optax.chain(*clip(), scale_with_muonh(self.momentum, self.nesterov, self.backend_steps, self.muon_epsilon, learning_rate, self.coefficient_type)),
+                "adamh": adamh(),
+                "adam": adam(),
+                "aux_adamh": adamh(),
+                "aux_adam": adam(),
+            }
+            return optax.multi_transform(transformations, self.create_mask)
+
+        return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
+
+    def create_mask(self, params):
+        return split_aux_labels(super().create_mask(params), params)
+
+
+def split_aux_labels(base, params):
+    """A MuonHConfig-style label tree with every aux readout parameter's label L (adamh or adam) renamed aux_L."""
+    paths = leaf_key_paths(params, is_leaf=lambda x: isinstance(x, hnn.Linear))
+
+    def relabel(label, path):
+        if isinstance(path, NamedArray):
+            path = path.array
+        path_str = ".".join(path) if isinstance(path, (list, tuple)) else str(path)
+        if not path_str.startswith(_AUX_PATHS):
+            return label
+        if label not in ("adamh", "adam"):
+            raise ValueError(f"aux readout parameter {path_str} has label {label!r}, expected adamh or adam")
+        return "aux_" + label
+
+    return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
+
+
 @LmConfig.register_subclass("qwen3_pls")
 @dataclass(frozen=True)
 class PerLayerQwen3Config(Qwen3Config):

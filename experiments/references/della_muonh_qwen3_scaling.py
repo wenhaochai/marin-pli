@@ -204,6 +204,11 @@ PLS_ON_START, PLS_ON_END = (int(x) for x in (PLS_ON.split(":", 1) if ":" in PLS_
 # PLS_PROBE=1: log per-layer gradient alignment and in-context scores every step (diagnostic runs; one extra forward and
 # L backward passes per step). Tag -probe.
 PLS_PROBE = os.environ.get("PLS_PROBE", "0") == "1"
+# PLS_OPT_SPLIT=1 (with PLS_SEP=1): the aux heads and aux norms get optimizer groups of their own, so their gradients no
+# longer set the clip factor of the baseline's parameters (per_layer_qwen3.SplitAuxMuonHConfig). Tag -os.
+PLS_OPT_SPLIT = os.environ.get("PLS_OPT_SPLIT", "0") == "1"
+if PLS_OPT_SPLIT and not (VARIANT == "pls" and PLS_SEP):
+    raise ValueError("PLS_OPT_SPLIT=1 needs VARIANT=pls and PLS_SEP=1 (only separate heads have parameters of their own)")
 # ARCH=<name> (VARIANT=pls): the residual design of every layer, one of depth_arch_qwen3.ARCHS (DepthBench, arXiv
 # 2609.32534); empty = the baseline (hybrid_norm, i.e. Sandwich-LN, on the Stacked transformer). Tag -a{ARCH}.
 ARCH = os.environ.get("ARCH", "")
@@ -264,7 +269,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-os" if PLS_OPT_SPLIT else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -373,8 +378,14 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
     # every other run, the baseline included, keeps MuonHConfig exactly.
-    if ARCH in ("hc", "mhc", "attnres", "attnres_block"):
+    if ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
+        from experiments.references.depth_arch_qwen3 import DepthArchSplitAuxMuonHConfig as _Opt
+    elif ARCH in ("hc", "mhc", "attnres", "attnres_block"):
         from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig as _Opt
+    elif PLS_OPT_SPLIT and HEADS_FROM:
+        raise ValueError("PLS_OPT_SPLIT with HEADS_FROM: the heads-only refit has its own optimizer")
+    elif PLS_OPT_SPLIT:
+        from experiments.references.per_layer_qwen3 import SplitAuxMuonHConfig as _Opt
     elif HEADS_FROM:
         from experiments.references.per_layer_qwen3 import HeadsOnlyMuonHConfig as _Opt
     else:
