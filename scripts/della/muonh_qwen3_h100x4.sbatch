@@ -16,6 +16,7 @@
 # marin tokenizer (both fetched/built on a login node).
 set -euo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin
+source scripts/della/job_tmpdir.sh   # TMPDIR under scratch, per task, removed at exit (never the shared /tmp)
 
 module load proxy/default  # wandb only
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/KARTHIKN/wc9403/marin_store_big}

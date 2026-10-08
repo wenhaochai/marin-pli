@@ -16,6 +16,7 @@
 # exit code, the peak GPU memory (nvidia-smi, sampled every 2 s), the mean step time, the ntp/od losses and the eval loss.
 set -uo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin
+source scripts/della/job_tmpdir.sh   # TMPDIR under scratch, per task, removed at exit (never the shared /tmp)
 module load proxy/default  # wandb only
 export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store_big
 export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
