@@ -73,7 +73,7 @@ stop() {   # $1 = a task's packed_task.sh pid. TERM its timeout (which passes it
   if [ -n "$t" ]; then kill -KILL -- "-$t" 2>/dev/null || true; fi
   sleep 5; kill -KILL "$1" 2>/dev/null || true   # packed_task.sh first gets to write its ledger line
 }
-trap 'for d in ${dogs[*]:-}; do kill "$d" 2>/dev/null || true; done; for p in ${pids[*]:-}; do stop "$p"; done' EXIT
+trap 'for d in ${dogs[*]:-}; do kill "$d" 2>/dev/null || true; done; for p in ${pids[*]:-}; do stop "$p"; done; pls_tmp_cleanup' EXIT
 run_id() {   # the run id the launcher builds for spec $1 plus extra assignments; a dry run on the CPU, no GPU touched
   # shellcheck disable=SC2086
   basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>>"logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_dryrun.log" | sed -n 's/^output: //p' || true)")"
