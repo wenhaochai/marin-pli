@@ -46,6 +46,7 @@ export VARIANT=pls
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 GRACE=$(( ${PAIR_GRACE_MIN:-75} * 60 ))
 SMOKE=${PAIR_SMOKE_STEPS:-30}
+SMOKE_LIMIT=${PAIR_SMOKE_MIN:-15}m   # each smoke copy's limit; 48-layer designs on 4 GPUs compile and step for 15-35 min
 JOB_MIN=${PAIR_JOB_MIN:-200}           # the job's --time in minutes (03:20:00); training stops 5 min before it, so
                                       # timeout, not Slurm, ends it and packed_task.sh writes its ledger line
 FIRST_MIN=${PAIR_FIRST_STEP_MIN:-25}   # a training task with no first step by then is stopped (hang watchdog)
@@ -105,7 +106,7 @@ done
 for i in 0 1; do
   # shellcheck disable=SC2086
   setsid env ${specs[$i]} SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}${names[$i]} CUDA_VISIBLE_DEVICES=${gpus[$i]} \
-    bash $PT smoke-${names[$i]} - other 4 15m -- "$PY" -m $LAUNCH > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}-smoke.log 2>&1 &
+    bash $PT smoke-${names[$i]} - other 4 $SMOKE_LIMIT -- "$PY" -m $LAUNCH > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}-smoke.log 2>&1 &
   pids[$i]=$!
   echo "smoke ${names[$i]} ${smoke_ids[$i]} on GPUs ${gpus[$i]}: pid ${pids[$i]} $(date +%H:%M:%S)"
 done

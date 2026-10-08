@@ -8,15 +8,15 @@
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 DRY=${1:-}
-# design  PDP  host GiB per GPU  chain length (4 GPUs: about 2x the 8-GPU wall; 8-GPU walls 14 h, attnres 18 h, moda 24 h)
+# design  PDP  host GiB per GPU (two processes per node; the 8-GPU d48 runs peaked at 75-80 GB RSS each)  chain length (4 GPUs: about 2x the 8-GPU wall; 8-GPU walls 14 h, attnres 18 h, moda 24 h)
 designs=(
-  "sandwich 4 24 2"
-  "preln 4 24 2"
-  "lns 4 24 2"
-  "deepnorm 4 24 2"
-  "keel 4 24 2"
-  "hc 4 24 2"
-  "mhc 4 24 2"
+  "sandwich 4 32 2"
+  "preln 4 32 2"
+  "lns 4 32 2"
+  "deepnorm 4 32 2"
+  "keel 4 32 2"
+  "hc 4 32 2"
+  "mhc 4 32 2"
   "attnres_block 2 64 2"
   "attnres 2 64 3"
   "moda 2 64 3"
@@ -30,7 +30,7 @@ for d in "${designs[@]}"; do
   dep=
   for k in $(seq 1 "$n"); do
     # PAIR_A / PAIR_B reach the job through the environment (as for 15168919); the pair script clears every other knob
-    cmd=(env PAIR_A="$a" PAIR_B="$b" PAIR_JOB_MIN=1440 sbatch --parsable --job-name="pls-d48g4-$name" --time=24:00:00
+    cmd=(env PAIR_A="$a" PAIR_B="$b" PAIR_JOB_MIN=1440 PAIR_SMOKE_MIN=45 PAIR_FIRST_STEP_MIN=40 sbatch --parsable --job-name="pls-d48g4-$name" --time=24:00:00
          --mem-per-gpu="${mem}G" ${dep:+--dependency=afterany:$dep} scripts/della/pls_h100x8_pair.sbatch)
     if [ "$DRY" = --dry ]; then echo "${cmd[*]}"; dep=DRY$k; else dep=$("${cmd[@]}"); echo "$name step $k: $dep"; fi
   done
