@@ -69,7 +69,11 @@ try:  # real text (paloma c4_en validation, documents concatenated), so the loss
 except Exception as _e:
     tok = np.random.default_rng(0).integers(0, 50000, size=(B, T))
     TOKSRC = f"random tokens (validation read failed: {type(_e).__name__})"
-ex = LmExample(tokens=hax.named(jnp.asarray(tok, jnp.int32), (Batch, Pos)), loss_weight=hax.named(jnp.ones((B, T), jnp.float32), (Batch, Pos)), attn_mask=AttentionMask.causal())
+# documents isolated as in training and eval (LmExample.causal, block_cross_document_attention): a new segment after each eos
+_eos = np.roll(tok, 1, axis=1) == 128001
+_eos[:, 0] = False
+_seg = hax.named(jnp.asarray(np.cumsum(_eos, axis=1), jnp.int32), (Batch, Pos))
+ex = LmExample(tokens=hax.named(jnp.asarray(tok, jnp.int32), (Batch, Pos)), loss_weight=hax.named(jnp.ones((B, T), jnp.float32), (Batch, Pos)), attn_mask=AttentionMask.causal().with_segment_ids(_seg))
 ex = hax.shard(ex, tc.compute_axis_mapping)  # the batch split over the data axis, as in training
 
 

@@ -33,7 +33,12 @@ from levanter.utils.mesh import MeshConfig  # noqa: E402
 
 from experiments.references.per_layer_qwen3 import PerLayerQwen3Config, PerLayerQwen3LMHeadModel  # noqa: E402
 
-CKPT = "/scratch/gpfs/GROUP/USER/marin_store_big/speedrun/muonh-qwen3-130m-della4xh100-d48-diag600-pdp4/2026.09.13/checkpoints/step-599"
+# On GPU (PATHS_GPU=1, set by pls_d48_paths_gpu.sbatch) the d48 probes checkpoint instead of T2 (2026-10-08): with
+# document isolation it scores 3.585 on CPU through both paths, while the GPU evals logged 4.23 (baseline path) and
+# 6.48 (readout path) on paloma c4_en; T2 agrees across platforms.
+PROBE = os.environ.get("PATHS_GPU") == "1"
+CKPT = ("/scratch/gpfs/GROUP/USER/marin_store_big/speedrun/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-d48/2026.09.13/checkpoints/step-4958" if PROBE
+        else "/scratch/gpfs/GROUP/USER/marin_store_big/speedrun/muonh-qwen3-130m-della4xh100-d48-diag600-pdp4/2026.09.13/checkpoints/step-599")
 T = int(sys.argv[1]) if len(sys.argv) > 1 else 256
 B = int(sys.argv[2]) if len(sys.argv) > 2 else 2
 Vocab, Batch, Pos = Axis("vocab", 128256), Axis("batch", B), Axis("position", T)
@@ -41,7 +46,7 @@ Vocab, Batch, Pos = Axis("vocab", 128256), Axis("batch", B), Axis("position", T)
 
 def config(backend):
     return PerLayerQwen3Config(max_seq_len=T, hidden_dim=512, intermediate_dim=1792, num_layers=48, num_heads=8, num_kv_heads=8, hybrid_norm=True,
-                               attn_backend=backend, pls_weight=0.0)
+                               attn_backend=backend, **(dict(pls_weight=1.0, pls_separate_heads=True, pls_detach_backbone=True) if PROBE else dict(pls_weight=0.0)))
 
 
 from haliax.partitioning import ResourceAxis  # noqa: E402
@@ -56,8 +61,21 @@ _amap.__enter__()
 template = eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, config(AttentionBackend.VANILLA), key=jrandom.PRNGKey(0))
 model = load_checkpoint(template, CKPT, subpath="model")
 print("loaded", CKPT, "devices", jax.devices())
-tok = np.random.default_rng(0).integers(0, 50000, size=(B, T))
-ex = LmExample(tokens=hax.named(jnp.asarray(tok, jnp.int32), (Batch, Pos)), loss_weight=hax.named(jnp.ones((B, T), jnp.float32), (Batch, Pos)), attn_mask=AttentionMask.causal())
+VAL = "/scratch/gpfs/GROUP/USER/marin_store_big/tokenized/paloma/c4_en-cf1f79/validation/part-00000-of-00001/input_ids/data"
+try:  # real text (paloma c4_en validation, documents concatenated), so the losses compare with W&B's eval/loss and eval/L{k}
+    import tensorstore as _ts
+
+    _flat = _ts.open({"driver": "zarr3", "kvstore": {"driver": "file", "path": VAL}}).result()[: B * T].read().result()
+    tok = np.asarray(_flat, np.int64).reshape(B, T)
+    TOKSRC = f"paloma c4_en validation, first {B * T} tokens"
+except Exception as _e:
+    tok = np.random.default_rng(0).integers(0, 50000, size=(B, T))
+    TOKSRC = f"random tokens (validation read failed: {type(_e).__name__})"
+# documents isolated as in training and eval (LmExample.causal, block_cross_document_attention): a new segment after each eos
+_eos = np.roll(tok, 1, axis=1) == 128001
+_eos[:, 0] = False
+_seg = hax.named(jnp.asarray(np.cumsum(_eos, axis=1), jnp.int32), (Batch, Pos))
+ex = LmExample(tokens=hax.named(jnp.asarray(tok, jnp.int32), (Batch, Pos)), loss_weight=hax.named(jnp.ones((B, T), jnp.float32), (Batch, Pos)), attn_mask=AttentionMask.causal().with_segment_ids(_seg))
 ex = hax.shard(ex, tc.compute_axis_mapping)  # the batch split over the data axis, as in training
 
 
@@ -100,7 +118,7 @@ for backend in (AttentionBackend.VANILLA, AttentionBackend.JAX_FLASH):
                 hf, hs, base, ro, rel = eqx.filter_jit(paths)(m)
             rel = np.asarray(rel)
             print(f"   relative rms(scan_via out - per-layer loop) by layer: " + " ".join(f"{v:.1e}" for v in rel[[0, 1, 2, 5, 11, 23, 35, 47]]) + f" (layers 1,2,3,6,12,24,36,48; max {rel.max():.1e} at layer {int(rel.argmax()) + 1})")
-            print(f"{backend.name:10s} {name}: max|h_fold - h_scan| {float(jnp.max(jnp.abs(hf - hs))):.3e} (|h| ~ {float(jnp.sqrt(jnp.mean(hf ** 2))):.3f}); "
+            print(f"{backend.name:10s} {name} [{TOKSRC}]: max|h_fold - h_scan| {float(jnp.max(jnp.abs(hf - hs))):.3e} (|h| ~ {float(jnp.sqrt(jnp.mean(hf ** 2))):.3f}); "
                   f"loss baseline path {float(base):.4f}, readout L47 {float(jnp.mean(ro[0][:, :-1])):.4f}")
         except Exception as e:  # a backend that does not run on CPU
             print(f"{backend.name:10s} {name}: {type(e).__name__}: {str(e)[:200]}")
