@@ -104,3 +104,27 @@ for backend in (AttentionBackend.VANILLA, AttentionBackend.JAX_FLASH):
                   f"loss baseline path {float(base):.4f}, readout L47 {float(jnp.mean(ro[0][:, :-1])):.4f}")
         except Exception as e:  # a backend that does not run on CPU
             print(f"{backend.name:10s} {name}: {type(e).__name__}: {str(e)[:200]}")
+
+
+# 2026-10-08: XLA may treat a 48-trip scan with stacked outputs differently from a 6- or 12-trip one (unrolling
+# thresholds). layer_outputs with the scan fully unrolled, against the baseline path, bf16 compute as in training.
+def unrolled_paths(m):
+    tr, Block = m.transformer, m.transformer.layers.Block
+    x = m.embeddings.embed(ex.tokens)
+    _, outs = tr.layers.scan_via(lambda layer, c, **kw: (lambda y: (y, y))(layer(c, **kw)), unroll=True)(x, mask=ex.attn_mask, key=None, pos_ids=None)
+    h_fold = m.activations(ex.tokens, ex.attn_mask, key=None)
+    h_unr = tr.norm(outs[Block.name, -1])
+    outs_scan = m.layer_outputs(ex.tokens, ex.attn_mask, key=None)
+    d = jnp.stack([jnp.max(jnp.abs((outs_scan[Block.name, k] - outs[Block.name, k]).array.astype(jnp.float32))) for k in range(Block.size)])
+    return jnp.max(jnp.abs((h_fold - h_unr).array.astype(jnp.float32))), d
+
+
+try:
+    _m = jmp.get_policy("p=f32,c=bfloat16").cast_to_compute(swap_backend(model, AttentionBackend.JAX_FLASH))
+    with hax.axis_mapping(tc.compute_axis_mapping):
+        _dfu, _dsu = eqx.filter_jit(unrolled_paths)(_m)
+    _dsu = np.asarray(_dsu)
+    print(f"unroll=True bf16 JAX_FLASH: max|h_fold - h_unrolled| {float(_dfu):.3e}; max|scan_via out - unrolled out| by layer 1,2,6,12,24,48: "
+          + " ".join(f"{_dsu[k]:.1e}" for k in (0, 1, 5, 11, 23, 47)) + f" (max {_dsu.max():.1e} at layer {int(_dsu.argmax()) + 1})")
+except Exception as e:
+    print(f"unroll check: {type(e).__name__}: {str(e)[:300]}")
