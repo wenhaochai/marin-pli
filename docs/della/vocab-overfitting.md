@@ -1,7 +1,11 @@
 # How Vocabulary Size Shapes Overfitting (page blogs/vocab-overfitting.html)
 
-**Status (2026-10-07):** at 300m and 8 passes, each halving of the vocabulary lowers the cost of repetition (128K +0.083 to
-8K +0.026 bits per byte, one seed); Q2 (130m, 520m) and the why-questions Q3-Q7 are queued. Split from the sampled-softmax
+**Status (2026-10-08):** at 300m and 8 passes, each halving of the vocabulary lowers the cost of repetition (128K +0.083 to
+8K +0.026 bits per byte, one seed). The rare tokens' own input rows carry more than half of that gap: with every input
+row the mean of its 8K pieces' rows (-cvin8k) the cost is +0.047, the full-data model is worse (1.4127 vs 1.3867) and
+the 8-pass model is better (1.4601 vs 1.4695, and 8K 1.4814). A window of the 8K truncation's bytes (+0.083) and a third
+more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) capped a token's logit at its largest piece's
+(full data 1.767): redo with the sum queued (why-cvoutsum). 520m 128K costs +0.095. Seeds, 130m, 520m 8K, bytes queued. Split from the sampled-softmax
 / OT project (docs/della/over-vocab.md), whose Q5 this was.
 
 ## Questions and runs
@@ -12,7 +16,7 @@
 | Q2 | Other sizes? | 130m: 64K-8K pairs + 128K 8 passes; 520m: 128K 8 passes, 8K pair | logs/plans/vo130.txt, vo520-v8k-seg{1,2}.txt, 15162227 |
 | Q3 | Is the trend real? | byte check (done: 8K/128K bytes 1.0004); seed 1 for 128K (-s1-rerun, -rep8-s1) and 8K | why-seed128k, why-seed8k |
 | Q4 | Input rows of rare tokens? | grouped analysis by input-token frequency; 128K with input rows = mean of 8K pieces (-cvin8k) | why-cvin |
-| Q5 | Output rows of rare tokens? | grouped by target frequency; -cvout8k | why-cvout |
+| Q5 | Output rows of rare tokens? | grouped by target frequency; -cvout8k (mean: capped, dropped), -cvout8k-sum (redo) | why-cvout, why-cvoutsum |
 | Q6 | Fewer bytes per window? | grouped by context bytes; 128K at SEQ_LEN 3072, batch 172 (-sl3072-b172) | why-sl3072 |
 | Q7 | More optimizer steps? | 128K at batch 96 (1.33x steps, same text; warmup stays 1000 steps, as in the 8K runs) | why-b96 |
 
@@ -63,6 +67,14 @@ parameter-count control (low-rank tables).
     ledger, not the whole packed job.
 19. Grouped analysis: macro over the 16 subsets (as the bars); seed-matched 128K/8K pairs; seeded tie-break -> invariance:
     a checkpoint against itself gives 0 in every group; the 8K pair's macro total 0.0262 equals the page's 8K cost.
+
+21. Q5 redo (owner, 2026-10-08): output rows = SUM of the pieces' rows (CV_OUT_REDUCE=sum, tag -sum), input rows stay
+    means -> composed_vocab_qwen3.py compose(reduce) -> composed_vocab_cpu_test.py (out/both with the sum: composition,
+    losses, logits, pulled-back gradients, MuonH labels, init; a rare token's logit exceeds every piece's at 20-24% of
+    (position, token) with the sum and never with the mean: ALL PASS); the per-position eval reads the reduce from the run
+    id (a sum checkpoint loads as a mean one without error, review MAJOR 2); review MAJOR 1: the sum inits repeated-piece
+    tokens (up to 64 pieces) at up to 45x a piece's logit (logsumexp ~50 nats at init) -> gate by hand: smoke step-60 eval
+    loss near cvin's 7.49 (the mean smoke was 8.49), W&B steps 200-500 near the baseline, else cancel.
 
 20. Bytes (owner, 2026-10-08): K=256 tokenizer = small_vocab_tokenizer build 256 (0 merges, specials 256..511) -> review:
     all 128,000 expansions equal the token's bytes; HF and Levanter load 512 ids, BOS 256, EOS 257. Data: conversion job
