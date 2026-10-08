@@ -14,4 +14,4 @@
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
-EVAL_NDEV=8 JAX_PLATFORMS=cpu timeout 55m $PY scripts/della/pls_d48_eval_path.py 128 16 2>&1 | grep -v -E "Unknown leaf|^W1|^I1" | tail -25
+EVAL_EOS=${EVAL_EOS:-} EVAL_NDEV=8 JAX_PLATFORMS=cpu timeout 55m $PY scripts/della/pls_d48_eval_path.py 128 16 2>&1 | grep -v -E "Unknown leaf|^W1|^I1" | tail -25

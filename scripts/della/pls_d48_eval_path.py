@@ -58,6 +58,10 @@ import tensorstore as ts  # noqa: E402
 
 VAL = "/scratch/gpfs/GROUP/USER/marin_store_big/tokenized/paloma/c4_en-cf1f79/validation/part-00000-of-00001/input_ids/data"
 tok = np.asarray(ts.open({"driver": "zarr3", "kvstore": {"driver": "file", "path": VAL}}).result()[: B * T].read().result(), np.int32).reshape(B, T)
+if os.environ.get("EVAL_EOS"):  # document boundaries at different places in every row, so a row given another row's mask shows
+    _r = np.random.default_rng(1)
+    for _i in range(B):
+        tok[_i, _r.choice(np.arange(8, T - 8), size=int(os.environ["EVAL_EOS"]), replace=False)] = EOS
 print(f"loaded step {CKPT.rsplit('-', 1)[-1]}; devices {len(jax.devices())} x {jax.devices()[0].platform}; paloma c4_en first {B * T} tokens, "
       f"{int((tok == EOS).sum())} eos, T={T}, B={B}", flush=True)
 
