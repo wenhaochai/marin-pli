@@ -5,7 +5,7 @@
 row the mean of its 8K pieces' rows (-cvin8k) the cost is +0.047, the full-data model is worse (1.4127 vs 1.3867) and
 the 8-pass model is better (1.4601 vs 1.4695, and 8K 1.4814). A window of the 8K truncation's bytes (+0.083) and a third
 more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) capped a token's logit at its largest piece's
-(full data 1.767): redo with the sum queued (why-cvoutsum). 520m 128K costs +0.095. Seeds, 130m, 520m 8K, bytes queued. Split from the sampled-softmax
+(full data 1.767): redo with the sum queued (why-cvoutsum). 520m 128K costs +0.095. At 130m the cost also falls with every halving (128K +0.110 to 8K +0.018). The 128K second seed costs +0.078 (seed 0 +0.083). 8K seed 1, 520m 8K, bytes queued. Split from the sampled-softmax
 / OT project (docs/della/over-vocab.md), whose Q5 this was.
 
 ## Questions and runs
