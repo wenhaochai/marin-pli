@@ -11,7 +11,11 @@ special rows, and the full table row of token t is the mean of the rows of t's p
 (' repeated' -> ' repe' + 'ated') has no row of its own and shares the rows of its pieces with every other token that
 uses them. The question is whether the rows of rare tokens are where repeated data is memorised.
 
-``cv_input`` composes the input embedding (Q4), ``cv_output`` the output head (Q5). The small tables live where the full
+``cv_input`` composes the input embedding (Q4), ``cv_output`` the output head (Q5). ``cv_output_reduce="sum"`` makes an
+output row the sum of its pieces' rows instead of their mean: with the mean, a token's logit is the mean of its pieces'
+logits and can never exceed the largest of them (P(' walking') <= P(' walk') in every context), which cost the first Q5
+runs 0.38 bits per byte on all data; with the sum, logit(' walking') = logit(' walk') + logit('ing'), with no ceiling and
+no new parameters. Input rows always take the mean. The small tables live where the full
 ones did (``embeddings.token_embeddings`` and ``lm_head``), so MuonH's mask keeps them on Adam and AdamH, as for the
 baseline. The full table is rebuilt every forward pass from the small one (a gather of every token's pieces and a
 segment mean in f32, about 0.37M rows), and the gradient flows back through the mean. The small tables start as the
@@ -47,6 +51,7 @@ class ComposedVocabQwen3Config(Qwen3Config):
     cv_map: str = ""          # expand_full.npz of the K-token truncation
     cv_input: bool = False    # compose the input embedding (Q4)
     cv_output: bool = False   # compose the output head (Q5)
+    cv_output_reduce: str = "mean"   # an output row is the mean or the sum of its pieces' rows
 
     def __post_init__(self):
         super().__post_init__()
@@ -54,6 +59,10 @@ class ComposedVocabQwen3Config(Qwen3Config):
             raise ValueError("cv_map: the expand_full.npz path is required")
         if not (self.cv_input or self.cv_output):
             raise ValueError("compose the input embedding, the output head, or both")
+        if self.cv_output_reduce not in ("mean", "sum"):
+            raise ValueError(f"cv_output_reduce={self.cv_output_reduce!r}: mean or sum")
+        if self.cv_output_reduce != "mean" and not self.cv_output:
+            raise ValueError("cv_output_reduce applies to a composed output head only")
         if self.tie_word_embeddings:
             raise ValueError("the composed tables assume an untied head")
 
@@ -74,8 +83,10 @@ def load_map(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     return flat, rows, counts.astype(np.float32), int(flat.max()) + 1
 
 
-def compose(small: NamedArray, Full: Axis, Embed: Axis, path: str) -> NamedArray:
-    """[Full, Embed] table whose row t is the mean of the small rows of t's pieces."""
+def compose(small: NamedArray, Full: Axis, Embed: Axis, path: str, reduce: str = "mean") -> NamedArray:
+    """[Full, Embed] table whose row t is the mean (or, with reduce="sum", the sum) of the small rows of t's pieces."""
+    if reduce not in ("mean", "sum"):
+        raise ValueError(f"reduce={reduce!r}: mean or sum")
     flat, rows, counts, n_small = load_map(path)
     if Full.size != len(counts):
         raise ValueError(f"vocabulary axis has {Full.size} entries, the map {len(counts)}")
@@ -86,7 +97,9 @@ def compose(small: NamedArray, Full: Axis, Embed: Axis, path: str) -> NamedArray
     # in bf16 a common piece's thousands of terms would lose the small ones (the baseline's head gradient is an f32-accumulated matmul)
     w32 = w.astype(jnp.float32)
     summed = jax.ops.segment_sum(w32[jnp.asarray(flat)], jnp.asarray(rows), num_segments=Full.size, indices_are_sorted=True)
-    return hax.named((summed / jnp.asarray(counts, dtype=jnp.float32)[:, None]).astype(w.dtype), (Full, Embed))
+    if reduce == "mean":
+        summed = summed / jnp.asarray(counts, dtype=jnp.float32)[:, None]
+    return hax.named(summed.astype(w.dtype), (Full, Embed))
 
 
 def own_rows(path: str, V: int) -> np.ndarray:
@@ -137,7 +150,7 @@ class ComposedVocabQwen3LMHeadModel(Qwen3LMHeadModel):
             w = compose(te.weight, self.full_vocab, cfg.Embed, cfg.cv_map)
             embeddings = dataclasses.replace(embeddings, token_embeddings=dataclasses.replace(te, weight=w, Vocab=self.full_vocab))
         if cfg.cv_output:
-            w = compose(lm_head.weight, self.full_vocab, cfg.Embed, cfg.cv_map)
+            w = compose(lm_head.weight, self.full_vocab, cfg.Embed, cfg.cv_map, cfg.cv_output_reduce)
             lm_head = dataclasses.replace(lm_head, weight=w, Out=self.full_vocab)
         return Qwen3LMHeadModel(self.transformer, embeddings, lm_head)
 

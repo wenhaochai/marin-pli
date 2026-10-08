@@ -10,7 +10,7 @@ get_lm_head), and saves for each subset the window token ids [n, SEQ_LEN], the l
 position t [n, SEQ_LEN] (float32) and its loss weight. A repeated run and its full-data partner use the same tokenizer and
 windows, so their arrays line up position by position. vocab_cost_groups.py groups the differences.
 
-    CKPT=<.../checkpoints/step-N> SIZE=300m [VOCAB_K=8000] [VARIANT=cv CV_SIDE=in|out] [SEQ_LEN=4096] OUT=<file.npz>
+    CKPT=<.../checkpoints/step-N> SIZE=300m [VOCAB_K=8000] [VARIANT=cv CV_SIDE=in|out [CV_OUT_REDUCE=sum]] [SEQ_LEN=4096] OUT=<file.npz>
     python -m experiments.references.vocab_token_losses
 """
 
@@ -44,6 +44,11 @@ SIZE = os.environ.get("SIZE", "300m")
 VOCAB_K = int(os.environ.get("VOCAB_K", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")
 CV_SIDE = os.environ.get("CV_SIDE", "in")
+# a sum head and a mean head have the same tree, so a sum checkpoint would load and be scored as a mean one: the run id
+# in the checkpoint path (-cvout8k-sum) decides, and an explicit CV_OUT_REDUCE must agree with it
+CV_OUT_REDUCE = "sum" if "-sum" in CKPT.split("/checkpoints/")[0].rsplit("/", 2)[-2] else "mean"
+if os.environ.get("CV_OUT_REDUCE", CV_OUT_REDUCE) != CV_OUT_REDUCE:
+    raise ValueError(f"CV_OUT_REDUCE={os.environ['CV_OUT_REDUCE']} but the run id in {CKPT} says {CV_OUT_REDUCE}")
 SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
 PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
 EVAL_BATCH = int(os.environ.get("EVAL_BATCH", "8"))
@@ -78,7 +83,8 @@ def model_config():
                   hybrid_norm=True, attn_backend=AttentionBackend.JAX_FLASH)
     if VARIANT == "cv":
         return ComposedVocabQwen3Config(**common, cv_map=f"{PREFIX}/tokenizers/marin-small/v{int(os.environ.get('CV_K', '8000'))}/expand_full.npz",
-                                        cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"))
+                                        cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"),
+                                        cv_output_reduce=CV_OUT_REDUCE)
     assert VARIANT == "baseline", VARIANT
     return Qwen3Config(**common)
 

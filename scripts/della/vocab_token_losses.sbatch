@@ -19,6 +19,7 @@ cd /scratch/gpfs/GROUP/USER/project/marin
 source scripts/della/job_tmpdir.sh   # TMPDIR under scratch, per task, removed at exit (never the shared /tmp)
 export MARIN_PREFIX=/scratch/gpfs/GROUP/USER/marin_store_big HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}
+unset VOCAB_K VARIANT CV_SIDE CV_K CV_OUT_REDUCE SEQ_LEN SIZE   # each SPECS entry sets its own (--export=ALL)
 fail=0
 IFS=';' read -ra ENTRIES <<< "${SPECS:?set SPECS}"
 for e in "${ENTRIES[@]}"; do

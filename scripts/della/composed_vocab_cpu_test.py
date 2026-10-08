@@ -12,6 +12,9 @@ Run from the marin repo on a vis node: nice -n 19 .venv/bin/python scripts/della
 5. Parameter counts: the composed side holds 8,256 rows instead of 128,256.
 6. Init: the small rows equal the baseline's rows of the tokens below 8K and the specials (same key), the other
    table and the trunk equal the baseline's; a bf16 table composes in f32 and comes back as bf16.
+7. cv_output_reduce="sum" (out and both): checks 2-6 with the sum in place of the mean for the output rows (the input
+   rows stay means), a rare token's logit equals the sum of its pieces' logits and can exceed every piece's, and the
+   config refuses an unknown reduce or a sum without a composed head.
 """
 import os
 
@@ -65,8 +68,16 @@ else:
     check("rare tokens: all pieces below K", all((pieces(t) < K).all() and len(pieces(t)) >= 1 for t in sample))
 
 
-def mean_rows(w_small):
-    return np.stack([w_small[pieces(t)].mean(0) for t in range(V)])
+def mean_rows(w_small, reduce="mean"):
+    return np.stack([w_small[pieces(t)].mean(0) if reduce == "mean" else w_small[pieces(t)].sum(0) for t in range(V)])
+
+
+for bad in (dict(cv_output=True, cv_output_reduce="max"), dict(cv_input=True, cv_output_reduce="sum")):
+    try:
+        ComposedVocabQwen3Config(**common, cv_map=MAP, **bad)
+        check(f"config refuses {bad}", False)
+    except ValueError:
+        check(f"config refuses {bad}", True)
 
 
 def plain_with(model: ComposedVocabQwen3LMHeadModel) -> Qwen3LMHeadModel:
@@ -78,8 +89,9 @@ tokens = hax.named(jrandom.randint(jrandom.PRNGKey(1), (B, T), 0, V), (Batch, Po
 tokens = hax.named(tokens.array.at[0, :6].set(jnp.array([127999, 9000, 128000, 5, 64000, 100000])), (Batch, Pos))
 ex = LmExample(tokens=tokens, loss_weight=hax.ones((Batch, Pos)).at[Pos, T - 1].set(0.0), attn_mask=AttentionMask.causal())
 
-for side in ("in", "out", "both"):
-    cfg = ComposedVocabQwen3Config(**common, cv_map=MAP, cv_input=side in ("in", "both"), cv_output=side in ("out", "both"))
+for side, red in (("in", "mean"), ("out", "mean"), ("both", "mean"), ("out", "sum"), ("both", "sum")):
+    cfg = ComposedVocabQwen3Config(**common, cv_map=MAP, cv_input=side in ("in", "both"), cv_output=side in ("out", "both"), cv_output_reduce=red)
+    side = side if red == "mean" else f"{side}, sum"
     m = ComposedVocabQwen3LMHeadModel.init(Vocab, cfg, key=jrandom.PRNGKey(0))
     # 2a. init: the small rows are the baseline's rows of the tokens below K and the specials (same key)
     base = Qwen3LMHeadModel.init(Vocab, Qwen3Config(**common), key=jrandom.PRNGKey(0))
@@ -100,8 +112,8 @@ for side in ("in", "out", "both"):
     if cfg.cv_output:
         from experiments.references.composed_vocab_qwen3 import compose
         wb = m.lm_head.weight.astype(jnp.bfloat16)
-        cb = compose(wb, Vocab, cfg.Embed, MAP)
-        ref = mean_rows(np.asarray(wb.rearrange(("small_vocab", "embed")).array, np.float64))
+        cb = compose(wb, Vocab, cfg.Embed, MAP, red)
+        ref = mean_rows(np.asarray(wb.rearrange(("small_vocab", "embed")).array, np.float64), red)
         check(f"[{side}] bf16 compose: dtype bf16, f32-accurate mean", cb.dtype == jnp.bfloat16 and np.allclose(np.asarray(cb.rearrange(("vocab", "embed")).array, np.float64), ref, atol=1e-2, rtol=1e-2))
     # 2. composition, against numpy
     full = plain_with(m)
@@ -112,7 +124,7 @@ for side in ("in", "out", "both"):
     if cfg.cv_output:
         ws = np.asarray(m.lm_head.weight.rearrange(("small_vocab", "embed")).array, np.float64)
         got = np.asarray(m.get_lm_head().rearrange(("vocab", "embed")).array, np.float64)
-        check(f"[{side}] output rows = mean of pieces", np.allclose(got, mean_rows(ws), atol=1e-5), f"max err {np.abs(got - mean_rows(ws)).max():.2e}")
+        check(f"[{side}] output rows = {red} of pieces", np.allclose(got, mean_rows(ws, red), atol=1e-5), f"max err {np.abs(got - mean_rows(ws, red)).max():.2e}")
     check(f"[{side}] Vocab axis", m.Vocab == Vocab)
 
     # 3. losses, logits and gradients against the plain model with the composed tables
@@ -127,6 +139,13 @@ for side in ("in", "out", "both"):
     check(f"[{side}] eval loss (key=None)", np.allclose(float(ec.scalar() if hasattr(ec, 'scalar') else ec), float(lp.scalar() if hasattr(lp, 'scalar') else lp), atol=1e-5))
     zc, zp = m(tokens, AttentionMask.causal()), full(tokens, AttentionMask.causal())
     check(f"[{side}] __call__ logits", np.allclose(np.asarray(zc.array), np.asarray(zp.array), atol=1e-4))
+    if cfg.cv_output:   # 7. a rare token's logit against its pieces' logits, at every position
+        z = np.asarray(zc.rearrange(("batch", "position", "vocab")).array, np.float64).reshape(B * T, V)
+        multi = [int(t) for t in sample if len(pieces(t)) >= 2][:50]
+        comb = np.stack([z[:, pieces(t)].mean(1) if red == "mean" else z[:, pieces(t)].sum(1) for t in multi], 1)
+        check(f"[{side}] rare-token logit = {red} of its pieces' logits", np.allclose(z[:, multi], comb, atol=1e-3), f"max err {np.abs(z[:, multi] - comb).max():.2e}")
+        above = np.stack([z[:, t] > z[:, pieces(t)].max(1) + 1e-6 for t in multi], 1)
+        check(f"[{side}] rare-token logit above every piece's: {'never' if red == 'mean' else 'somewhere'}", (not above.any()) if red == "mean" else above.any(), f"{above.mean():.1%} of (position, token)")
 
     def loss_of(model):
         out = model.compute_next_token_loss(ex, key=key)
@@ -141,7 +160,7 @@ for side in ("in", "out", "both"):
             continue
         gf = np.asarray(full_g.rearrange(("vocab", "embed")).array, np.float64)
         pull = np.zeros((n_small, D))
-        np.add.at(pull, flat, (gf / counts[:, None])[rows])
+        np.add.at(pull, flat, (gf / (counts[:, None] if which == "input" or red == "mean" else 1.0))[rows])
         gs = np.asarray(small_g.rearrange(("small_vocab", "embed")).array, np.float64)
         check(f"[{side}] {which} gradient = pulled-back full gradient", np.allclose(gs, pull, atol=1e-6, rtol=1e-4), f"max err {np.abs(gs - pull).max():.2e}")
     # trunk gradients identical
