@@ -20,7 +20,7 @@ more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) cappe
 | Q6 | Fewer bytes per window? | grouped by context bytes; 128K at SEQ_LEN 3072, batch 172 (-sl3072-b172) | why-sl3072 |
 | Q7 | More optimizer steps? | 128K at batch 96 (1.33x steps, same text; warmup stays 1000 steps, as in the 8K runs) | why-b96 |
 
-| Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions) | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h |
+| Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; 520m too (owner, 2026-10-09; 47015 steps, ~78 h per run, 4 segments bytes-520m-seg1..4, jobs 15283034-37, ~620 H100h); window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions) | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h |
 
 Not done (owner): reasons 4 (Adam on rare rows), 6 (shorter token strings), 7 (weaker model), 8 (composing words), the
 parameter-count control (low-rank tables).
