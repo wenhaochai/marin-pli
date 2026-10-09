@@ -168,6 +168,13 @@ EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
 PARAM_MAP = os.environ.get("PARAM_MAP", "")
 if PARAM_MAP not in ("", "rep", "vocab"):
     raise ValueError(f"PARAM_MAP must be empty, rep or vocab, got {PARAM_MAP!r}")
+# Whole layers make the GPU pool tight: at 48 layers on 4 GPUs the state takes ~11 GiB and the train step a 30.6 GiB
+# temp buffer. At the job scripts' fraction 0.9 the ~60.5 GiB left is under twice that buffer, so one small buffer that
+# outlives a step and lands mid-pool leaves no gap the next step fits in: both 48-layer runs with separate heads died at
+# step ~260 (15266143, 15266145). 0.95 gives ~64 GiB, where one side of any single split always fits. Read when JAX
+# creates the GPU backend, inside levanter's init after marin sets XLA_FLAGS; nothing here may create it earlier.
+if PARAM_MAP:
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("PARAM_MAP_MEM_FRACTION", "0.95")
 # RUN_TAG appends a literal suffix to the run id ONLY (output path and W&B name); it changes nothing about training.
 # Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
 # under two names, so their difference measures the hardware/compiler nondeterminism floor.
