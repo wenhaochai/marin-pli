@@ -34,6 +34,7 @@ metric-driven schedule.
 
 import dataclasses
 import logging
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -374,9 +375,34 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         keys = maybe_rng_split(key, self.config.num_layers) if key is not None else None
 
         pcgrad = cast(PerLayerQwen3Config, self.config).pls_pcgrad
+        # PLS_SCAN_FIX (diagnostic, 2026-10-09; read at trace time): at 48 layers on GPU with FSDP-sharded parameters
+        # this path and the baseline's fold disagree. "shard" pins every layer's output to the compute sharding; "loop"
+        # replaces the scan with a Python loop over the layers, each under the same remat. Empty = the scan.
+        fix = os.environ.get("PLS_SCAN_FIX", "")
+        if fix not in ("", "shard", "loop"):
+            raise ValueError(f"PLS_SCAN_FIX must be empty, shard or loop, got {fix!r}")
+        if fix == "loop" and pcgrad:
+            raise ValueError("PLS_SCAN_FIX=loop does not implement pls_pcgrad")
+        if fix:
+            logger.info(f"layer_outputs traced with PLS_SCAN_FIX={fix}")
+        if fix == "loop":
+            Blk, ys, y = tr.layers.Block, [], x
+
+            def take(a, k):  # the scan's slicing: named arrays on the layer axis, other arrays on their first axis
+                if isinstance(a, NamedArray):
+                    return a[Blk.name, k] if any(ax.name == Blk.name for ax in a.axes) else a
+                return a[k] if eqx.is_array(a) else a
+
+            for k in range(self.config.num_layers):
+                layer = jax.tree_util.tree_map(lambda a, k=k: take(a, k), tr.layers.stacked, is_leaf=lambda a: isinstance(a, NamedArray))
+                y = eqx.filter_checkpoint(lambda m, h, kk: m(h, mask=attn_mask, key=kk, pos_ids=None))(layer, y, keys[k] if keys is not None else None)
+                ys.append(y)
+            return hax.stack(Blk, ys)
 
         def step(layer, carry, **kw):
             y = layer(carry, **kw)
+            if fix == "shard":
+                y = hax.shard(y)
             if not pcgrad:
                 return y, y
             trunk, read = _junction(y.array, y.axes.index(self.config.Embed))

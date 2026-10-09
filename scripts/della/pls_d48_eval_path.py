@@ -131,3 +131,20 @@ except Exception as e:
 
     traceback.print_exc()
     print(f"evaluator check: {type(e).__name__}: {str(e)[:300]}", flush=True)
+
+# 4. PATHS_FIXES=1: the readout path under each PLS_SCAN_FIX variant (read at trace time, so one fresh jit per variant),
+# against the baseline eval path, on the eval loader's batch. Also on by default on GPU with the trainer's sharding.
+if os.environ.get("PATHS_FIXES") or (os.environ.get("PATHS_GPU") == "1" and os.environ.get("PATHS_SHARD")):
+    for fix in ("", "shard", "loop"):
+        os.environ["PLS_SCAN_FIX"] = fix
+        try:
+            with hax.axis_mapping(tc.compute_axis_mapping):
+                b2 = jax.device_put(grug, jax.sharding.NamedSharding(tc.device_mesh, jax.sharding.PartitionSpec(tc.compute_axis_mapping["batch"])))
+                base, ro = hax.named_jit(lambda m, b: (lambda o, r: (mean_loss(o[0], o[1]), jax.vmap(lambda p: mean_loss(p, r[1]))(r[0])))(
+                    _default_lm_eval_loss_fn(m, b, EvalBatch=EvalBatch, mp=mp), _readout_eval_loss_fn(m, b, readouts=(0, 23, 46, 47), EvalBatch=EvalBatch, mp=mp)),
+                    axis_resources=tc.compute_axis_mapping)(model, b2)
+            ro = np.asarray(ro)
+            print(f"readout loss fn, PLS_SCAN_FIX={fix or 'none':5s} {len(jax.devices())} dev: eval loss fn {float(base):.4f}; readout L0 {ro[0]:.4f} L23 {ro[1]:.4f} L46 {ro[2]:.4f} L47 {ro[3]:.4f}", flush=True)
+        except Exception as e:
+            print(f"readout loss fn, PLS_SCAN_FIX={fix}: {type(e).__name__}: {str(e)[:300]}", flush=True)
+    os.environ.pop("PLS_SCAN_FIX", None)
