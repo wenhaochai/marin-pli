@@ -5,7 +5,7 @@
 row the mean of its 8K pieces' rows (-cvin8k) the cost is +0.047, the full-data model is worse (1.4127 vs 1.3867) and
 the 8-pass model is better (1.4601 vs 1.4695, and 8K 1.4814). A window of the 8K truncation's bytes (+0.083) and a third
 more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) capped a token's logit at its largest piece's
-(full data 1.767); the redo with the sum (why-cvoutsum 15228167) failed its gate on 2026-10-09 and was cancelled: smoke eval 8.43 (mean 8.49, cvin 7.49), train loss 4.36 at step 890 and 4.10 at 1580 (baseline 3.73, 3.53; mean 4.48, 4.25). Q5 next step: owner's decision. Grouped analyses (seed-matched seed-1 pairs, macro totals equal the W&B costs): the 128K cost is far highest in the rarest input decile (0.219 vs 0.029-0.090) and rarest target decile (0.210); 8K is flat and low; cvin cuts the rarest input decile to 0.093; the cost does not grow with context bytes (Q6 negative again). 520m 128K costs +0.095. At 130m the cost also falls with every halving (128K +0.110 to 8K +0.018). Second seeds (Q3 answered): 128K +0.078 (seed 0 +0.083), 8K +0.020 (seed 0 +0.026). 520m 8K, bytes queued. Split from the sampled-softmax
+(full data 1.767); the redo with the sum (why-cvoutsum 15228167) failed its gate on 2026-10-09 and was cancelled: smoke eval 8.43 (mean 8.49, cvin 7.49), train loss 4.36 at step 890 and 4.10 at 1580 (baseline 3.73, 3.53; mean 4.48, 4.25). Q5 (owner, 2026-10-09): answered by the target-frequency grouping (correlational); fig-cvout dropped, the composed-output attempt told in prose. 130m bytes: cost +0.0066, the lowest of all K at 130m. Grouped analyses (seed-matched seed-1 pairs, macro totals equal the W&B costs): the 128K cost is far highest in the rarest input decile (0.219 vs 0.029-0.090) and rarest target decile (0.210); 8K is flat and low; cvin cuts the rarest input decile to 0.093; the cost does not grow with context bytes (Q6 negative again). 520m 128K costs +0.095. At 130m the cost also falls with every halving (128K +0.110 to 8K +0.018). Second seeds (Q3 answered): 128K +0.078 (seed 0 +0.083), 8K +0.020 (seed 0 +0.026). 520m 8K, bytes queued. Split from the sampled-softmax
 / OT project (docs/della/over-vocab.md), whose Q5 this was.
 
 ## Questions and runs
@@ -16,7 +16,7 @@ more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) cappe
 | Q2 | Other sizes? | 130m: 64K-8K pairs + 128K 8 passes; 520m: 128K 8 passes, 8K pair | logs/plans/vo130.txt, vo520-v8k-seg{1,2}.txt, 15162227 |
 | Q3 | Is the trend real? | byte check (done: 8K/128K bytes 1.0004); seed 1 for 128K (-s1-rerun, -rep8-s1) and 8K | why-seed128k, why-seed8k |
 | Q4 | Input rows of rare tokens? | grouped analysis by input-token frequency; 128K with input rows = mean of 8K pieces (-cvin8k) | why-cvin |
-| Q5 | Output rows of rare tokens? | grouped by target frequency; -cvout8k (mean: capped, dropped), -cvout8k-sum (redo) | why-cvout, why-cvoutsum |
+| Q5 | Output rows of rare tokens? | grouped by target frequency (the answer); -cvout8k (mean) and -cvout8k-sum (gate failed, cancelled): composed heads cannot fit the data | why-cvout, why-cvoutsum |
 | Q6 | Fewer bytes per window? | grouped by context bytes; 128K at SEQ_LEN 3072, batch 172 (-sl3072-b172) | why-sl3072 |
 | Q7 | More optimizer steps? | 128K at batch 96 (1.33x steps, same text; warmup stays 1000 steps, as in the 8K runs) | why-b96 |
 
