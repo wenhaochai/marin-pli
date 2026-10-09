@@ -53,6 +53,11 @@ mesh.__enter__()
 hax.axis_mapping(tc.parameter_axis_mapping).__enter__()
 model = load_checkpoint(eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, cfg, key=jrandom.PRNGKey(0)), CKPT, subpath="model")
 mp = jmp.get_policy("p=f32,c=bfloat16")
+if os.environ.get("PATHS_SHARD"):  # the trainer's parameter layout (FSDP: embed over data), not what load_checkpoint gives
+    model = hax.shard(model, tc.parameter_axis_mapping)
+_lw = jax.tree_util.tree_leaves(model.transformer.layers.stacked)[0]
+print(f"param mapping {dict(tc.parameter_axis_mapping)}; a stacked layer weight {getattr(_lw, 'axes', None)} sharding {getattr(getattr(_lw, 'array', _lw), 'sharding', None)}; "
+      f"lm_head sharding {model.get_lm_head().array.sharding}", flush=True)
 
 import tensorstore as ts  # noqa: E402
 
