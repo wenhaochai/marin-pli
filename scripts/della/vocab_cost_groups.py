@@ -28,13 +28,17 @@ PREFIX = "/scratch/gpfs/GROUP/USER/marin_store_big"
 LOSSES = "/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_token_losses"
 OUT = "/scratch/gpfs/GROUP/USER/tmp_plots/vocab/cost_groups.json"
 TOK = {128000: os.path.dirname(glob.glob("/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/*/tokenizer.json")[0]),
-       8000: f"{PREFIX}/tokenizers/marin-small/v8000"}
-TRAIN = {128000: f"{PREFIX}/fineweb-edu-10B/2026.06.28/train", 8000: f"{PREFIX}/fineweb-edu-10B-v8000/train"}
+       8000: f"{PREFIX}/tokenizers/marin-small/v8000", 256: f"{PREFIX}/tokenizers/marin-small/v256"}
+TRAIN = {128000: f"{PREFIX}/fineweb-edu-10B/2026.06.28/train", 8000: f"{PREFIX}/fineweb-edu-10B-v8000/train",
+         256: f"{PREFIX}/fineweb-edu-10B-v256/train"}
 # pair name -> (tokenizer K, full-data run, 8-pass run); a pair is skipped until both npz files exist
 PAIRS = {
     "128K": (128000, "muonh-qwen3-300m-della4xh100-s1-rerun", "muonh-qwen3-300m-della4xh100-rep8-s1"),
     "8K": (8000, "muonh-qwen3-300m-della4xh100-v8k", "muonh-qwen3-300m-della4xh100-v8k-rep8"),
     "8K-s1": (8000, "muonh-qwen3-300m-della4xh100-v8k-s1", "muonh-qwen3-300m-della4xh100-v8k-rep8-s1"),
+    # bytes (K=256: ids 0-255 one byte each, specials 256-511 count 0 bytes); 256 types, so equal-count deciles split
+    # single byte values at the edges (seeded tie-break): read its frequency panels as coarse
+    "bytes": (256, "muonh-qwen3-300m-della4xh100-bytes", "muonh-qwen3-300m-della4xh100-bytes-rep8"),
 }
 CTX_EDGES = [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 10 ** 9]
 
