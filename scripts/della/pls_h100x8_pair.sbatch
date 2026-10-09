@@ -35,7 +35,7 @@ PY=${PAIR_TEST_PY:-$PY}   # tests only: a stub in place of the launcher
 PT=/scratch/gpfs/GROUP/USER/tools/packed_task.sh
 LAUNCH=experiments.references.della_muonh_qwen3_scaling
 unset SMOKE_STEPS TOTAL_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN
-unset SIZE LAYERS ARCH PDP PLS_W PLS_DETACH PLS_SEP PLS_DETACH_BB PLS_LOCAL PLS_SHAPE PLS_PCGRAD PLS_OFF PLS_ON PLS_PROBE PLS_MON PLS_EVAL SEED RUN_TAG LR_MUL WARMUP HEADS_FROM
+unset SIZE LAYERS ARCH PDP PLS_W PLS_DETACH PLS_SEP PLS_DETACH_BB PLS_LOCAL PLS_SHAPE PLS_PCGRAD PLS_OFF PLS_ON PLS_PROBE PLS_MON PLS_EVAL SEED RUN_TAG LR_MUL WARMUP HEADS_FROM PARAM_MAP PLS_SCAN_FIX PLS_OPT_SPLIT HEADS_WARMUP PATHS_SHARD
 
 module load proxy/default 2>/dev/null || true  # wandb only
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}
@@ -101,6 +101,10 @@ for i in 0 1; do
   [[ ${run_ids[$i]} == muonh-qwen3-* ]] || { echo "bad run id '${run_ids[$i]}' for ${specs[$i]}"; exit 2; }
 done
 [ "${run_ids[0]}" != "${run_ids[1]}" ] || { echo "both halves would write run ${run_ids[0]}"; exit 2; }
+# a failed smoke earlier in this pair's chain (marker keyed by run a's id): stop before touching the GPUs; delete the
+# marker by hand once the cause is fixed
+FAILDIR=logs/pair_failed; mkdir -p "$FAILDIR"
+[ ! -e "$FAILDIR/${run_ids[0]}.fail" ] || { echo "an earlier job of this pair failed its smoke: $(cat "$FAILDIR/${run_ids[0]}.fail"); not running"; exit 6; }
 
 # 1. smoke copies, both halves at once
 for i in 0 1; do
@@ -120,7 +124,23 @@ for i in 0 1; do
   fi
 done
 pids=()
-[ $smoke_ok = 1 ] || { echo "a smoke copy failed: no training"; exit 4; }
+[ $smoke_ok = 1 ] || { echo "job $SLURM_JOB_ID: a smoke copy failed" > "$FAILDIR/${run_ids[0]}.fail"; echo "a smoke copy failed: no training"; exit 4; }
+# The smoke's last-layer readout must equal the main eval (both decode the final state with lm_head): at 48 layers under
+# FSDP the readout path computed a different function on GPU (2026-10-09, 15255032/15257881) and training followed it.
+# Enforced for every design: the DepthBench designs decode outputs(...)[-1] in both paths too (depth_arch_qwen3.py), and
+# their FSDP smokes showed gaps of 0.015-0.146 (14969857, 15024096). A failure leaves a marker so that the later jobs
+# of an afterany chain stop at once instead of repeating the smoke.
+for i in 0 1; do
+  slog=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}-smoke.log
+  main=$(sed -n 's/.*levanter.eval eval loss: \([0-9.]*\).*/\1/p' "$slog" | tail -1)
+  last=$(sed -n 's/.*per_layer_qwen3 eval\/L\([0-9]*\) loss \([0-9.]*\).*/\1 \2/p' "$slog" | sort -n | tail -1 | cut -d' ' -f2)
+  gap=$(awk -v a="${main:-nan}" -v b="${last:-nan}" 'BEGIN { d = a - b; if (d < 0) d = -d; print (a == "nan" || b == "nan") ? "nan" : d }')
+  echo "smoke ${names[$i]}: eval loss ${main:-?}, last readout ${last:-?}, gap $gap"
+  if ! awk -v g="$gap" 'BEGIN { exit !(g != "nan" && g <= 0.005) }'; then
+    echo "smoke ${names[$i]}: last readout differs from the main eval (or is missing): no training"
+    echo "job $SLURM_JOB_ID: smoke ${names[$i]} gap $gap" > "$FAILDIR/${run_ids[0]}.fail"; exit 5
+  fi
+done
 
 # 2. training, limited to the job's remaining time minus 5 min
 TRAIN_LIMIT=${PAIR_TRAIN_LIMIT:-$(( JOB_MIN * 60 - SECONDS - 300 ))s}

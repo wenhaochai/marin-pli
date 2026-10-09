@@ -5,6 +5,12 @@
 # Each design's separate-heads and probes runs share one 8-GPU node (pls_h100x8_pair.sbatch, GPUs 0-3 and 4-7),
 # as a chain of 24 h jobs (afterany; each resumes from the last checkpoint). RUN_TAG=-g4 keeps the ids apart from
 # the 8-GPU runs. Usage: scripts/della/pls_d48_g4_submit.sh [--dry]
+# 2026-10-09: the cause is the FSDP parameter layout, not the GPU count. Under embed-over-data sharding a GPU program
+# with the 48-layer readouts gives values that depend on what else it holds and change between runs (15255032,
+# 15264999: L47 4.2378 / 4.2737 against main 4.2529; the 8-GPU trainer 7.29 against 5.45, 15257881). With the layers
+# whole on every GPU (PARAM_MAP=vocab: only vocab-sized tensors sharded) every program agrees (15264999). Every run
+# here uses PARAM_MAP=vocab (tag -vs), and each smoke copy must show last readout = main eval within 0.005 for every
+# design (pls_h100x8_pair.sbatch; a failure stops the rest of that design's chain via logs/pair_failed/).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 DRY=${1:-}
@@ -24,7 +30,7 @@ designs=(
 for d in "${designs[@]}"; do
   read -r name pdp mem n <<< "$d"
   arch=$name; [ "$name" = sandwich ] && arch=   # the baseline design is the launcher's default (ARCH empty)
-  base="SIZE=130m LAYERS=48 PDP=$pdp PLS_W=1 PLS_SEP=1 RUN_TAG=-g4"
+  base="SIZE=130m LAYERS=48 PDP=$pdp PLS_W=1 PLS_SEP=1 PARAM_MAP=vocab RUN_TAG=-g4"
   [ -n "$arch" ] && base="$base ARCH=$arch"
   a="$base PLS_DETACH_BB=0"; b="$base PLS_DETACH_BB=1"
   dep=
