@@ -161,6 +161,13 @@ if LR_MUL <= 0 or (WARMUP is not None and WARMUP < 0):
 # EMA_BETA > 0 keeps an exponential moving average of the weights (levanter ModelAveraging) and evaluates it alongside the
 # raw weights (eval/ema/...). Training is untouched; this is an evaluation-noise reduction (Polyak 1992). Tag -ema{beta}.
 EMA_BETA = float(os.environ.get("EMA_BETA", "0"))
+# PARAM_MAP replaces FSDP's parameter layout (embed over data): "rep" keeps every parameter and optimizer state whole on
+# each GPU (pure data parallelism, tag -dp); "vocab" shards only vocab-sized tensors (embedding, lm_head, separate heads)
+# over data and keeps the layers whole (tag -vs). 2026-10-09: at 48 layers with 47 separate heads, GPU programs over
+# FSDP-sharded parameters give readout losses that depend on what else the program holds (15255032); unsharded agree.
+PARAM_MAP = os.environ.get("PARAM_MAP", "")
+if PARAM_MAP not in ("", "rep", "vocab"):
+    raise ValueError(f"PARAM_MAP must be empty, rep or vocab, got {PARAM_MAP!r}")
 # RUN_TAG appends a literal suffix to the run id ONLY (output path and W&B name); it changes nothing about training.
 # Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
 # under two names, so their difference measures the hardware/compiler nondeterminism floor.
@@ -284,6 +291,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += "-fh"
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
+    if PARAM_MAP:
+        variant_tags += {"rep": "-dp", "vocab": "-vs"}[PARAM_MAP]
     if LAYERS:
         variant_tags += f"-d{LAYERS}"
     if SEED != 0:
@@ -441,7 +450,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                         # ov: the hashed n-gram tables stay row-sharded in compute too (never all-gathered)
                         **({OV_ROWS: ResourceAxis.DATA} if VARIANT in ("ov", "ovss") else {}),
                     },
-                    **({"param_mapping": {"embed": "data", OV_ROWS: "data"}} if VARIANT in ("ov", "ovss") else {}),
+                    **({"param_mapping": {"embed": "data", OV_ROWS: "data"}} if VARIANT in ("ov", "ovss") else {"param_mapping": {"rep": {}, "vocab": {"vocab": "data"}}[PARAM_MAP]} if PARAM_MAP else {}),
                 ),
                 seed=SEED,
                 model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,

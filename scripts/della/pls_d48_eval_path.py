@@ -53,7 +53,11 @@ mesh.__enter__()
 hax.axis_mapping(tc.parameter_axis_mapping).__enter__()
 model = load_checkpoint(eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, cfg, key=jrandom.PRNGKey(0)), CKPT, subpath="model")
 mp = jmp.get_policy("p=f32,c=bfloat16")
-if os.environ.get("PATHS_SHARD"):  # the trainer's parameter layout (FSDP: embed over data), not what load_checkpoint gives
+if os.environ.get("PATHS_SHARD") == "rep":  # every parameter whole on every device (the launcher's PARAM_MAP=rep)
+    model = hax.shard(model, {})
+elif os.environ.get("PATHS_SHARD") == "vocab":  # only vocab-sized tensors sharded over data (PARAM_MAP=vocab)
+    model = hax.shard(model, {"vocab": "data"})
+elif os.environ.get("PATHS_SHARD"):  # the trainer's parameter layout (FSDP: embed over data), not what load_checkpoint gives
     model = hax.shard(model, tc.parameter_axis_mapping)
 _lw = jax.tree_util.tree_leaves(model.transformer.layers.stacked)[0]
 print(f"param mapping {dict(tc.parameter_axis_mapping)}; a stacked layer weight {getattr(_lw, 'axes', None)} sharding {getattr(getattr(_lw, 'array', _lw), 'sharding', None)}; "
@@ -145,6 +149,10 @@ if os.environ.get("PATHS_FIXES") or (os.environ.get("PATHS_GPU") == "1" and os.e
                     axis_resources=tc.compute_axis_mapping)(model, b2)
             ro = np.asarray(ro)
             print(f"readout loss fn, PLS_SCAN_FIX={fix or 'none':5s} {len(jax.devices())} dev: eval loss fn {float(base):.4f}; readout L0 {ro[0]:.4f} L23 {ro[1]:.4f} L46 {ro[2]:.4f} L47 {ro[3]:.4f}", flush=True)
+            with hax.axis_mapping(tc.compute_axis_mapping):
+                al = np.asarray(hax.named_jit(lambda m, b: (lambda o: jax.vmap(lambda p: mean_loss(p, o[1]))(o[0]))(
+                    _readout_eval_loss_fn(m, b, readouts=tuple(range(R)), EvalBatch=EvalBatch, mp=mp)), axis_resources=tc.compute_axis_mapping)(model, b2))
+            print(f"readout loss fn, PLS_SCAN_FIX={fix or 'none':5s} {len(jax.devices())} dev, R={R} alone: L0 {al[0]:.4f} L23 {al[23]:.4f} L46 {al[46]:.4f} L47 {al[47]:.4f}", flush=True)
         except Exception as e:
             print(f"readout loss fn, PLS_SCAN_FIX={fix}: {type(e).__name__}: {str(e)[:300]}", flush=True)
     os.environ.pop("PLS_SCAN_FIX", None)
