@@ -90,8 +90,11 @@ parameter-count control (low-rank tables).
   truncated tokenizers; Q7 (more steps) speaks to the step count, not to the warmup share.
 - Bytes frequency deciles (Q4/Q5 analysis) over 256 types: frequent bytes straddle decile edges and are split by the
   seeded tie-break; read the byte panels as coarse.
-- Analysis scripts still need K=256 entries (vocab_cost_groups.py TOK/TRAIN/PAIRS) and SEQ_LEN=16384 in the token-loss
-  specs (vocab_token_losses.py defaults to 4096); figure/record builders need a bytes point (RATIO/VOC/KTICKS, rid()).
+- Bytes in the analyses: vocab_cost_groups.py has the K=256 pair "bytes" (tables checked: 512 ids, bytes 0-255 one byte,
+  specials 0, EOS 257; train_counts_256.npy precomputed, 204 byte values seen in 201M tokens); the figure and record
+  builders already list the bytes points. Still to do at submit time: SEQ_LEN=16384 in the token-loss specs of the
+  sl16384 runs (vocab_token_losses.py defaults to 4096).
+- vo-toklosses moved from pli-low (priority 122, never started) to pli-short (15255396), with the 8K seed-1 pair added.
 
 - why-* jobs hold one run per lane: a run that fails twice (deterministic crash) leaves its 4 GPUs idle; Della cancels the
   job after 90 idle minutes, taking the healthy partner with it. The retry covers transient crashes only. Decision
