@@ -175,6 +175,12 @@ if PARAM_MAP not in ("", "rep", "vocab"):
 # creates the GPU backend, inside levanter's init after marin sets XLA_FLAGS; nothing here may create it earlier.
 if PARAM_MAP:
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("PARAM_MAP_MEM_FRACTION", "0.95")
+# hc's train step needs a 32.91 GiB temp buffer, and two of those no longer fit beside the state even at 0.95: it died at
+# step 257 (15266153). hc and the designs not yet started under PARAM_MAP halve the microbatch (PARAM_MAP_PDP, PDP 4 -> 2:
+# the same 32 sequences per GPU as 16 accumulated microbatches in place of 8; the gradient differs only in summation
+# order; a run resumes from a microbatch-4 checkpoint unchanged). Set in code because the queued jobs' environments were
+# fixed at submit.
+PARAM_MAP_HALF_PDP = ("hc", "mhc", "attnres", "attnres_block", "moda")
 # RUN_TAG appends a literal suffix to the run id ONLY (output path and W&B name); it changes nothing about training.
 # Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
 # under two names, so their difference measures the hardware/compiler nondeterminism floor.
@@ -260,6 +266,10 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
+    pdp = int(os.environ.get("PDP", PER_DEVICE_PARALLELISM.get(size, -1)))
+    if PARAM_MAP and ARCH in PARAM_MAP_HALF_PDP and pdp > 1:
+        pdp = int(os.environ.get("PARAM_MAP_PDP", pdp // 2))
+    print(f"per-device microbatch {pdp}", flush=True)
     variant_tags = (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + ("-tied" if TIE else "")
     if VARIANT == "fbt":
         variant_tags += ("-nonoise" if FBT_NOISE == 0 else "") + ("-res" if FBT_RESIDUAL else "")
@@ -444,7 +454,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # embeddings, norms, attention softmax and the loss stay in the bf16/f32 policy above.
                 quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
-                per_device_parallelism=int(os.environ.get("PDP", PER_DEVICE_PARALLELISM.get(size, -1))),  # PDP=<n>: microbatch per device
+                per_device_parallelism=pdp,  # PDP=<n>: microbatch per device
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
