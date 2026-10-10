@@ -19,6 +19,7 @@ more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) cappe
 | Q5 | Output rows of rare tokens? | grouped by target frequency (the answer); -cvout8k (mean) and -cvout8k-sum (gate failed, cancelled): composed heads cannot fit the data | why-cvout, why-cvoutsum |
 | Q6 | Fewer bytes per window? | grouped by context bytes; 128K at SEQ_LEN 3072, batch 172 (-sl3072-b172) | why-sl3072 |
 | Q7 | More optimizer steps? | 128K at batch 96 (1.33x steps, same text; warmup stays 1000 steps, as in the 8K runs) | why-b96 |
+| Q8 | Overtrained regime (owner, 2026-10-09)? | 130m at TPP=200 (TPP knob: 10x the recipe's steps on the same fineweb-edu-10B, no new data, so all data = 2.6 passes), every vocabulary (128K, 64K-8K, bytes), full + 8 passes; TPP=20 anchors at 2.6 passes, so the cost is 8 minus 2.6 passes at both TPPs; fig-tpp (popup-approved) | tpp200-{128k,64k,32k,16k,8k}, tpp200-bytes-seg{1,2}, tpp20-anchors (15299908-15); ~640 H100h |
 
 | Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; 520m too (owner, 2026-10-09; 47015 steps, ~78 h per run, 4 segments bytes-520m-seg1..4, jobs 15283034-37, ~620 H100h); window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions) | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h |
 
@@ -85,6 +86,8 @@ parameter-count control (low-rank tables).
     any figure (per-subset factor; residual bias up to +0.6% on code, ~+0.07% macro, mostly cancelling in rep8 - full).
 
 ## Open risks
+
+- Q8 keeps every TPP=20 hyperparameter (the speedrun recipe was tuned at TPP=20; 130m: linear schedule, decay 0.8, no warmup). Each pass of the 2.6-pass data repeats the same permutation (levanter RESTART, no reshuffle), as in every rep run. The smoke copies do not exercise the TPP step math (SMOKE_STEPS overrides it); the dry-run configs were checked instead.
 
 - Bytes keep the 1000-step warmup of every run here: 1/54 of training at 300m against 1/11 at 128K. Consistent with the
   truncated tokenizers; Q7 (more steps) speaks to the step count, not to the warmup share.
