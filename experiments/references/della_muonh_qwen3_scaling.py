@@ -210,6 +210,13 @@ DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
 # number of passes (with DATA_EPOCHS too). Compare runs by bits per byte. Run ids get -v<K/1000>k, or -bytes for
 # K=256 (the 256 byte tokens, no merges).
 VOCAB_K = int(os.environ.get("VOCAB_K", "0"))
+# TPP: training tokens per parameter, as a multiple of the speedrun recipe's ~20 (owner, 2026-10-09: the overtrained
+# regime). TPP=200 trains 10x the recipe's steps on the same data (levanter restarts a finished dataset, so all of
+# fineweb-edu-10B is 2.6 passes at 130m), every other setting unchanged: the learning-rate schedule stretches with the
+# steps. Evaluations every TPP/40 x as many steps (5000 at TPP=200). Run tag -tpp<TPP>.
+TPP = float(os.environ.get("TPP", "20"))
+if TPP < 20:
+    raise ValueError(f"TPP={TPP}: 20 (the recipe) or more")
 if VOCAB_K and VOCAB_K < 1000 and VOCAB_K != 256:
     raise ValueError(f"VOCAB_K={VOCAB_K}: 256 (bytes, run tag -bytes) or a multiple of 1000 (tag -v<K/1000>k)")
 # VARIANT=cv: the Marin tokenizer with its input embedding (CV_SIDE=in), output head (out) or both composed from the rows of
@@ -286,11 +293,14 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
     eval_every = 1000
+    if TPP != 20:   # before the vocabulary ratio: the same text, TPP/20 times as long
+        s = dict(s, steps=round(s["steps"] * TPP / 20))
+        eval_every = 1000 * max(1, round(TPP / 40))
     if VOCAB_K:
         s = dict(s, steps=round(s["steps"] * _vocab_ratio(VOCAB_K)))   # fixed text: more steps for the same text
         # bytes (4.7x the steps): evaluate every round(ratio) x 1000 steps, about as often per text as the Marin
         # tokenizer's runs; ratios below 1.5 (64K-8K) keep 1000
-        eval_every = 1000 * max(1, round(_vocab_ratio(VOCAB_K)))
+        eval_every = max(eval_every, 1000 * max(1, round(_vocab_ratio(VOCAB_K))))
     if BATCH or SEQ_LEN != 4096:   # the same tokens in steps of BATCH x SEQ_LEN
         b = BATCH or s["batch"]
         s = dict(s, batch=b, steps=round(s["steps"] * s["batch"] * 4096 / (b * SEQ_LEN)))
@@ -336,6 +346,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += "-fh"
     if VOCAB_K:
         variant_tags += "-bytes" if VOCAB_K == 256 else f"-v{VOCAB_K // 1000}k"
+    if TPP != 20:
+        variant_tags += f"-tpp{TPP:g}"
     if DATA_EPOCHS > 0:
         variant_tags += f"-rep{DATA_EPOCHS:g}"
     if EMA_BETA > 0:
