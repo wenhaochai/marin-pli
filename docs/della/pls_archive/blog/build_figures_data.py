@@ -215,7 +215,7 @@ figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers of 
                        quantity=CE, xlabel=XL, height=320, panels=[panel48("")])
 figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and architecture, 48 layers of width 512", "zh": "按层和架构的最终训练损失，48 层、宽 512 的网络"},
                             legend=figs["fig-d48"]["legend"],
-                            quantity=CE, xlabel=XL, height=210, cols=2,   # two columns: each panel about half the 640 canvas (owner, 2026-10-11: three were too small)
+                            quantity=CE, xlabel=XL, height=200, cols=1,   # one column, each panel the full 640 canvas (owner, 2026-10-11: three columns too small; trying one)
                             panels=[dict(**panel48(k, ys=(3, 3.5, 4, 5)), label={"en": n, "zh": n}) for k, n in ARCH])
 
 # Figure 8: the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (all layers below, own layer only), separate
