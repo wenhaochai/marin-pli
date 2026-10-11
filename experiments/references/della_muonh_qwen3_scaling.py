@@ -64,6 +64,7 @@ from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
+from experiments.references.table_variants_qwen3 import FrozenOutQwen3Config, LowRankQwen3Config
 from experiments.references.focal_qwen3 import FocalQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
 from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
@@ -230,6 +231,12 @@ if CV_OUT_REDUCE not in ("mean", "sum"):
 if CV_OUT_REDUCE != "mean" and (os.environ.get("VARIANT") != "cv" or CV_SIDE == "in"):
     raise ValueError("CV_OUT_REDUCE=sum needs VARIANT=cv with a composed output head (CV_SIDE=out or both)")
 CV_K = int(os.environ.get("CV_K", "8000"))
+# VARIANT=fo (owner, 2026-10-11; vocabulary Q5 causal test): the Marin tokenizer whose output rows of the tokens outside
+# the FO_K-token truncation stay at their initial values (table_variants_qwen3.py). Run tag -fo<FO_K/1000>k.
+# VARIANT=lr (owner, 2026-10-11; Q9, parameter-count control): input and output tables each the product of a [V, LR_RANK]
+# and an [LR_RANK, D] matrix (r = 48 gives the 300m model the 8K truncation's ~115M parameters). Run tag -lr<LR_RANK>.
+FO_K = int(os.environ.get("FO_K", "8000"))
+LR_RANK = int(os.environ.get("LR_RANK", "48"))
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
 _PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
@@ -265,9 +272,9 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT == "cv" and VOCAB_K:
-    raise ValueError("VARIANT=cv keeps the Marin tokenizer: unset VOCAB_K")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", *OBJECTIVE_VARIANTS):
+if VARIANT in ("cv", "fo", "lr") and VOCAB_K:
+    raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "lr", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -330,6 +337,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-focal{FOCAL_GAMMA:g}"
     if VARIANT == "cv":
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k" + ("-sum" if CV_OUT_REDUCE == "sum" else "")
+    if VARIANT == "fo":
+        variant_tags += f"-fo{FO_K // 1000}k"
+    if VARIANT == "lr":
+        variant_tags += f"-lr{LR_RANK}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -422,6 +433,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise FileNotFoundError(f"{cv_map} is missing: run small_vocab_tokenizer expansion-npz {CV_K} first")
         model_cls, model_extra = ComposedVocabQwen3Config, dict(cv_map=cv_map, cv_input=CV_SIDE in ("in", "both"), cv_output=CV_SIDE in ("out", "both"),
                                                                cv_output_reduce=CV_OUT_REDUCE)
+    elif VARIANT == "fo":
+        model_cls, model_extra = FrozenOutQwen3Config, dict(fo_k=FO_K)
+    elif VARIANT == "lr":
+        model_cls, model_extra = LowRankQwen3Config, dict(lr_rank=LR_RANK)
     elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
         model_cls, model_extra = OverVocabQwen3Config, dict(
