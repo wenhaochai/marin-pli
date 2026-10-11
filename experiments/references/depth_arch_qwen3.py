@@ -372,6 +372,7 @@ def _moda_attention(attn: Attention, x: NamedArray, mask, depth, *, pos_ids, chu
     outs = []
     for start in range(0, Pos.size, chunk):
         sl = hax.dslice(start, min(chunk, Pos.size - start))
+        ss = slice(start, min(start + chunk, Pos.size))  # static: a dslice here becomes a gather (2.9x slower step with the layout below)
         m = materialize_mask(mask, Pos, KPos, q_slice=sl)
 
         def part(qc, ks, vs, dkc, dvc, m):
@@ -393,9 +394,9 @@ def _moda_attention(attn: Attention, x: NamedArray, mask, depth, *, pos_ids, chu
                 o = o + hax.dot(pd, dvc.astype(jnp.float32), axis="depth")
             return (o / z).astype(x.dtype)
 
-        qc = q["position", sl]
-        dkc = dk["position", sl] if dk is not None else None
-        dvc = dv["position", sl] if dv is not None else None
+        qc = q["position", ss]
+        dkc = dk["position", ss] if dk is not None else None
+        dvc = dv["position", ss] if dv is not None else None
         outs.append(eqx.filter_checkpoint(part)(qc, ks, vs, dkc, dvc, m))
     o = hax.concatenate("position", outs) if len(outs) > 1 else outs[0]
     o = o.flatten_axes(("kv_head", "q_heads_per_group"), "heads")
@@ -514,11 +515,13 @@ class DepthArchTransformer(eqx.Module):
 
     def _moda_scan(self, x: NamedArray, attn_mask, *, key, pos_ids) -> NamedArray:
         """moda: the carry holds h and the depth keys and values in buffers of 2L slots (slot 2i: layer i's attention,
-        2i + 1: its MLP input); layer i's attention reads slots < 2i."""
+        2i + 1: its MLP input); layer i's attention reads slots < 2i. The buffers are laid out (.., position, kv_head, depth,
+        head_size): with depth outermost the sum over depth read memory 4 MB apart, and one forward + backward of the
+        48-layer backbone took 4.83 s against 1.65 s this way (one A100, seq 4096, tmp/pls_diag/moda_bench.py)."""
         cfg, L = self.config, self.config.num_layers
         acfg = cfg.attention_config()
         Depth = Axis("depth", 2 * L)
-        buf = hax.zeros((Depth,) + tuple(a for a in x.axes if a.name != cfg.Embed.name) + (acfg.KVHeads, acfg.HeadSize), dtype=x.dtype)
+        buf = hax.zeros(tuple(a for a in x.axes if a.name != cfg.Embed.name) + (acfg.KVHeads, Depth, acfg.HeadSize), dtype=x.dtype)
         chunk = cast(Any, cfg).moda_chunk
 
         def step(layer, carry, i, *, key):
