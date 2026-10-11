@@ -319,4 +319,16 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    (Full), AttnRes (Block), MoDA; shapes at ~400M from (16 layers, width 1216) to (70, 640); 8B tokens, AdamW. The baseline's
    own design is Sandwich-LN (hybrid_norm: pre- and post-norm on both sublayers), not Pre-LN. Implemented as ARCH=<design>
    (experiments/references/depth_arch_qwen3.py, CPU tests scripts/della/depth_arch_cpu_test.py); the blog's Figure 6 shows
-   separate heads against probes at 48 layers under the nine designs other than Sandwich-LN (Figure 5 is Sandwich-LN).
+   separate heads against probes at 48 layers under the nine designs other than Sandwich-LN (Figure 6 is Sandwich-LN,
+   Figure 7 the nine designs; numbering of 2026-10-11).
+   Status 2026-10-11 (the -vs-d48-g4 runs: PARAM_MAP=vocab, 4 GPUs per run, two runs per 8-GPU pair job, 24 h chains):
+   finished Sandwich-LN, Pre-LN, LNS, DeepNorm, KEEL (L48 train sep/probes 3.093/2.991, 3.073/2.983, 3.096/2.996,
+   3.372/3.262, 3.128/3.027); training AttnRes, AttnRes (Block), MoDA; queued HC, mHC. Every finished design: separate
+   heads much lower at the shallow and middle layers, higher at the last layers. Not done: the width-depth-ratio sweep
+   of DepthBench (one shape only, 48 x 512).
+   Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
+   4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
+   so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).
+   Probes at 48 layers: no gradient reaches the backbone, but the 47 probe heads share the output head's gradient
+   clipping group (MuonH adamh group, clip 1.0): the output head's gradient is scaled by 0.6-0.8 on most steps; the loss
+   effect is unmeasured (audit 2026-10-11; PLS_OPT_SPLIT=1 separates them).
