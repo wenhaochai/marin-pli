@@ -506,7 +506,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # unchanged and training is unaffected; a killed job loses at most an hour.
                 checkpointer=CheckpointerConfig(
                     save_interval=timedelta(minutes=60 if VARIANT in OV_VARIANTS else 10),
-                    keep=[] if VARIANT in OV_VARIANTS else [dict(every=10000)],
+                    # TPP != 20 (owner, 2026-10-11): no step-interval checkpoints either (~40 GB at TPP=200 otherwise);
+                    # the final and the temporary (resume) checkpoints stay
+                    keep=[] if VARIANT in OV_VARIANTS or TPP != 20 else [dict(every=10000)],
                 ),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
