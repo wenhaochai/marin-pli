@@ -176,8 +176,8 @@ if PARAM_MAP not in ("", "rep", "vocab"):
 if PARAM_MAP:
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("PARAM_MAP_MEM_FRACTION", "0.95")
 # hc's train step needs a 32.91 GiB temp buffer, and two of those no longer fit beside the state even at 0.95: it died at
-# step 257 (15266153). A 10-step test at 0.95 with XLA dumps (15322826) found microbatch 2 the worst for every design
-# (temp hc 110.27, mhc 110.30, attnres 117.34, attnres_block 114.09, moda 127.79 GiB) and microbatch 1 small (mhc 17.69 GiB,
+# step 257 (15266153). A 10-step test at 0.95 with XLA dumps (15322826) found microbatch 2 the worst for every design tested
+# (temp hc 110.27, attnres 117.34, attnres_block 114.09, moda 127.79 GiB; mhc's smoke 15266155 asked 110.30 GiB) and microbatch 1 small (mhc 17.69 GiB,
 # 25.3 s/step against 16.2 at microbatch 4). These designs run at microbatch 1 under PARAM_MAP (PARAM_MAP_PDP overrides):
 # the same 32 sequences per GPU as 32 accumulated microbatches; the gradient differs only in summation order, and a run
 # resumes from a checkpoint saved at another microbatch unchanged. Set in code because the queued jobs' environments were

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Resubmit hc and mhc of the 48-layer set (pls_d48_g4_submit.sh) at microbatch 1, 2026-10-10. hc died of OOM at step 257
-# at microbatch 4 (15266153), and microbatch 2 needs 110 GiB for both (15322826); microbatch 1 needs 17.69 GiB (mhc,
+# at microbatch 4 (15266153), and microbatch 2 needs 110 GiB for both (hc 15322826, mhc 15266155); microbatch 1 needs 17.69 GiB (mhc,
 # 25.3 s/step, about 35 h per run: two 24 h jobs). Same run ids as before (PDP is not in the id), so hc resumes from its
-# last checkpoint. Host memory 48G per GPU (32G at microbatch 4; attnres_block at microbatch 1 holds 188 GB RSS per process,
+# last checkpoint. Host memory 48G per GPU (32G at microbatch 4; attnres_block at microbatch 1 peaks at 188 GB RSS for the whole 2-run job, ~94 GB per run,
 # not measured for hc and mhc). Removes the two designs' fail markers first; run only after checking that no hc or mhc job is queued.
 # Usage: scripts/della/pls_d48_g4_resubmit_hc_mhc.sh [--dry]
 set -euo pipefail

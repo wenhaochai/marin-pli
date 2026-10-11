@@ -6,14 +6,14 @@ and the output heads not counted): per Qwen3 layer 4h^2 (q, k, v, o; 8 heads of 
 (SwiGLU) + 4h (four RMSNorms: pre and post of both sublayers, the baseline's hybrid norm) + 2*64 (q and k norms). D = training tokens = step * 128 * 4096.
   fig-modes    final-layer training loss over training, four modes (baseline, shared head, shared head with stop-grad
                into the head, separate heads); 50-step running means from step 100, faint, with the final points
-  fig-traj     separate heads: training curves of layers 2..6 (faint, light to dark) and their final points, with the
-               ordinary models of 2..6 layers (-d2..-d5 and the 6-layer baseline)
+  fig-traj     separate heads: training curves of layers 1..6 (faint, light to dark) and their final points, with the
+               ordinary models of 1..6 layers (-d1..-d5 and the 6-layer baseline)
   fig-heads    final training loss by layer under the four setups (separate heads, shared head, shared head stop-grad,
                probes = separate heads on a detached backbone) and the ordinary models
   fig-fix      separate heads at 130m, the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (every layer below, own
                layer only), final training loss by layer, with probes and the ordinary models (fix.npz)
 Curves through final points: L = E + A exp(-((C/1e18)/u0)^b), a stretched exponential, fitted freely where it holds
-(largest residual <= FIT_TOL = 0.015 nats, a little above the run-to-run noise of a final loss; owner, 2026-10-04), else a monotone PCHIP in log-log (the
+(largest residual <= FIT_TOL = 0.015 nats; owner, 2026-10-04. The seed-to-seed spread of a final loss is smaller, sd 0.001 over nine 130m baseline runs, audit 2026-10-11), else a monotone PCHIP in log-log (the
 probes always). With layer 1 on the figures, of five forms tried on every fitted set this one fits best (worst 0.010 nats,
 300m separate heads); the 3-parameter exponential and power law leave 0.03-0.04 at 300m, since layer 1 (the embedding plus
 one layer) sits well above the smooth run of the later layers. The page does not label any curve as a fit. Final value = mean of the last 50 logged steps (fig-heads), last point of the running mean (fig-traj).
@@ -51,7 +51,7 @@ def ramp(t):
 SUP = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
 law = lambda c, E, A, u0, b: E + A * np.exp(-((c / 1e18) / u0) ** b)   # stretched exponential: holds on every fitted set (see the docstring)
 def pts(x, y): return [[float(f"{a:.5g}"), round(float(b), 4)] for a, b in zip(x, y)]
-FIT_TOL = 0.015   # nats, a little above the run-to-run noise of a final loss (owner): the fitted law where it holds, else a monotone PCHIP
+FIT_TOL = 0.015   # nats (owner, 2026-10-04; seed spread of a final loss is ~0.001): the fitted law where it holds, else a monotone PCHIP
 def fit(x, y):
     best = None   # several starts; keep the smallest largest-residual fit
     for e0 in (0.02, 0.1, 0.3):
@@ -110,7 +110,7 @@ figs["fig-modes"] = dict(title={"en": "Final-layer training loss by gradient and
                          legend=[[n, c, "line"] for _, _, n, c in MODES], quantity=CE, xlabel=XL, height=300, panels=[dict(**v, marks=marks)])
 print("modes finals", [round(y, 4) for _, y, _ in ends])
 
-# Figure 2: separate heads, training curves of layers 2..6 against 6 * N(k layers) * tokens, with the ordinary models
+# Figure 2: separate heads, training curves of layers 1..6 against 6 * N(k layers) * tokens, with the ordinary models
 s, ce = D["130-own/step"], D["130-own/ce"]; m = s >= 100
 marks, ends = [], []
 for k in range(0, 6):                     # readout after layer k+1, numbered from 1
@@ -174,15 +174,49 @@ marks5 = [line([[v5["xlim"][0], b3], [v5["xlim"][1], b3]], GREY)] + sum(([line(f
 figs["fig-heads-300m"] = dict(title={"en": "Final training loss by layer and setup, 300m", "zh": "按层和做法的最终训练损失，300m"},
                               legend=[[n, c, "line"] for _, n, c, _ in sets3] + [[{"en": "Baseline", "zh": "基线"}, GREY, "line"]], quantity=CE, xlabel=XL, height=320, panels=[dict(**v5, marks=marks5)])
 
-x48 = [6.0 * NL * d * DTOT for d in range(2, 49)]
+# Figures 6 and 7: the -vs-d48-g4 runs (d48g4.npz, fetch_d48g4.py; finished runs only). A design is drawn once both its
+# runs have finished: separate heads (fitted law, else PCHIP) and probes (PCHIP), final loss of readouts 1..48 at x = 6 * N(k) * D.
+# One shared view over every drawn design, so the panels of Figure 7 compare by eye; designs still training keep their status word.
+G4 = dict(np.load(HERE / "d48g4.npz", allow_pickle=True)) if (HERE / "d48g4.npz").exists() else {}
+def g4(arch):
+    a = f"-a{arch}" if arch else ""
+    tags = [f"{s}{a}-vs-d48-g4" for s in ("-sep", "-sep-bbfrozen")]
+    if any(G4.get(t + "/final") is None for t in tags):
+        return None
+    for t in tags:   # complete runs only (fetch_d48g4.py checks this too)
+        if int(G4[t + "/step"][-1]) != STEPS - 1:
+            raise RuntimeError(f"{t} ends at step {int(G4[t + '/step'][-1])}, not {STEPS - 1}")
+    return [G4[t + "/final"] for t in tags]
+# each design at its own layer size: NL plus its per-layer parameter difference from Sandwich-LN (W&B parameter_count of
+# the separate-heads runs, which differ only in the backbone): MoDA +13.8%, mHC +2.6%, HC +0.1%, Pre-LN and LNS -0.2%
+def x48(arch):
+    pa, p0 = G4.get(f"-sep{'-a' + arch if arch else ''}-vs-d48-g4/params"), G4.get("-sep-vs-d48-g4/params")
+    nl = NL + (int(pa) - int(p0)) / 48 if pa is not None and p0 is not None else NL
+    return np.array([6.0 * nl * d * DTOT for d in range(1, 49)])
+ARCH = [("preln", "Pre-LN"), ("lns", "LayerNorm Scaling"), ("deepnorm", "DeepNorm"), ("keel", "KEEL"), ("hc", "Hyper-Connections"),
+        ("mhc", "mHC"), ("attnres", "AttnRes (Full)"), ("attnres_block", "AttnRes (Block)"), ("moda", "MoDA")]
+# status words while a design trains (update with the queue): runs started 2026-10-09
+STATUS48 = {"attnres_block": RUNNING, "attnres": RUNNING, "moda": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN; hc, mhc: queued
+done48 = {a: g4(a) for a in [""] + [k for k, _ in ARCH] if g4(a) is not None}
+for a, ys in done48.items():
+    print("d48", a or "sandwich", "separate heads L1 L24 L48", np.round(ys[0][[0, 23, 47]], 3), "probes", np.round(ys[1][[0, 23, 47]], 3))
+v48 = view(np.concatenate([x48(a) for a in done48 for _ in (0, 1)]), np.concatenate([y for ys in done48.values() for y in ys]), top=1.3, endpoints_only=True) if done48 else None   # headroom: the panel name sits above the first layers
+def panel48(arch, ys=(3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5)):
+    if arch in done48:
+        sep, prb = done48[arch]
+        v = dict(v48, yticks=[t for t in v48["yticks"] if t[0] in ys])   # the small panels of Figure 7 keep fewer values
+        xa = x48(arch)
+        return dict(**v, marks=[line(fit(xa, sep), BLUE7), dots(pts(xa, sep), BLUE7), line(pchip(xa, prb), RED), dots(pts(xa, prb), RED)])
+    if v48:   # the finished designs' axes, so every panel reads on one scale
+        return dict(v48, yticks=[t for t in v48["yticks"] if t[0] in ys], marks=[], empty=STATUS48.get(arch, QUEUED))
+    return empty_view(x48(arch), 2.9, 5.0, STATUS48.get(arch, QUEUED), ys=ys)
 figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers of width 512", "zh": "按层的最终训练损失，48 层、宽 512 的网络"},
                        legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Probes only", "zh": "只加探针"}, RED, "line"]],
-                       quantity=CE, xlabel=XL, height=320, panels=[empty_view(x48, 2.9, 5.0, QUEUED)])
-ARCH = ["Pre-LN", "LayerNorm Scaling", "DeepNorm", "KEEL", "Hyper-Connections", "mHC", "AttnRes (Full)", "AttnRes (Block)", "MoDA"]
+                       quantity=CE, xlabel=XL, height=320, panels=[panel48("")])
 figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and architecture, 48 layers of width 512", "zh": "按层和架构的最终训练损失，48 层、宽 512 的网络"},
                             legend=figs["fig-d48"]["legend"],
                             quantity=CE, xlabel=XL, height=150, cols=3,
-                            panels=[dict(**empty_view(x48, 2.9, 5.0, PLANNED, ys=(3, 3.5, 4)), label={"en": a, "zh": a}) for a in ARCH])
+                            panels=[dict(**panel48(k, ys=(3, 3.5, 4, 5)), label={"en": n, "zh": n}) for k, n in ARCH])
 
 # Figure 8: the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (all layers below, own layer only), separate
 # heads at 130m (fix.npz, fetch_fix.py), with probes and the ordinary models as references
