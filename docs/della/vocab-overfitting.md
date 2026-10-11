@@ -122,10 +122,10 @@ added (untied tables, per-tokenizer repeated parts, warmup share, eval windows, 
 running hours from W&B _runtime, toklosses jobs in other compute, the 14940537 pair split, no silent NO ROW.
 Grouped results of the 300m byte pair (15293174): macro total +0.0041 (equals the W&B cost); input deciles 0.007-0.014
 except decile 2 -0.033, target decile 1 +0.016, no rare-byte peak; context cost 0.015 falling to ~0 by 4096 bytes.
-Open (owner): bytes-520m seg4 (15283037) is ~2 h short at the measured ~6.3 s/step (cancel + resubmit at 23:55 was
-refused by the permission classifier); excluding della-k14g3 (GPU 0-3 half 7-13% slower) from pending jobs was refused
-the same way. To do: switch the page's bpb to the exact formula loss x T / (ln2 x B) per subset (tables
-tmp_plots/vocab/bpb_exact_tables.json; the logged token-weighted mean of per-batch ratios times a whole-subset factor
-runs ~0.004 high for BPE vocabularies, ~0.0003 for bytes; costs move < 5e-4); TPP=200 runs keep ~40 GB of step-10000k
-checkpoints; packed_job hardening (Slurm stop drops ledger lines, denylist env isolation, plan parser edge cases,
+Owner decisions (popup, 2026-10-11): bytes-520m seg4 cancelled and resubmitted at 23:55 with 1380m limits (15375325);
+pending jobs exclude della-k14g3 (GPU 0-3 half 7-13% slower); figs 5/7/8 retitled "Where the cost sits: ..."; TPP != 20
+keeps no step-interval checkpoints (1965f50f0a; hashes of every TPP=20 config unchanged). Done: the page's bpb is now
+exact, loss x T / (ln2 x B) per subset (tmp_plots/vocab/bpb_exact_tables.json); the old logged-bpb x whole-subset factor
+ran ~0.004 high for BPE vocabularies and ~0.0004 for bytes; costs moved < 7e-4 and every claim still holds. Numbers in
+this doc written before 2026-10-11 use the old metric (e.g. 300m 128K full 1.3867 is 1.3828 exact). To do: packed_job hardening (Slurm stop drops ledger lines, denylist env isolation, plan parser edge cases,
 job_tmpdir EXIT trap under set -e) for new submissions only.
