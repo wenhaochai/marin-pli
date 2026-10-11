@@ -10,8 +10,16 @@ listed job is checked against its log's W&B run id when the log still exists), a
 smoke tests, debugging, superseded versions (RERUN), abandoned runs, probes not on the page. The two add up to everything
 the project ran. A row whose job did not finish, or whose run is in RERUN, shows as planned until its replacement is
 submitted; its jobs are other compute.
+48-layer rows (Figures 6 and 7, the -vs-d48-g4 runs, two 4-GPU runs per 8-GPU pair job) name their whole afterany chain
+("chain" source, audit 2026-10-11): Done when W&B says finished and the history reaches the last step; Running once a
+training task of the run has run and a chain job is still queued or running; Queued before that; Failed when the chain
+has ended short. Their hours are the wall time of every training task of the run in the ledgers.
+Training tasks count as main when their run has a row that is not Planned and they exited 0, 124 (the pair script's
+training limit, before the 24 h wall: the next chain job resumes) or 143 (stopped by TERM, resumed); crashed tasks are
+other (audit 2026-10-11: a resume segment belongs to its run). A packed job counts as a main job only if it gave main
+some hours.
 Run as: build_record.py OUT (on a vis node, which has sacct)."""
-import json, subprocess, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
 import wandb
 
@@ -21,23 +29,25 @@ S = lambda en, zh: {"en": en, "zh": zh}  # noqa: E731
 BASE, SHARED, SG, SEP, PROBE, DEPTH = S("Baseline", "基线"), S("Shared head", "共享头"), S("Shared head, stop-grad", "共享头 stop-grad"), S("Separate heads", "独立头"), S("Probes only", "只加探针"), S("Ordinary model", "普通模型")
 # (setup, size, layers, tokens in B, GPUs, source, figures); source: ("wandb", run) | ("slurm", jobid) | ("planned", None)
 RUNS = [
-    (BASE, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100"), "1, 2, 3"),
+    (BASE, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100"), "1, 2, 3, 8, 9, 10"),
     (SHARED, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100-pls1"), "1, 3"),
     (SG, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100-pls1-dh"), "1, 3"),
-    (SEP, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100-pls1-sep"), "1, 2, 3, 8, 9"),
-    (PROBE, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100-pls1-sep-bbfrozen"), "3, 8"),
-    *[(DEPTH, "130m", d, 2.6, 4, ("wandb", f"130m-della4xh100-d{d}"), "2, 3, 8, 9") for d in range(1, 6)],
+    (SEP, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100-pls1-sep"), "1, 2, 3, 8, 9, 10"),
+    (PROBE, "130m", 6, 2.6, 4, ("wandb", "130m-della4xh100-pls1-sep-bbfrozen"), "3, 8, 10"),
+    *[(DEPTH, "130m", d, 2.6, 4, ("wandb", f"130m-della4xh100-d{d}"), "2, 3, 8, 9, 10") for d in range(1, 6)],
     (BASE, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100"), "4, 5"),
     (SHARED, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100-pls1"), "5"),
     (SEP, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100-pls1-sep"), "4, 5"),
     (PROBE, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100-pls1-sep-bbfrozen"), "5"),
-    (SEP, "130m", 48, 2.6, 8, ("slurm", 14969859, "130m-della4xh100-pls1-sep-d48"), "6"),
-    (PROBE, "130m", 48, 2.6, 8, ("slurm", 14969860, "130m-della4xh100-pls1-sep-bbfrozen-d48"), "6"),
-    *[(S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 8, ("slurm", j, f"130m-della4xh100-pls1-sep{bb}-a{tag}-d48"), "7")
-      for a, tag, (js, jp) in [("Pre-LN", "preln", (14986868, 14986869)), ("LayerNorm Scaling", "lns", (14986870, 14986871)), ("DeepNorm", "deepnorm", (15011493, 15011494)), ("KEEL", "keel", (15011495, 15011496)),
-                               ("Hyper-Connections", "hc", (15011497, 15011498)), ("mHC", "mhc", (15011499, 15011501)), ("AttnRes (Full)", "attnres", (15011503, 15011504)),
-                               ("AttnRes (Block)", "attnres_block", (15011505, 15011506)), ("MoDA", "moda", (15011724, 15011508))]
-      for n, j, bb in ((SEP, js, ""), (PROBE, jp, "-bbfrozen"))],
+    # 48 layers (-vs-d48-g4): each design's pair-job chain; the earlier 8-GPU FSDP runs (-d48) are superseded, so other
+    *[(n if tag == "" else S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 4,
+       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6" if tag == "" else "7")
+      for a, tag, jobs in [("Sandwich-LN", "", [15266143, 15266144, 15273924]), ("Pre-LN", "preln", [15266145, 15266146, 15273925]),
+                           ("LayerNorm Scaling", "lns", [15266147, 15266148]), ("DeepNorm", "deepnorm", [15266149, 15266150]), ("KEEL", "keel", [15266151, 15266152]),
+                           ("Hyper-Connections", "hc", [15266153, 15266154, 15341053, 15341054]), ("mHC", "mhc", [15266155, 15266156, 15341055, 15341056]),
+                           ("AttnRes (Full)", "attnres", [15266159, 15266160, 15266161]), ("AttnRes (Block)", "attnres_block", [15266157, 15266158]),
+                           ("MoDA", "moda", [15266162, 15266163, 15266164, 15341589])]
+      for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "8, 9"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "8"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "8"),
@@ -64,6 +74,7 @@ JOBS = {"130m-della4xh100-pls1": [14732138], "130m-della4xh100-pls1-dh": [147690
         "300m-della4xh100-pls1": [14732139, 14732140], "300m-della4xh100-pls1-sep": [14940604], "300m-della4xh100-pls1-sep-bbfrozen": [14888822]}
 STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), "crashed": S("Failed", "失败"), "failed": S("Failed", "失败"),
          "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中")}
+OK_EXIT = {"0", "124", "143"}   # training-task exits that count for the run (see the docstring)
 api = wandb.Api(timeout=300)
 
 
@@ -75,6 +86,56 @@ def sacct(jid):
         raise RuntimeError(f"sacct gave nothing for job {jid}: rc={res.returncode} stderr={res.stderr.strip()[:200]}")
     state, secs = out[0].split("|")[:2]
     return state.split()[0], float(secs or 0) / 3600
+
+
+PACKED = Path(os.environ.get("PLS_PACKED_DIR", "/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed"))   # env: tests only
+
+
+LEDGER_COLS = ["task", "run", "kind", "gpus", "start", "end", "exit"]
+
+
+def ledger(jid: str):
+    """A packed job's task ledger (tools/packed_task.sh): [{task, run, kind, gpus, start, end, exit}], [] when the file
+    holds no task yet (every hour then goes to other), or None for a plain job. Header lines are skipped wherever they
+    stand (two tasks starting together can both write one); any other line that is not a full, numeric task line
+    raises (a truncated write is a loss to look at, not to guess around)."""
+    f = PACKED / f"{jid}.tsv"
+    if not f.exists():
+        return None
+    out = []
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        cols = line.split("\t")
+        if not line.strip() or cols == LEDGER_COLS:
+            continue
+        ok = len(cols) == 7 and cols[2] in ("main", "other") and all(c.lstrip("-").isdigit() for c in cols[3:])
+        if not ok or int(cols[5]) < int(cols[4]):
+            raise RuntimeError(f"ledger {f} line {n} is not a task line: {line!r}")
+        out.append(dict(zip(LEDGER_COLS, cols)))
+    return out
+
+
+TASKS = [dict(t, jid=f.stem) for f in sorted(PACKED.glob("*.tsv")) for t in (ledger(f.stem) or [])]
+
+
+import time
+NOW = time.time()
+
+
+def train_start(jid):
+    """For a pair job still in training: when its smokes ended (its training tasks have no ledger line until they end);
+    None if the job has no ledger, no finished smoke, or already-ended training tasks."""
+    L = ledger(str(jid))
+    if not L or any(t["kind"] == "main" for t in L) or not [t for t in L if t["task"].startswith("smoke")]:
+        return None
+    return max(int(t["end"]) for t in L if t["task"].startswith("smoke"))
+
+
+def run_hours(rid, chain=()):
+    """Wall hours of every training task of a run that counts (OK_EXIT), over all ledgers, plus the time so far of a
+    chain job that is training now."""
+    done = sum(int(t["end"]) - int(t["start"]) for t in TASKS if t["run"] == rid and t["kind"] == "main" and t["exit"] in OK_EXIT)
+    live = sum(NOW - ts for ts in (train_start(j) for j in chain if sacct(j)[0] == "RUNNING") if ts is not None)
+    return (done + live) / 3600
 
 
 rows = []
@@ -108,6 +169,12 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
     if kind == "wandb":
         r = run
         state, hours = r.state, float(r.summary.get("_runtime", 0)) / 3600
+    elif kind == "chain":
+        done = run is not None and run.state == "finished" and int(run.summary.get("_step", -1)) == int(run.config["trainer"]["num_train_steps"]) - 1
+        hours = run_hours(rid, ref); live = [st for st in (sacct(j)[0] for j in ref) if st in ("RUNNING", "PENDING")]
+        # Running: a chain job trains now, or the run is past 10% of its steps and its next job waits (between 24 h jobs)
+        under_way = run is not None and int(run.summary.get("_step", 0)) >= 0.1 * int(run.config["trainer"]["num_train_steps"])
+        state = "COMPLETED" if done else ("RUNNING" if "RUNNING" in live or under_way else "PENDING") if live else "failed"
     elif kind == "slurm":
         state, hours = sacct(ref)
         if state not in ("COMPLETED", "RUNNING", "PENDING") or ref in RERUN:   # did not finish, or replaced: the row waits for its replacement
@@ -137,7 +204,6 @@ def project_jobs():
     return jobs
 
 
-import os, re
 LOGS = Path("/scratch/gpfs/GROUP/USER/project/marin-pls/logs/slurm")
 
 
@@ -153,7 +219,8 @@ for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
     if row["state"]["en"] == "Planned":
         continue
     rid = src[1] if src[0] == "wandb" else src[2]
-    for j in ([src[1]] if src[0] == "slurm" else []) + JOBS.get(rid, []):
+    chain = [j for j in src[1] if sacct(j)[0] != "PENDING"] if src[0] == "chain" else []
+    for j in ([src[1]] if src[0] == "slurm" else []) + chain + JOBS.get(rid, []):
         MAIN[str(j)] = rid
 for j, rid in MAIN.items():
     seen = log_runs(j)
@@ -166,47 +233,25 @@ jobs = project_jobs()
 absent = sorted(set(MAIN) - {j for j, *_ in jobs})
 if [j for j in absent if sacct(j.split("_")[0])[0] != "PENDING"]:
     raise RuntimeError(f"jobs listed for rows are not among the project's GPU jobs: {absent}")
-PACKED = Path(os.environ.get("PLS_PACKED_DIR", "/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed"))   # env: tests only
-
-
-LEDGER_COLS = ["task", "run", "kind", "gpus", "start", "end", "exit"]
-
-
-def ledger(jid: str):
-    """A packed job's task ledger (tools/packed_task.sh): [{task, run, kind, gpus, start, end, exit}], [] when the file
-    holds no task yet (every hour then goes to other), or None for a plain job. Header lines are skipped wherever they
-    stand (two tasks starting together can both write one); any other line that is not a full, numeric task line
-    raises (a truncated write is a loss to look at, not to guess around)."""
-    f = PACKED / f"{jid}.tsv"
-    if not f.exists():
-        return None
-    out = []
-    for n, line in enumerate(f.read_text().splitlines(), 1):
-        cols = line.split("\t")
-        if not line.strip() or cols == LEDGER_COLS:
-            continue
-        ok = len(cols) == 7 and cols[2] in ("main", "other") and all(c.lstrip("-").isdigit() for c in cols[3:])
-        if not ok or int(cols[5]) < int(cols[4]):
-            raise RuntimeError(f"ledger {f} line {n} is not a task line: {line!r}")
-        out.append(dict(zip(LEDGER_COLS, cols)))
-    return out
-
-
 # H100-hours by line (template dcfd5a1, owner 2026-10-07). A plain job goes whole to main (it belongs to a row) or other.
 # A packed job's sacct GPU-hours split by its ledger: each main task that exited 0 gives GPUs x wall time to main; smoke
 # copies, failed tasks and the remainder (startup, gaps, idle GPUs) go to other; the job counts once, as main if any of
 # its tasks is main.
+ROWRUNS = {(src[1] if src[0] == "wandb" else src[2]) for (*_, src, _), row in zip(RUNS, rows) if row["state"]["en"] != "Planned"}
 hours = {"main": 0.0, "other": 0.0}; njobs = {"main": 0, "other": 0}; total = 0.0
 for jid, name, state, g, h in jobs:
     gh = g * h; total += gh; L = ledger(jid)
     if L is None:
         k = "main" if jid in MAIN else "other"; hours[k] += gh; njobs[k] += 1
         continue
-    main_gh = sum(int(t["gpus"]) * (int(t["end"]) - int(t["start"])) / 3600 for t in L if t["kind"] == "main" and t["exit"] == "0")
+    main_gh = sum(int(t["gpus"]) * (int(t["end"]) - int(t["start"])) / 3600 for t in L if t["kind"] == "main" and t["exit"] in OK_EXIT and t["run"] in ROWRUNS)
+    ts = train_start(jid) if state == "RUNNING" and jid in MAIN else None
+    if ts is not None:   # a pair job training now: both runs since the smokes ended (at most what sacct has counted)
+        main_gh += min(g * (NOW - ts) / 3600, gh - main_gh)
     if main_gh > gh + 1e-6:
         raise RuntimeError(f"packed job {jid}: ledger main tasks {main_gh:.3f} GPU-h exceed sacct {gh:.3f}")
     hours["main"] += main_gh; hours["other"] += gh - main_gh
-    njobs["main" if any(t["kind"] == "main" for t in L) else "other"] += 1
+    njobs["main" if main_gh > 0 else "other"] += 1
     print(f"packed job {jid} {name}: sacct {gh:.2f} GPU-h -> main {main_gh:.2f}, other {gh - main_gh:.2f}")
 if abs(hours["main"] + hours["other"] - total) > 1e-6:
     raise RuntimeError(f"main + other {hours['main'] + hours['other']:.6f} != sacct total {total:.6f}")
