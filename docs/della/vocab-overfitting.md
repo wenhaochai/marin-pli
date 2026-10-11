@@ -5,7 +5,7 @@
 row the mean of its 8K pieces' rows (-cvin8k) the cost is +0.047, the full-data model is worse (1.4127 vs 1.3867) and
 the 8-pass model is better (1.4601 vs 1.4695, and 8K 1.4814). A window of the 8K truncation's bytes (+0.083) and a third
 more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) capped a token's logit at its largest piece's
-(full data 1.767); the redo with the sum (why-cvoutsum 15228167) failed its gate on 2026-10-09 and was cancelled: smoke eval 8.43 (mean 8.49, cvin 7.49), train loss 4.36 at step 890 and 4.10 at 1580 (baseline 3.73, 3.53; mean 4.48, 4.25). Q5 (owner, 2026-10-09): answered by the target-frequency grouping (correlational); fig-cvout dropped, the composed-output attempt told in prose. 520m 8K (2026-10-10): full 1.3607, rep8 1.3997, cost +0.0390 vs 128K +0.0951 (130m +0.0177 vs +0.1104, 300m +0.0262 vs +0.0828): the saving holds at every size and shrinks as the model grows; Q2 answered on the page ("So far, yes"), 520m bytes queued. 130m bytes: cost +0.0066, the lowest of all K at 130m; window 16384 (batch 32) +0.0143. 300m bytes (2026-10-09, 54247 steps, 4.74x the 128K steps): cost +0.0041, full 1.3699 below every other K (128K 1.3867), rep8 1.3740; its gap stays within +-0.015 of zero at every evaluation. Per-token losses of the byte pair: vo-toklosses 15293174. Grouped analyses (seed-matched seed-1 pairs, macro totals equal the W&B costs): the 128K cost is far highest in the rarest input decile (0.219 vs 0.029-0.090) and rarest target decile (0.210); 8K is flat and low; cvin cuts the rarest input decile to 0.093; the cost does not grow with context bytes (Q6 negative again). 520m 128K costs +0.095. At 130m the cost also falls with every halving (128K +0.110 to 8K +0.018). Second seeds (Q3 answered): 128K +0.078 (seed 0 +0.083), 8K +0.020 (seed 0 +0.026). 520m 8K, bytes queued. Split from the sampled-softmax
+(full data 1.767); the redo with the sum (why-cvoutsum 15228167) failed its gate on 2026-10-09 and was cancelled: smoke eval 8.43 (mean 8.49, cvin 7.49), train loss 4.36 at step 890 and 4.10 at 1580 (baseline 3.73, 3.53; mean 4.48, 4.25). Q5 (owner, 2026-10-09): answered by the target-frequency grouping (correlational); fig-cvout dropped, the composed-output attempt told in prose. 520m 8K (2026-10-10): full 1.3607, rep8 1.3997, cost +0.0390 vs 128K +0.0951 (130m +0.0177 vs +0.1104, 300m +0.0262 vs +0.0828): the saving holds at every size; it is largest at 130m (0.093) and about the same at 300m (0.057) and 520m (0.056); audit 2026-10-11 corrected the page's "shrinks as the model grows". Q2 answered on the page ("So far, yes"); 520m bytes running since 2026-10-11 (15283034). 130m bytes: cost +0.0066, the lowest of all K at 130m; window 16384 (batch 32) +0.0143. 300m bytes (2026-10-09, 54247 steps, 4.74x the 128K steps): cost +0.0041, full 1.3699 below every other K (128K 1.3867), rep8 1.3740; its gap stays within +-0.015 of zero at every evaluation. Per-token losses of the byte pair: vo-toklosses 15293174. Grouped analyses (seed-matched seed-1 pairs, macro totals equal the W&B costs): the 128K cost is far highest in the rarest input decile (0.219 vs 0.029-0.090) and rarest target decile (0.210); 8K is flat and low; cvin cuts the rarest input decile to 0.093; the cost does not grow with context bytes (Q6 negative again). 520m 128K costs +0.095. At 130m the cost also falls with every halving (128K +0.110 to 8K +0.018). Second seeds (Q3 answered): 128K +0.078 (seed 0 +0.083), 8K +0.020 (seed 0 +0.026). Split from the sampled-softmax
 / OT project (docs/della/over-vocab.md), whose Q5 this was.
 
 ## Questions and runs
@@ -21,7 +21,7 @@ more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) cappe
 | Q7 | More optimizer steps? | 128K at batch 96 (1.33x steps, same text; warmup stays 1000 steps, as in the 8K runs) | why-b96 |
 | Q8 | Overtrained regime (owner, 2026-10-09)? | 130m at TPP=200 (TPP knob: 10x the recipe's steps on the same fineweb-edu-10B, no new data, so all data = 2.6 passes), every vocabulary (128K, 64K-8K, bytes), full + 8 passes; TPP=20 anchors at 2.6 passes, so the cost is 8 minus 2.6 passes at both TPPs; fig-tpp (popup-approved) | tpp200-{128k,64k,32k,16k,8k}, tpp200-bytes-seg{1,2}, tpp20-anchors (15299908-15); ~640 H100h |
 
-| Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; 520m too (owner, 2026-10-09; 47015 steps, ~78 h per run, 4 segments bytes-520m-seg1..4, jobs 15283034-37, ~620 H100h); window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions) | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h |
+| Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; 520m too (owner, 2026-10-09; 47014 steps, ~82 h per run, 4 segments bytes-520m-seg1..4, jobs 15283034-37, ~620 H100h); window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions) | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h |
 
 Not done (owner): reasons 4 (Adam on rare rows), 6 (shorter token strings), 7 (weaker model), 8 (composing words), the
 parameter-count control (low-rank tables).
@@ -50,7 +50,8 @@ parameter-count control (low-rank tables).
    :94 (ledger_main_hours), :196 (sum assert) -> tmp_plots/ss130/test_ledger.py (13 hostile/spec cases) + both records
    rebuilt: unchanged inputs give identical outputs.
 10. Per-token analysis exactly as the evals -> experiments/references/vocab_token_losses.py -> 16 subset means of v8k and
-    v8k-rep8 equal W&B eval/paloma loss within 1e-4.
+    v8k-rep8 equal W&B eval/paloma loss within 1e-4 (audit 2026-10-11: the seed-1 8K pair within 3.1e-4 nats per subset,
+    bf16 eval nondeterminism; the 128K pairs within 1e-6).
 11. Cover animation explains only the token cutting (owner) -> tmp_plots/vocab/anim_vocab.html (real splits checked with
     the tokenizers); card = its last frame (card_svg.py).
 12. New page card first in the lists (owner) -> index.html, blogs/experiments.html (85e5945).
@@ -84,6 +85,9 @@ parameter-count control (low-rank tables).
     check_plans.py). Every chained segment carries its own smoke copy (review: afterany would train after a failed
     segment-1 smoke). Levanter's bpb counts each non-ASCII byte token as 3 bytes: bpb_bytes_check.py with KS=256 before
     any figure (per-subset factor; residual bias up to +0.6% on code, ~+0.07% macro, mostly cancelling in rep8 - full).
+    Audit 2026-10-11: the page's bpb is Levanter's token-weighted mean of per-batch ratios times that factor, not
+    sum(loss)/sum(bytes): absolute values run ~0.004 high (128K seed 1: 1.3923 against an exact 1.3884 from the per-token
+    losses), costs agree within 5e-4 (0.0776 against 0.0771); the page compares costs and same-metric values only.
 
 ## Open risks
 
@@ -107,3 +111,21 @@ parameter-count control (low-rank tables).
 - tools/packed_task.sh writes a ledger line only when timeout returns: a job ended by Slurm (wall, idle cancel, scancel)
   loses the running tasks' lines, and their hours count as other compute (tool owned by the controller).
 - The vo130 job's last step (128K, 8 passes) runs on 4 GPUs for about an hour while the other 4 idle (under 90 min).
+
+## Audit 2026-10-11 (12 dimensions, each finding checked by 3 independent refuters; tmp/audit/)
+
+Fixed: seg3 of bytes-300m-sl16384 (15213238) re-planned to lanes (rep8 ran ~2.3 h ahead of full: idle-cancel risk) with
+the v64k/v32k TPP=20 anchors moved in from 15299913; watcher log name and false STALL; page claims restated (saving vs size
+is largest at 130m and level from 300m to 520m; 8-pass ordering; Q3/Q4/Q5/Q6 at seed-noise altitude) and disclosures
+added (untied tables, per-tokenizer repeated parts, warmup share, eval windows, the -s1 rerun); grouped macro skips
+(group, subset) cells under 1000 positions; negative group costs drawn; record: fig 11 tags, first-segment code commit,
+running hours from W&B _runtime, toklosses jobs in other compute, the 14940537 pair split, no silent NO ROW.
+Grouped results of the 300m byte pair (15293174): macro total +0.0041 (equals the W&B cost); input deciles 0.007-0.014
+except decile 2 -0.033, target decile 1 +0.016, no rare-byte peak; context cost 0.015 falling to ~0 by 4096 bytes.
+Open (owner): bytes-520m seg4 (15283037) is ~2 h short at the measured ~6.3 s/step (cancel + resubmit at 23:55 was
+refused by the permission classifier); excluding della-k14g3 (GPU 0-3 half 7-13% slower) from pending jobs was refused
+the same way. To do: switch the page's bpb to the exact formula loss x T / (ln2 x B) per subset (tables
+tmp_plots/vocab/bpb_exact_tables.json; the logged token-weighted mean of per-batch ratios times a whole-subset factor
+runs ~0.004 high for BPE vocabularies, ~0.0003 for bytes; costs move < 5e-4); TPP=200 runs keep ~40 GB of step-10000k
+checkpoints; packed_job hardening (Slurm stop drops ledger lines, denylist env isolation, plan parser edge cases,
+job_tmpdir EXIT trap under set -e) for new submissions only.

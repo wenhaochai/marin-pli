@@ -44,6 +44,7 @@ PAIRS = {
     "bytes": (256, "muonh-qwen3-300m-della4xh100-bytes", "muonh-qwen3-300m-della4xh100-bytes-rep8"),
 }
 CTX_EDGES = [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 10 ** 9]
+MIN_CELL = 1000   # positions; smaller (group, subset) cells are left out of the macro
 
 
 def tables(k):
@@ -114,7 +115,11 @@ def group_cost(key, d, w, b, sub, edges=None, deciles=False):
     cell = gid * S + sub
     snum = np.bincount(cell, weights=w * d, minlength=G * S).reshape(G, S) / np.log(2)
     sden = np.bincount(cell, weights=w * b, minlength=G * S).reshape(G, S)
-    macro = [float(np.mean(snum[g][sden[g] > 0] / sden[g][sden[g] > 0])) if (sden[g] > 0).any() else None for g in range(G)]
+    # macro over the subsets with at least MIN_CELL positions in the group (audit 2026-10-11: a 14-position cell of one
+    # subset weighed as much as a 100K-position one in the last context bin)
+    scnt = np.bincount(cell, minlength=G * S).reshape(G, S)
+    ok = (sden > 0) & (scnt >= MIN_CELL)
+    macro = [float(np.mean(snum[g][ok[g]] / sden[g][ok[g]])) if ok[g].any() else None for g in range(G)]
     return macro, [float(x) for x in num / np.maximum(den, 1)], [int(x) for x in n]
 
 
@@ -145,7 +150,8 @@ for pair, (k, full, rep) in PAIRS.items():
     per_sub = [((w * d)[(sub == i) & m].sum() / np.log(2)) / (w * b_tgt)[(sub == i) & m].sum() for i in range(16)]
     out["macro_total"] = float(np.mean(per_sub))
     res[pair] = out
-    print(pair, "macro total", round(out["macro_total"], 4), "pooled", round(out["pooled_total"], 4), "| input", [round(x, 3) for x in out["input"]["cost"]], "| target", [round(x, 3) for x in out["target"]["cost"]],
-          "| context", [round(x, 3) for x in out["context"]["cost"]], flush=True)
+    r3 = lambda xs: [None if x is None else round(x, 3) for x in xs]   # noqa: E731  (empty groups: bytes have no context past 4096 bytes)
+    print(pair, "macro total", round(out["macro_total"], 4), "pooled", round(out["pooled_total"], 4), "| input", r3(out["input"]["cost"]), "| target", r3(out["target"]["cost"]),
+          "| context", r3(out["context"]["cost"]), flush=True)
 json.dump(res, open(OUT, "w"), indent=1)
 print("written", OUT)
