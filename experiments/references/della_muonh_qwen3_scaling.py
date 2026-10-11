@@ -176,11 +176,13 @@ if PARAM_MAP not in ("", "rep", "vocab"):
 if PARAM_MAP:
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("PARAM_MAP_MEM_FRACTION", "0.95")
 # hc's train step needs a 32.91 GiB temp buffer, and two of those no longer fit beside the state even at 0.95: it died at
-# step 257 (15266153). hc and the designs not yet started under PARAM_MAP halve the microbatch (PARAM_MAP_PDP, PDP 4 -> 2:
-# the same 32 sequences per GPU as 16 accumulated microbatches in place of 8; the gradient differs only in summation
-# order; a run resumes from a microbatch-4 checkpoint unchanged). Set in code because the queued jobs' environments were
+# step 257 (15266153). A 10-step test at 0.95 with XLA dumps (15322826) found microbatch 2 the worst for every design
+# (temp hc 110.27, mhc 110.30, attnres 117.34, attnres_block 114.09, moda 127.79 GiB) and microbatch 1 small (mhc 17.69 GiB,
+# 25.3 s/step against 16.2 at microbatch 4). These designs run at microbatch 1 under PARAM_MAP (PARAM_MAP_PDP overrides):
+# the same 32 sequences per GPU as 32 accumulated microbatches; the gradient differs only in summation order, and a run
+# resumes from a checkpoint saved at another microbatch unchanged. Set in code because the queued jobs' environments were
 # fixed at submit.
-PARAM_MAP_HALF_PDP = ("hc", "mhc", "attnres", "attnres_block", "moda")
+PARAM_MAP_PDP1 = ("hc", "mhc", "attnres", "attnres_block", "moda")
 # RUN_TAG appends a literal suffix to the run id ONLY (output path and W&B name); it changes nothing about training.
 # Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
 # under two names, so their difference measures the hardware/compiler nondeterminism floor.
@@ -267,8 +269,8 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
     pdp = int(os.environ.get("PDP", PER_DEVICE_PARALLELISM.get(size, -1)))
-    if PARAM_MAP and ARCH in PARAM_MAP_HALF_PDP and pdp > 1:
-        pdp = int(os.environ.get("PARAM_MAP_PDP", pdp // 2))
+    if PARAM_MAP and ARCH in PARAM_MAP_PDP1 and pdp > 1:
+        pdp = int(os.environ.get("PARAM_MAP_PDP", 1))
     print(f"per-device microbatch {pdp}", flush=True)
     variant_tags = (f"-fbt{FEEDBACK_PASSES}" if VARIANT == "fbt" else "") + ("-fp8" if PRECISION == "fp8" else "") + ("-tied" if TIE else "")
     if VARIANT == "fbt":
