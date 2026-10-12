@@ -218,6 +218,31 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
                             quantity=CE, xlabel=XL, height=200, cols=1,   # one column, each panel the full 640 canvas (owner, 2026-10-11: three columns too small; trying one)
                             panels=[dict(**panel48(k, ys=(3, 3.5, 4, 5)), label={"en": n, "zh": n}) for k, n in ARCH])
 
+# Figures 8 and 9 (owner, 2026-10-11: "这两个图应该分别做单栏大图加入页面里"): the finished 48-layer designs side by side, x =
+# layer index (not compute), one colour per design (writing:plot categories). Figure 8: separate heads minus probes,
+# final training loss by layer. Figure 9: the two setups' absolute losses in two panels. Designs join as they finish.
+DES = [("", "Sandwich-LN")] + ARCH
+DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6"}   # GM2 600 (yellow 900)
+drawn = [(a, n) for a, n in DES if a in done48 and a in DCOL]
+LX = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
+def lin_ticks(lo, hi, step, fmt="{:.1f}"):
+    v = np.arange(np.floor(lo / step) * step, hi + step / 2, step); return [[round(float(t), 6), fmt.format(t)] for t in v]
+k48 = np.arange(1, 49)
+gaps = {a: done48[a][0] - done48[a][1] for a, _ in drawn}
+figs["fig-d48-gap"] = dict(title={"en": "Separate heads minus probes by layer and design, 48 layers", "zh": "按层和设计的独立头减只加探针，48 层"},
+                           legend=[[{"en": n, "zh": n}, DCOL[a], "line"] for a, n in drawn],
+                           quantity={"en": "Training loss difference (nats)", "zh": "训练损失之差（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=340,
+                           panels=[dict(xlim=[1, 48], ylim=[-1.75, 0.5], xticks=LX, yticks=lin_ticks(-1.5, 0.5, 0.5),
+                                        marks=[line([[0, 0], [49, 0]], GREY, 1.0)] + [line(pts(k48, gaps[a]), DCOL[a], 1.8) for a, _ in drawn])])
+figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design, 48 layers", "zh": "按层和设计的最终训练损失，48 层"},
+                           legend=figs["fig-d48-gap"]["legend"],
+                           quantity={"en": "Training loss (nats)", "zh": "训练损失（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=300, cols=1,
+                           panels=[dict(xlim=[1, 48], ylim=[2.75, 5.85], xticks=LX, yticks=lin_ticks(3.0, 5.5, 0.5), label=lab,
+                                        marks=[line(pts(k48, done48[a][j]), DCOL[a], 1.8) for a, _ in drawn])
+                                   for j, lab in ((0, {"en": "Separate heads", "zh": "独立头"}), (1, {"en": "Probes only", "zh": "只加探针"}))])
+for a, n in drawn:
+    print("fig-d48-gap", n, "min", round(float(gaps[a].min()), 3), "L48", round(float(gaps[a][-1]), 3))
+
 # Figure 8: the 2 x 2 of layer-loss weight (1, 0.2) and gradient reach (all layers below, own layer only), separate
 # heads at 130m (fix.npz, fetch_fix.py), with probes and the ordinary models as references
 YELLOW9, CYAN9, PINK7 = "#E37400", "#007B83", "#C2185B"
