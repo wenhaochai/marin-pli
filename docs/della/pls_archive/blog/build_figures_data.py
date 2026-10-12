@@ -196,7 +196,7 @@ def x48(arch):
 ARCH = [("preln", "Pre-LN"), ("lns", "LayerNorm Scaling"), ("deepnorm", "DeepNorm"), ("keel", "KEEL"), ("hc", "Hyper-Connections"),
         ("mhc", "mHC"), ("attnres", "AttnRes (Full)"), ("attnres_block", "AttnRes (Block)"), ("moda", "MoDA")]
 # status words while a design trains (update with the queue): runs started 2026-10-09
-STATUS48 = {"attnres_block": RUNNING, "attnres": RUNNING, "moda": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN; hc, mhc: queued
+STATUS48 = {"attnres": RUNNING, "moda": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN; hc, mhc: queued
 done48 = {a: g4(a) for a in [""] + [k for k, _ in ARCH] if g4(a) is not None}
 for a, ys in done48.items():
     print("d48", a or "sandwich", "separate heads L1 L24 L48", np.round(ys[0][[0, 23, 47]], 3), "probes", np.round(ys[1][[0, 23, 47]], 3))
@@ -222,7 +222,7 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
 # layer index (not compute), one colour per design (writing:plot categories). Figure 8: separate heads minus probes,
 # final training loss by layer. Figure 9: the two setups' absolute losses in two panels. Designs join as they finish.
 DES = [("", "Sandwich-LN")] + ARCH
-DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6"}   # GM2 600 (yellow 900)
+DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6", "attnres_block": "#3C4043"}   # GM2 600 (yellow 900), then grey 800
 drawn = [(a, n) for a, n in DES if a in done48 and a in DCOL]
 LX = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
 def lin_ticks(lo, hi, step, fmt="{:.1f}"):
@@ -232,7 +232,7 @@ gaps = {a: done48[a][0] - done48[a][1] for a, _ in drawn}
 figs["fig-d48-gap"] = dict(title={"en": "Separate heads minus probes by layer and design, 48 layers", "zh": "按层和设计的独立头减只加探针，48 层"},
                            legend=[[{"en": n, "zh": n}, DCOL[a], "line"] for a, n in drawn],
                            quantity={"en": "Training loss difference (nats)", "zh": "训练损失之差（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=340,
-                           panels=[dict(xlim=[1, 48], ylim=[-1.75, 0.5], xticks=LX, yticks=lin_ticks(-1.5, 0.5, 0.5),
+                           panels=[dict(xlim=[1, 48], ylim=[-2.5, 0.5], xticks=LX, yticks=lin_ticks(-2.5, 0.5, 0.5),
                                         marks=[line([[0, 0], [49, 0]], GREY, 1.0)] + [line(pts(k48, gaps[a]), DCOL[a], 1.8) for a, _ in drawn])])
 figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design, 48 layers", "zh": "按层和设计的最终训练损失，48 层"},
                            legend=figs["fig-d48-gap"]["legend"],
