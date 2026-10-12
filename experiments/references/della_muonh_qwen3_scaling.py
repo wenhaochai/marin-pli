@@ -65,6 +65,7 @@ from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
+from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.table_variants_qwen3 import (ComposedResidualQwen3Config, FrozenOutQwen3Config, LowRankQwen3Config,
                                                          RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
@@ -246,6 +247,10 @@ LR_RANK = int(os.environ.get("LR_RANK", "48"))
 # (vocab_materialize_passes.py, MARIN_PREFIX/materialized/<size>[-v<K>k]-rep8-<PASS_DATA>/train): pass 1 the baseline's
 # subset in its order, passes 2-8 each in a new order (rs), and with a new BPE-dropout p segmentation (bpd<p>; more tokens,
 # so the steps cover all 8 passes of text). The cache is read in order (no shuffle); tag -<PASS_DATA> after -rep8.
+# VARIANT=fop (owner, 2026-10-12; Q5b after the fo gate failed): the baseline model, with MuonH frozen on the output rows
+# of the tokens outside the FO_K truncation (specials excluded) from pass FOP_FROM_PASS of 8 on, i.e. from update
+# round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too (freeze_rows_muonh.py). Run tag -fop<FO_K/1000>kp<pass>.
+FOP_FROM_PASS = int(os.environ.get("FOP_FROM_PASS", "2"))
 RM_K = int(os.environ.get("RM_K", "8000"))
 RM_FROM_PASS = int(os.environ.get("RM_FROM_PASS", "5"))
 CV_RES_SCALE = float(os.environ.get("CV_RES_SCALE", "0.1"))
@@ -307,9 +312,9 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT in ("cv", "fo", "lr", "rm", "cvr") and VOCAB_K:
+if VARIANT in ("cv", "fo", "fop", "lr", "rm", "cvr") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "lr", "rm", "cvr", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "lr", "rm", "cvr", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -374,6 +379,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k" + ("-sum" if CV_OUT_REDUCE == "sum" else "")
     if VARIANT == "fo":
         variant_tags += f"-fo{FO_K // 1000}k"
+    if VARIANT == "fop":
+        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}"
     if VARIANT == "lr":
         variant_tags += f"-lr{LR_RANK}"
     if VARIANT == "rm":
@@ -520,7 +527,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         attn_backend=AttentionBackend.JAX_FLASH,
         **model_extra,
     )
-    optimizer = MuonHConfig(
+    if VARIANT == "fop" and FOP_FROM_PASS < 2:
+        raise ValueError(f"FOP_FROM_PASS={FOP_FROM_PASS}: the rows learn during pass 1, so 2 or later")
+    opt_cls, opt_extra = MuonHConfig, {}
+    if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
+        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1))
+    optimizer = opt_cls(
         learning_rate=s["lr"],
         adam_lr=s["adam_lr"],
         beta1=0.9,
@@ -538,6 +550,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         min_lr_ratio=0.0,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
+        **opt_extra,
     )
 
     def build_config(ctx: StepContext) -> TrainLmOnPodConfig:
