@@ -24,6 +24,7 @@ the sampled softmax to both output heads; VARIANT=ovgramss is ovgram with the sa
 """
 
 import dataclasses
+import json
 import os
 from datetime import timedelta
 
@@ -64,7 +65,8 @@ from experiments.marin_tokenizer import marin_tokenizer
 from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
-from experiments.references.table_variants_qwen3 import FrozenOutQwen3Config, LowRankQwen3Config
+from experiments.references.table_variants_qwen3 import (ComposedResidualQwen3Config, FrozenOutQwen3Config, LowRankQwen3Config,
+                                                         RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
 from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
@@ -237,6 +239,19 @@ CV_K = int(os.environ.get("CV_K", "8000"))
 # and an [LR_RANK, D] matrix (r = 48 gives the 300m model the 8K truncation's ~115M parameters). Run tag -lr<LR_RANK>.
 FO_K = int(os.environ.get("FO_K", "8000"))
 LR_RANK = int(os.environ.get("LR_RANK", "48"))
+# Q10 (owner, 2026-10-11): can the Marin tokenizer repeat data as well as the 8K truncation?
+# VARIANT=rm: from pass RM_FROM_PASS of DATA_EPOCHS on, no loss on targets outside the RM_K truncation (tag -rm<K/1000>kp<pass>).
+# VARIANT=cvr: the composed input table (VARIANT=cv, CV_SIDE=in) plus a residual row per rare token at CV_RES_SCALE (tag
+# -cvin<K/1000>k-res<scale>). PASS_DATA=rs | bpd<p>: the repeated part's 8 passes read from a pre-built cache
+# (vocab_materialize_passes.py, MARIN_PREFIX/materialized/<size>[-v<K>k]-rep8-<PASS_DATA>/train): pass 1 the baseline's
+# subset in its order, passes 2-8 each in a new order (rs), and with a new BPE-dropout p segmentation (bpd<p>; more tokens,
+# so the steps cover all 8 passes of text). The cache is read in order (no shuffle); tag -<PASS_DATA> after -rep8.
+RM_K = int(os.environ.get("RM_K", "8000"))
+RM_FROM_PASS = int(os.environ.get("RM_FROM_PASS", "5"))
+CV_RES_SCALE = float(os.environ.get("CV_RES_SCALE", "0.1"))
+PASS_DATA = os.environ.get("PASS_DATA", "")
+if PASS_DATA and not (PASS_DATA == "rs" or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
+    raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
 _PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
@@ -249,6 +264,26 @@ def _vocab_ratio(k: int) -> float:
     if not os.path.exists(path):
         raise FileNotFoundError(f"{path} is missing: run scripts/della/convert_small_vocab.sbatch for K={k} first")
     return json.load(open(path))["fineweb-edu-10B"]["ratio"]
+
+
+def _pass_data_dir(size: str) -> str:
+    return f"{_PREFIX}/materialized/{size}" + (f"-v{VOCAB_K // 1000}k" if VOCAB_K and VOCAB_K != 256 else "-bytes" if VOCAB_K == 256 else "") + f"-rep8-{PASS_DATA}"
+
+
+def _pass_data_meta(size: str) -> dict:
+    p = _pass_data_dir(size) + "/meta.json"
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p} is missing: build the passes first (vocab_materialize_passes.py)")
+    return json.load(open(p))
+
+
+def _cache_component(path):
+    from levanter.data.text.datasets import DatasetComponent, UrlDatasetSourceConfig
+    from levanter.data.text.formats import TextLmDatasetFormat
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"{path} is missing")
+    src = UrlDatasetSourceConfig(tags=[], train_urls=[], validation_urls=[], cache_dir=os.path.dirname(path), format=TextLmDatasetFormat())
+    return DatasetComponent(source=src, cache_dir=src.cache_dir, format=src.format, tags=[])
 
 
 def _small_vocab_data(k: int, train_names, validation_names):
@@ -272,9 +307,9 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT in ("cv", "fo", "lr") and VOCAB_K:
+if VARIANT in ("cv", "fo", "lr", "rm", "cvr") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "lr", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "lr", "rm", "cvr", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -341,6 +376,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-fo{FO_K // 1000}k"
     if VARIANT == "lr":
         variant_tags += f"-lr{LR_RANK}"
+    if VARIANT == "rm":
+        variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}"
+    if VARIANT == "cvr":
+        variant_tags += f"-cvin{CV_K // 1000}k-res{CV_RES_SCALE:g}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -361,6 +400,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-tpp{TPP:g}"
     if DATA_EPOCHS > 0:
         variant_tags += f"-rep{DATA_EPOCHS:g}"
+    if PASS_DATA:
+        if DATA_EPOCHS != 8:
+            raise ValueError("PASS_DATA builds the 8 passes of DATA_EPOCHS=8")
+        variant_tags += f"-{PASS_DATA}"
+        if PASS_DATA.startswith("bpd") and not SMOKE_STEPS:   # every pass of text: the cache's sequences in steps of batch
+            s = dict(s, steps=_pass_data_meta(size)["sequences"] // s["batch"])
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
     if SEQ_LEN != 4096:
@@ -437,6 +482,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_cls, model_extra = FrozenOutQwen3Config, dict(fo_k=FO_K)
     elif VARIANT == "lr":
         model_cls, model_extra = LowRankQwen3Config, dict(lr_rank=LR_RANK)
+    elif VARIANT == "rm":
+        if DATA_EPOCHS <= 0:
+            raise ValueError("VARIANT=rm masks the later passes of a repeated run: set DATA_EPOCHS")
+        model_cls, model_extra = RareTargetMaskQwen3Config, dict(rm_k=RM_K, rm_from_step=round(s["steps"] * (RM_FROM_PASS - 1) / DATA_EPOCHS))
+    elif VARIANT == "cvr":
+        if CV_SIDE != "in":
+            raise ValueError("VARIANT=cvr composes the input table only (CV_SIDE=in)")
+        cv_map = f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz"
+        model_cls, model_extra = ComposedResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=False, cv_res_scale=CV_RES_SCALE)
     elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
         model_cls, model_extra = OverVocabQwen3Config, dict(
@@ -491,7 +545,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             data = _small_vocab_data(VOCAB_K, [d.name for d in train], [d.name for d in validation])
         else:
             data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
-        if DATA_EPOCHS > 0:
+        if DATA_EPOCHS > 0 and PASS_DATA:   # the 8 passes come pre-built: read the cache in order
+            name = train[0].name
+            assert len(train) == 1 and name == "fineweb-edu-10B", [d.name for d in train]
+            data = dataclasses.replace(data, components={**data.components, name: _cache_component(_pass_data_dir(size) + "/train")},
+                                       shuffle=False, max_train_batches=None)
+        elif DATA_EPOCHS > 0:
             steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
             data = dataclasses.replace(data, max_train_batches={d.name: round(steps / DATA_EPOCHS) for d in train})
         inner = train_lm.TrainLmConfig(
