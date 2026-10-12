@@ -80,6 +80,7 @@ bh = A(base.lm_head.weight.rearrange(("vocab", "embed")))
 
 # ---------------- frozen output rows ----------------
 fo = FrozenOutQwen3LMHeadModel.init(Vocab, FrozenOutQwen3Config(**common, fo_k=K), key=jrandom.PRNGKey(0))
+check("[fo] init builds the fo class", type(fo) is FrozenOutQwen3LMHeadModel, type(fo).__name__)
 check("[fo] init: head = baseline head", np.array_equal(A(fo.get_lm_head().rearrange(("vocab", "embed"))), bh))
 check("[fo] init: input table = baseline", np.array_equal(A(fo.embeddings.token_embeddings.weight), A(base.embeddings.token_embeddings.weight)))
 check("[fo] init: trunk = baseline", all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(jax.tree_util.tree_leaves(fo.transformer), jax.tree_util.tree_leaves(base.transformer))))
@@ -117,6 +118,7 @@ for bad in (dict(fo_k=0), dict(fo_k=V - 256), dict(fo_k=K, tie_word_embeddings=T
 
 # ---------------- low-rank tables ----------------
 lr = LowRankQwen3LMHeadModel.init(Vocab, LowRankQwen3Config(**common, lr_rank=R), key=jrandom.PRNGKey(0))
+check("[lr] init builds the lr class", type(lr) is LowRankQwen3LMHeadModel, type(lr).__name__)
 check("[lr] shapes", lr.embeddings.token_embeddings.weight.array.shape == (V, R) and lr.embeddings_b.array.shape == (R, D)
       and lr.lm_head.weight.array.shape == (V, R) and lr.lm_head_b.array.shape == (R, D))
 n_tab = sum(x.size for x in (lr.embeddings.token_embeddings.weight.array, lr.embeddings_b.array, lr.lm_head.weight.array, lr.lm_head_b.array))

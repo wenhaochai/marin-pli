@@ -21,6 +21,18 @@ Every token keeps its own row (row t = A[t] @ B). The input factors sit where th
 ``lm_head_b`` (AdamH, as the baseline's head). The factors start as Gaussians whose product has the baseline table's
 standard deviation (each factor std = sqrt(sigma / sqrt(r)), sigma measured on the baseline's own initial table).
 
+``RareTargetMaskQwen3Config`` (Q10, owner 2026-10-11): from train step ``rm_from_step`` on (pass 5 of 8), positions whose
+target is a rare token (ids rm_k .. V-257) get no loss. The remaining positions keep the baseline's gradient scale: the
+masked weighted mean is rescaled by the (gradient-free) kept share of the weight, so the loss is
+sum(w m l) / sum(w). The step comes from ``levanter.trainer.current_train_step()``; evaluation (no train step) is never
+masked.
+
+``ComposedResidualQwen3Config`` (Q10): the composed input table of ``ComposedVocabQwen3Config`` (cv_input; rows of tokens
+below K are their own, a rare token's row is the mean of its K-token pieces' rows) plus, for each rare token, its own
+residual row scaled by ``cv_res_scale`` (0.1): row_t = mean(pieces) + 0.1 * r_t. The residuals start at zero (step 0 is
+the composed model) and sit in ``embeddings_res`` (MuonH "adam", no weight decay), so under Adam a residual moves at a
+tenth of an ordinary row's rate.
+
 Evaluation goes through the same entry points (``activations``, ``get_lm_head``), so eval/paloma numbers are these
 models'. The full tables are rebuilt in every forward pass (a concatenation, or a [V, r] x [r, D] product in f32).
 """
@@ -36,11 +48,16 @@ import jax.numpy as jnp
 import haliax as hax
 from haliax import Axis, NamedArray
 from levanter.models.lm_model import LmConfig
+from levanter.models.loss import next_token_loss_weight
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
+from levanter.trainer import current_train_step
+
+from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config, ComposedVocabQwen3LMHeadModel, load_map
 
 SMALL = "fo_small"   # axis of the trainable head rows (not "vocab", so no vocab sharding rule applies)
 RARE = "fo_rare"     # axis of the fixed rare rows
 RANK = "lr_rank"     # axis of the low-rank factors
+RES = "cvr_rare"     # axis of the composed-input residual rows
 N_SPECIAL = 256
 
 
@@ -184,3 +201,87 @@ class LowRankQwen3LMHeadModel(Qwen3LMHeadModel):
 
     def __call__(self, input_ids, attn_mask=None, pos_ids=None, *, key=None):  # type: ignore[override]
         return self._plain()(input_ids, attn_mask, pos_ids, key=key)
+
+
+@LmConfig.register_subclass("qwen3_rare_target_mask")
+@dataclass(frozen=True)
+class RareTargetMaskQwen3Config(Qwen3Config):
+    rm_k: int = 8000          # targets with ids rm_k .. V-257 are "rare"
+    rm_from_step: int = 0     # train steps >= this drop the loss of rare targets
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.rm_k <= 0 or self.rm_from_step < 0:
+            raise ValueError(f"rm_k={self.rm_k}, rm_from_step={self.rm_from_step}: need rm_k > 0 and rm_from_step >= 0")
+
+    @property  # type: ignore[override]
+    def model_type(self):  # noqa: D401
+        return RareTargetMaskQwen3LMHeadModel
+
+
+class RareTargetMaskQwen3LMHeadModel(Qwen3LMHeadModel):
+    @classmethod
+    def init(cls, Vocab: Axis, config: RareTargetMaskQwen3Config, *, key):  # type: ignore[override]
+        # Qwen3LMHeadModel.init returns the base class, which would silently drop the mask: rebuild as this class
+        base = Qwen3LMHeadModel.init(Vocab, config, key=key)
+        return cls(base.transformer, base.embeddings, base.lm_head)
+
+    def compute_next_token_loss(self, example, *, key=None, reduction=hax.mean, reduction_axis=None, **kw):  # type: ignore[override]
+        step = current_train_step()
+        if step is None or reduction is not hax.mean or reduction_axis is not None:   # evaluation, or a caller-specific reduction
+            return super().compute_next_token_loss(example, key=key, reduction=reduction, reduction_axis=reduction_axis, **kw)
+        cfg: RareTargetMaskQwen3Config = self.config  # type: ignore[assignment]
+        V = self.Vocab.size
+        if not 0 < cfg.rm_k < V - N_SPECIAL:
+            raise ValueError(f"rm_k={cfg.rm_k} must lie in (0, {V - N_SPECIAL})")
+        tgt = hax.roll(example.tokens, -1, self.Pos).array   # the loss at position t predicts token t+1
+        rare = (tgt >= cfg.rm_k) & (tgt < V - N_SPECIAL)
+        keep = jnp.where(jnp.asarray(step) >= cfg.rm_from_step, ~rare, True)
+        w = example.loss_weight if example.loss_weight is not None else hax.ones(example.tokens.axes, dtype=jnp.float32)
+        w2 = w * hax.named(keep, example.tokens.axes).astype(w.dtype)
+        loss = super().compute_next_token_loss(dataclasses.replace(example, loss_weight=w2), key=key, reduction=reduction, reduction_axis=None, **kw)
+        # sum(w m l) / sum(w m) x sum(w m) / sum(w) = sum(w m l) / sum(w): the kept positions' gradients keep their scale
+        wa, wb = next_token_loss_weight(self.Pos, w2), next_token_loss_weight(self.Pos, w)
+        scale = jax.lax.stop_gradient(jnp.sum(wa.array.astype(jnp.float32)) / jnp.maximum(jnp.sum(wb.array.astype(jnp.float32)), 1e-9))
+        return loss * scale
+
+
+@LmConfig.register_subclass("qwen3_composed_residual")
+@dataclass(frozen=True)
+class ComposedResidualQwen3Config(ComposedVocabQwen3Config):
+    cv_res_scale: float = 0.1
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.cv_input or self.cv_output:
+            raise ValueError("the residual variant composes the input table only (cv_input=True, cv_output=False)")
+        if not self.cv_res_scale > 0:
+            raise ValueError(f"cv_res_scale={self.cv_res_scale}: must be positive")
+
+    @property  # type: ignore[override]
+    def model_type(self):  # noqa: D401
+        return ComposedResidualQwen3LMHeadModel
+
+
+class ComposedResidualQwen3LMHeadModel(ComposedVocabQwen3LMHeadModel):
+    embeddings_res: NamedArray   # [cvr_rare, Embed]: the residual rows of tokens K .. V-257
+
+    @classmethod
+    def init(cls, Vocab: Axis, config: ComposedResidualQwen3Config, *, key):  # type: ignore[override]
+        base = ComposedVocabQwen3LMHeadModel.init(Vocab, config, key=key)   # the composed model, bit for bit
+        k = load_map(config.cv_map)[3] - N_SPECIAL
+        res = hax.zeros((Axis(RES, Vocab.size - N_SPECIAL - k), config.Embed), dtype=base.embeddings.token_embeddings.weight.dtype)
+        return cls(transformer=base.transformer, embeddings=base.embeddings, lm_head=base.lm_head, full_vocab=Vocab, embeddings_res=res)
+
+    def _full(self) -> Qwen3LMHeadModel:
+        plain = super()._full()
+        cfg: ComposedResidualQwen3Config = self.config  # type: ignore[assignment]
+        k = load_map(cfg.cv_map)[3] - N_SPECIAL
+        te = plain.embeddings.token_embeddings
+        w = te.weight.rearrange((self.full_vocab.name, cfg.Embed.name)).array
+        r = self.embeddings_res.rearrange((RES, cfg.Embed.name)).array
+        if r.shape[0] != self.full_vocab.size - N_SPECIAL - k:
+            raise ValueError(f"{r.shape[0]} residual rows for ids {k} .. {self.full_vocab.size - N_SPECIAL - 1}")
+        w = w.at[k:self.full_vocab.size - N_SPECIAL].add((cfg.cv_res_scale * r.astype(jnp.float32)).astype(w.dtype))
+        te = dataclasses.replace(te, weight=hax.named(w, (self.full_vocab, cfg.Embed)))
+        return Qwen3LMHeadModel(plain.transformer, dataclasses.replace(plain.embeddings, token_embeddings=te), plain.lm_head)
