@@ -126,7 +126,7 @@ added (untied tables, per-tokenizer repeated parts, warmup share, eval windows, 
 running hours from W&B _runtime, toklosses jobs in other compute, the 14940537 pair split, no silent NO ROW.
 Grouped results of the 300m byte pair (15293174): macro total +0.0041 (equals the W&B cost); input deciles 0.007-0.014
 except decile 2 -0.033, target decile 1 +0.016, no rare-byte peak; context cost 0.015 falling to ~0 by 4096 bytes.
-Q8 first results (2026-10-11, exact bpb; cost = 8 passes minus 2.6 passes): TPP=200 128K +0.0240 (1.4645 -> 1.4885), 64K +0.0252 (1.4821 -> 1.5073); TPP=20 64K +0.0715, 32K +0.0637 (128K anchor pending): with a 10x larger repeated part the extra cost of 8 passes is about a third, and 128K and 64K are level at TPP=200. Owner decisions (popup, 2026-10-11): bytes-520m seg4 cancelled and resubmitted at 23:55 with 1380m limits (15375325);
+Q8 first results (2026-10-11, exact bpb; cost = 8 passes minus 2.6 passes): TPP=200 128K +0.0240 (1.4645 -> 1.4885), 64K +0.0252 (1.4821 -> 1.5073); 32K +0.0135 (1.5179 -> 1.5314); TPP=20 64K +0.0715, 32K +0.0637 (128K anchor pending): with a 10x larger repeated part the extra cost of 8 passes is about a third, and 128K and 64K are level at TPP=200. Owner decisions (popup, 2026-10-11): bytes-520m seg4 cancelled and resubmitted at 23:55 with 1380m limits (15375325);
 pending jobs exclude della-k14g3 (GPU 0-3 half 7-13% slower); figs 5/7/8 retitled "Where the cost sits: ..."; TPP != 20
 keeps no step-interval checkpoints (1965f50f0a; hashes of every TPP=20 config unchanged). Done: the page's bpb is now
 exact, loss x T / (ln2 x B) per subset (tmp_plots/vocab/bpb_exact_tables.json); the old logged-bpb x whole-subset factor
