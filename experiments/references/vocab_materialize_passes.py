@@ -58,6 +58,9 @@ def subset():
     tc = scaling.muonh_qwen3_run(SIZE).build_config(mock.MagicMock()).train_config
     batch, data = tc.trainer.train_batch_size, tc.data
     (name, n_batches), = data.max_train_batches.items()
+    if not K:   # the 128K component's path is resolved by the executor at run time; point it at the same prebuilt cache
+        import dataclasses
+        data = dataclasses.replace(data, components={**data.components, name: scaling._cache_component(f"{PREFIX}/fineweb-edu-10B/2026.06.28/train")})
     _, shuffle_key = jax.random.split(jax.random.PRNGKey(tc.data_seed))   # train_lm: data_key = PRNGKey(data_seed); train_set splits it
     ds = data.train_sets(Axis("position", SEQ), key=shuffle_key, initial_batch_size=batch)[name]
     n = len(ds.as_sync_dataset())
