@@ -546,8 +546,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         else:
             data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
         if DATA_EPOCHS > 0 and PASS_DATA:   # the 8 passes come pre-built: read the cache in order
-            name = train[0].name
-            assert len(train) == 1 and name == "fineweb-edu-10B", [d.name for d in train]
+            names = [d.name for d in train]   # train maps each dataset to its weight
+            assert names == ["fineweb-edu-10B"], names
+            name = names[0]
             data = dataclasses.replace(data, components={**data.components, name: _cache_component(_pass_data_dir(size) + "/train")},
                                        shuffle=False, max_train_batches=None)
         elif DATA_EPOCHS > 0:
