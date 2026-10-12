@@ -60,7 +60,9 @@ def subset():
     (name, n_batches), = data.max_train_batches.items()
     if not K:   # the 128K component's path is resolved by the executor at run time; point it at the same prebuilt cache
         import dataclasses
-        data = dataclasses.replace(data, components={**data.components, name: scaling._cache_component(f"{PREFIX}/fineweb-edu-10B/2026.06.28/train")})
+        import glob
+        tok = os.path.dirname(glob.glob("/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/*/tokenizer.json")[0])
+        data = dataclasses.replace(data, tokenizer=tok, components={**data.components, name: scaling._cache_component(f"{PREFIX}/fineweb-edu-10B/2026.06.28/train")})
     _, shuffle_key = jax.random.split(jax.random.PRNGKey(tc.data_seed))   # train_lm: data_key = PRNGKey(data_seed); train_set splits it
     ds = data.train_sets(Axis("position", SEQ), key=shuffle_key, initial_batch_size=batch)[name]
     n = len(ds.as_sync_dataset())
@@ -132,6 +134,9 @@ def resegment(rows, tok, idb, special):
 def main():
     t0 = time.time()
     sub, tc = subset()
+    if os.environ.get("SUBSET_ONLY"):   # a quick check of the subset read
+        print("subset", sub.shape, sub[0, :8].tolist(), flush=True)
+        return
     n = len(sub)
     print(f"subset: {n} sequences of {SEQ} ({n * SEQ / 1e9:.3f}B tokens), {time.time() - t0:.0f}s", flush=True)
     os.makedirs(OUT, exist_ok=True)
