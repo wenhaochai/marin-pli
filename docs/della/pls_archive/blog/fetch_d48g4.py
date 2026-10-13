@@ -23,6 +23,10 @@ P = "reself/marin-della/muonh-qwen3-130m-della4xh100-pls1"
 keys = [f"train/pls/L{k}" for k in range(48)]
 out = dict(np.load(OUT, allow_pickle=True)) if OUT.exists() else {}
 errors = 0
+# Steps whose W&B row was lost although training ran through them, checked in the Slurm logs before listing. 4595: job
+# 15266160 saved checkpoint step-4595 at its training limit and stopped before W&B took that step's row; 15266161 loaded
+# step-4595 and went on from 4596 (2026-10-13). The final value (last 50 steps) does not touch it.
+LOGGING_GAPS = {"-sep-aattnres-vs-d48-g4": {4595}}
 
 def history(r, last):
     by = {}
@@ -51,11 +55,13 @@ for arch in archs:
         if not by:
             print(tag, r.state, "no rows"); continue
         st = np.array(sorted(by)); ce = np.array([[by[s][k] for k in keys] for s in st])
-        gaps = int(st[-1] - st[0] + 1 - len(st))
+        allowed = LOGGING_GAPS.get(tag, set())
+        missing = set(range(int(st[0]), int(st[-1]) + 1)) - set(st.tolist())
+        gaps = len(missing - allowed)
         complete = r.state == "finished" and st[-1] == n - 1 and last == n - 1 and gaps == 0
         fin = ce[-50:].mean(0)
         ev = np.array([r.summary.get(f"eval/L{k}/loss", np.nan) for k in range(48)], float)
-        print(f"{tag} {r.state} step {st[-1]} of {n - 1} unique {len(st)} gaps {gaps} nonfinite {int((~np.isfinite(ce)).sum())} complete {complete}\n"
+        print(f"{tag} {r.state} step {st[-1]} of {n - 1} unique {len(st)} gaps {gaps} (allowed {sorted(missing & allowed)}) nonfinite {int((~np.isfinite(ce)).sum())} complete {complete}\n"
               f"  final L1 L12 L24 L36 L47 L48 {np.round(fin[[0, 11, 23, 35, 46, 47]], 3).tolist()}\n"
               f"  eval  L1 L12 L24 L36 L47 L48 {np.round(ev[[0, 11, 23, 35, 46, 47]], 3).tolist()} eval/loss {r.summary.get('eval/loss')} params {r.summary.get('parameter_count')}")
         if partial:

@@ -69,7 +69,8 @@ def fit(x, y):
         return pchip(x, y)
     g = np.geomspace(x.min(), x.max(), 60); return pts(g, law(g, *p))
 def pchip(x, y):
-    f = PchipInterpolator(np.log(x), np.log(y)); g = np.geomspace(x.min(), x.max(), 60); return pts(g, np.exp(f(np.log(g))))
+    # the data x too, so the line passes through every point (60 even samples alone skipped deep layers, 2026-10-13)
+    f = PchipInterpolator(np.log(x), np.log(y)); g = np.union1d(np.geomspace(x.min(), x.max(), 60), x); return pts(g, np.exp(f(np.log(g))))
 def smooth(x, y, w=50): return x[w - 1:], np.convolve(y, np.ones(w) / w, mode="valid")
 def thin(x, y, n=200):
     idx = np.unique(np.geomspace(1, len(x), n).astype(int) - 1); return pts(np.asarray(x)[idx], np.asarray(y)[idx])
@@ -196,17 +197,26 @@ def x48(arch):
 ARCH = [("preln", "Pre-LN"), ("lns", "LayerNorm Scaling"), ("deepnorm", "DeepNorm"), ("keel", "KEEL"), ("hc", "Hyper-Connections"),
         ("mhc", "mHC"), ("attnres", "AttnRes (Full)"), ("attnres_block", "AttnRes (Block)"), ("moda", "MoDA")]
 # status words while a design trains (update with the queue): runs started 2026-10-09
-STATUS48 = {"attnres": RUNNING, "moda": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN; hc, mhc: queued
+STATUS48 = {"moda": RUNNING, "hc": RUNNING, "mhc": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN (2026-10-13)
 done48 = {a: g4(a) for a in [""] + [k for k, _ in ARCH] if g4(a) is not None}
 for a, ys in done48.items():
     print("d48", a or "sandwich", "separate heads L1 L24 L48", np.round(ys[0][[0, 23, 47]], 3), "probes", np.round(ys[1][[0, 23, 47]], 3))
-v48 = view(np.concatenate([x48(a) for a in done48 for _ in (0, 1)]), np.concatenate([y for ys in done48.values() for y in ys]), top=1.3, endpoints_only=True) if done48 else None   # headroom: the panel name sits above the first layers
+# AttnRes (Full): readout k is the depth-attention mix that layer k+1 reads, not a residual stream, and with probes many of
+# these mixes carry little next-token information (layers 17-47 jump between 3.3 and 7.8 nats; layer 48, the output, is
+# 3.05). Its probes stay out of the shared view; its panel takes its own y range, said in the caption.
+OWN_RANGE = {"attnres"}
+v48 = view(np.concatenate([x48(a) for a in done48 for j in (0, 1) if not (a in OWN_RANGE and j)]),
+           np.concatenate([y for a, ys in done48.items() for j, y in enumerate(ys) if not (a in OWN_RANGE and j)]), top=1.3, endpoints_only=True) if done48 else None   # headroom: the panel name sits above the first layers
 def panel48(arch, ys=(3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5)):
     if arch in done48:
         sep, prb = done48[arch]
         v = dict(v48, yticks=[t for t in v48["yticks"] if t[0] in ys])   # the small panels of Figure 7 keep fewer values
+        if arch in OWN_RANGE:   # the shared x range, a y range up to the highest probe readout
+            yhi = 2 + (max(sep.max(), prb.max()) - 2) * 2.2   # room for the panel name above the 8 value
+            v = dict(v48, ylim=[v48["ylim"][0], float(yhi)], yticks=[[a, f"{a:g}"] for a in (3, 4, 5, 6, 8) if a <= yhi - 0.04 * (yhi - v48["ylim"][0])])
         xa = x48(arch)
-        return dict(**v, marks=[line(fit(xa, sep), BLUE7), dots(pts(xa, sep), BLUE7), line(pchip(xa, prb), RED), dots(pts(xa, prb), RED)])
+        prb_line = line(pts(xa, prb), RED) if arch in OWN_RANGE else line(pchip(xa, prb), RED)   # AttnRes (Full) probes jump from layer to layer: straight segments through the points
+        return dict(**v, marks=[line(fit(xa, sep), BLUE7), dots(pts(xa, sep), BLUE7), prb_line, dots(pts(xa, prb), RED)])
     if v48:   # the finished designs' axes, so every panel reads on one scale
         return dict(v48, yticks=[t for t in v48["yticks"] if t[0] in ys], marks=[], empty=STATUS48.get(arch, QUEUED))
     return empty_view(x48(arch), 2.9, 5.0, STATUS48.get(arch, QUEUED), ys=ys)
@@ -223,7 +233,7 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
 # final training loss by layer. Figure 9: the two setups' absolute losses in two panels. Designs join as they finish.
 DES = [("", "Sandwich-LN")] + ARCH
 DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6", "attnres_block": "#3C4043"}   # GM2 600 (yellow 900), then grey 800
-drawn = [(a, n) for a, n in DES if a in done48 and a in DCOL]
+drawn = [(a, n) for a, n in DES if a in done48 and a in DCOL]   # no colour for AttnRes (Full): its probe readouts below layer 48 are not comparable (OWN_RANGE)
 LX = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
 def lin_ticks(lo, hi, step, fmt="{:.1f}"):
     v = np.arange(np.floor(lo / step) * step, hi + step / 2, step); return [[round(float(t), 6), fmt.format(t)] for t in v]
@@ -232,12 +242,12 @@ gaps = {a: done48[a][0] - done48[a][1] for a, _ in drawn}
 figs["fig-d48-gap"] = dict(title={"en": "Separate heads minus probes by layer and design, 48 layers", "zh": "按层和设计的独立头减只加探针，48 层"},
                            legend=[[{"en": n, "zh": n}, DCOL[a], "line"] for a, n in drawn],
                            quantity={"en": "Training loss difference (nats)", "zh": "训练损失之差（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=340,
-                           panels=[dict(xlim=[1, 48], ylim=[-2.5, 0.5], xticks=LX, yticks=lin_ticks(-2.5, 0.5, 0.5),
+                           panels=[dict(xlim=[-3, 49], ylim=[-2.5, 0.5], xticks=LX, yticks=lin_ticks(-2.5, 0.5, 0.5),
                                         marks=[line([[0, 0], [49, 0]], GREY, 1.0)] + [line(pts(k48, gaps[a]), DCOL[a], 1.8) for a, _ in drawn])])
 figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design, 48 layers", "zh": "按层和设计的最终训练损失，48 层"},
                            legend=figs["fig-d48-gap"]["legend"],
                            quantity={"en": "Training loss (nats)", "zh": "训练损失（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=300, cols=1,
-                           panels=[dict(xlim=[1, 48], ylim=[2.75, 5.85], xticks=LX, yticks=lin_ticks(3.0, 5.5, 0.5), label=lab,
+                           panels=[dict(xlim=[-3, 49], ylim=[2.75, 5.85], xticks=LX, yticks=lin_ticks(3.0, 5.5, 0.5), label=lab,
                                         marks=[line(pts(k48, done48[a][j]), DCOL[a], 1.8) for a, _ in drawn])
                                    for j, lab in ((0, {"en": "Separate heads", "zh": "独立头"}), (1, {"en": "Probes only", "zh": "只加探针"}))])
 for a, n in drawn:

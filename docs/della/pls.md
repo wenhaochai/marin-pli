@@ -338,6 +338,12 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    3.372/3.262, 3.128/3.027); training AttnRes, AttnRes (Block), MoDA; queued HC, mHC. Every finished design: separate
    heads much lower at the shallow and middle layers, higher at the last layers. Not done: the width-depth-ratio sweep
    of DepthBench (one shape only, 48 x 512).
+   Status 2026-10-13: AttnRes (Block) finished (3.066/2.953) and AttnRes (Full) finished (3.023/3.045; eval
+   3.765/3.738). AttnRes (Full) is the one design without the last-layer cost (train -0.02, eval +0.03 against +0.09..0.11
+   and +0.14..0.18 for the others), and its separate-heads run has the lowest layer-48 loss of all designs; its ordinary
+   model is weaker than AttnRes (Block)'s. Its probe readouts jump between 3.3 and 7.8 nats from layer 17 on (the mixes
+   need not carry next-token information), so on the page it has its own y range in Figure 7 and stays out of Figures
+   8-9. MoDA, HC, mHC training (MoDA resumes at step 3730 in 15341589).
    Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
    4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
    so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).
