@@ -151,3 +151,7 @@ if "<!-- archs -->" in s:
 else:
     i = s.index('  <figure class="viz" id="fig-d48-arch"'); s = s[:i] + "  " + fig + "\n" + s[i:]
 open(page, "w").write(s); print("wrote", len(cells), "schematics into", page)
+
+# The site moved to the Epoch style (owner, 2026-10-12): rewrite the cover-style SVGs just written in the site's style.
+import subprocess
+subprocess.run([sys.executable, "/scratch/gpfs/GROUP/USER/project/website/wenhaochai.github.io/tools/exp-art/restyle_svg.py", page], check=True)

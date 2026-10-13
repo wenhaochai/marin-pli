@@ -94,7 +94,7 @@ def figure(fid, cells):
 cells_deep = []
 for k, (probes, en_n, zh_n, en, zh, tag) in enumerate([
         (False, "Separate heads, 48 layers", "独立头，48 层", "The 130m layer stacked 48 deep, every layer predicting through a head of its own.", "130m 的层堆到 48 层，每一层都用自己的头预测。", ("Main", "主做法")),
-        (True, "Probes only, 48 layers", "只加探针，48 层", "The same network with heads that take no gradient back: it trains as an ordinary 48-layer model.", "同样的网络，头的梯度不回传：它和普通的 48 层模型训练得完全一样。", ("Baseline", "基线"))]):
+        (True, "Probes only, 48 layers", "只加探针，48 层", "The same network with heads that take no gradient back. It trains like an ordinary 48-layer model, except that the probe heads share the output head's gradient clipping.", "同样的网络，头的梯度不回传。它像普通的 48 层模型一样训练，只是探针的头和输出头共用梯度裁剪。", ("Baseline", "基线"))]):
     p = P(f"sch-deep-{k}", 40 + k); deep(p, probes); cells_deep.append(cell(p.svg(), en_n, zh_n, en, zh, tag))
 cells_fix = []
 for k, (kw, en_n, zh_n, en, zh) in enumerate([
@@ -117,3 +117,7 @@ for fid, cells in (("deep", cells_deep), ("fixes", cells_fix), ("headft", cells_
         anchor = '  <figure class="viz" id="fig-d48"' if fid == "deep" else '  <figure class="viz" id="fig-fix"'
         i = s.index(anchor); s = s[:i] + "  " + fig + "\n" + s[i:]
 open(page, "w").write(s); print("schematics written:", len(cells_deep), "deep,", len(cells_fix), "fixes")
+
+# The site moved to the Epoch style (owner, 2026-10-12): rewrite the cover-style SVGs just written in the site's style.
+import subprocess
+subprocess.run([sys.executable, "/scratch/gpfs/GROUP/USER/project/website/wenhaochai.github.io/tools/exp-art/restyle_svg.py", page], check=True)

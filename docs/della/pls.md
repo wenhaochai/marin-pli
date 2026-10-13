@@ -304,6 +304,18 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
 2. 逐层监督让每层都接近一个小模型的预测能力：中间层读出只比同算力的普通模型高 0.09–0.13 nats。代价是最后一层也高 0.13 nats。
 3. 300m 只训独立头（作业 14888822，12 层）在排队，用来检查"预测在最后几层才形成"在更深的模型上是否成立。
 
+### 页面换成网站的 Epoch 风格（2026-10-12）
+
+网站换成了 Epoch 风格（Google 配色），owner 已批准（站点提交 85fceef）。
+
+1. 页面的示意图由 `make_page_schematics.py` 和 `make_arch_schematics.py` 写入。这两个脚本写完后调用网站的
+   `tools/exp-art/restyle_svg.py`，把旧封面风格的 SVG 改成新风格。在新页面上重跑两个脚本，输出和网站页面逐字节相同。
+2. 封面动画用 `tools/exp-art/render_anim.py anim_plc.html OUT per-layer-contribution --restyle` 渲染
+   （vis 节点，带 Playwright 的 Python，如 `project/frozen-critic/.venv-shot`）。
+3. artifact 由网站页面构建（`build_blog_artifact.sh`，OUT_DIR 指向临时目录），不再有暗色主题。
+4. 页面还没有 meta description 和 og:description。按网站规则，它要用 Takeaways 那句话，等 12/24/36 层普通模型的结果和
+   Takeaways 写好后再加。
+
 ## Next: depth (2026-10-03, owner)
 
 1. Queued: the 130m setup with 48 layers instead of 6, separate heads (job 14949463) and probes (job 14949464), 8 GPUs
