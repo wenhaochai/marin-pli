@@ -39,6 +39,8 @@ PAIRS = {
     # Q4 causal check: 128K with every input row the mean of its 8K pieces' rows (seed 0); against the 128K pair, its
     # lower cost should sit in the rare input-token deciles if the rare tokens' own input rows are what overfits
     "128K-cvin": (128000, "muonh-qwen3-300m-della4xh100-cvin8k", "muonh-qwen3-300m-della4xh100-cvin8k-rep8"),
+    # its second seed (seed 1, 2026-10-13), seed-matched to the 128K and 8K-s1 pairs
+    "128K-cvin-s1": (128000, "muonh-qwen3-300m-della4xh100-cvin8k-s1", "muonh-qwen3-300m-della4xh100-cvin8k-rep8-s1"),
     # bytes (K=256: ids 0-255 one byte each, specials 256-511 count 0 bytes); 256 types, so equal-count deciles split
     # single byte values at the edges (seeded tie-break): read its frequency panels as coarse
     "bytes": (256, "muonh-qwen3-300m-della4xh100-bytes", "muonh-qwen3-300m-della4xh100-bytes-rep8"),
