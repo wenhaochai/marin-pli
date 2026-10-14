@@ -100,7 +100,7 @@ class HyperParams(eqx.Module):
 
     read: NamedArray  # (stream,)  offset from the static read constant
     res: NamedArray  # (stream, stream_out)  offset from the static mixing constant
-    write: NamedArray  # (stream_out,)  offset from the static write constant
+    write: NamedArray  # (stream_out,)  offset from the static write constant (hc_pos: the sigmoid's logit)
     w_read: NamedArray  # (embed,)
     w_res: NamedArray  # (embed, stream_out)
     w_write: NamedArray  # (embed,)

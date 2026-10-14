@@ -218,7 +218,7 @@ if PART == "main":
         zz = np.asarray(z.array, np.float64)
         ln_ref = (zz - zz.mean(-1, keepdims=True)) / np.sqrt(zz.var(-1, keepdims=True) + 1e-5)
         np.testing.assert_allclose(arr(dn0.post_1(z), (Batch, Pos, Axis("embed", 48))), ln_ref, rtol=1e-4, atol=1e-4)
-        print("4. hc at init == 4 x preln; hc, mhc: o_proj and down_proj x 1/2; deepnorm: centring LayerNorm (no bias), v/o/MLP x (8L)^(-1/4)")
+        print("4. hc at init == 4 x preln; hc, mhc, hc_pos: o_proj and down_proj x 1/2; deepnorm: centring LayerNorm (no bias), v/o/MLP x (8L)^(-1/4)")
 
         # 5. every design trains and evaluates; new parameters learn; probes leave the backbone gradient alone
         for arch in ARCHS:
