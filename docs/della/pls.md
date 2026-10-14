@@ -390,7 +390,9 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    Prediction: L48 train gap 0.048 -> about 0.10, and the ablation dependence drops toward mHC's. Page: new question
    "Why does Hyper-Connections pay only half?" with Figure 11 (bars: layer-48 gap of the 5 single-stream designs, HC,
    mHC, HC with positive writes queued); figures 11-15 became 12-16.
-   Same-depth reference (2026-10-14): 24 layers done: train 3.057 / eval 3.753, layer 24 of the separate-heads model
+   Same-depth reference (2026-10-14), all done. 36 layers: train 3.016 / eval 3.716, layer 36 of the separate-heads model
+   +0.09 / +0.12 above it. Ordinary by depth 12/24/36/48: 3.141/3.057/3.016/2.991; the separate-heads model's layer 48
+   (3.093) lies between the ordinary 12- and 24-layer models. 24 layers done: train 3.057 / eval 3.753, layer 24 of the separate-heads model
    +0.07 / +0.10 above it, and it ends below that model's layer 48 (3.093 / 3.827). The ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
    is a worse 12-layer model than a dedicated one, as every layer was at 6 layers. Figure 6 grey dots (d48ref.json).
