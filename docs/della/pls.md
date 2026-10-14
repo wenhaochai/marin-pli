@@ -351,6 +351,24 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    unlike HC's half), eval 3.749/3.576 (+0.173). Its ordinary model ends lowest of all designs at layer 48; HC's separate
    heads stay lowest with separate heads (2.992), so the HC "both lowest" line no longer holds. The mHC probes stay high
    (gap about -1.4) through layer 27 and fall steeply over the last twenty layers. Page Figures 7, 9, 10, record updated.
+   Hidden-write theory (2026-10-14, owner: "find a theory that predicts the variants"). Separate heads cost the last
+   layer because each layer's readout (own RMSNorm + lm_head; vocab 128k >> width 512, so the head has full column rank
+   and no null space) sees the whole state the later layers read: a feature meant for later layers perturbs that layer's
+   prediction, so the early-exit loss pushes it out (MSDNet, Huang et al. 2018: intermediate classifiers cut final ResNet
+   accuracy by up to 7% and dense connectivity removes most of that). A design pays less only if a layer can write a
+   feature that no readout sees. Checks against the 8 finished designs (L48 train gap sep - probes):
+     single stream (Sandwich-LN .102, Pre-LN .089, LNS .100, DeepNorm .110, KEEL .101): no hidden write -> full cost,
+       whatever the normalization (DeepNorm shifts both curves by +0.27 and keeps the gap).
+     HC .048: readout = sum of 4 streams; writes 1 + learned offset are signed, so a zero-sum write is invisible -> less.
+     mHC .102: writes 2 sigmoid > 0 and non-negative doubly stochastic mixing: every write shows in the sum -> full.
+     AttnRes (Full) -.022: every sublayer output stored apart; a readout is one mix, an output can get ~0 weight in it
+       -> no cost (confounded by its ordinary model's spikes; seed 1 pending).
+     AttnRes (Block) .113: everything written joins the current block's running sum, which every readout sees -> full.
+   PRE-REGISTERED before its result (MoDA job 15341589 at ~step 4000/4958, due ~11:00): MoDA keeps one Pre-LN stream
+   that every readout sees; its depth keys and values are projections of that visible state -> full cost, L48 gap in
+   0.08-0.12. A gap below 0.06 refutes the theory for MoDA.
+   Mechanism test on existing checkpoints (scripts/della/pls_hc_hidden_cpu.py): HC separate heads should hold more of its
+   state in the zero-sum stream part than HC probes; mHC little in either, and its static writes all positive.
    Same-depth reference (2026-10-14): the ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
    is a worse 12-layer model than a dedicated one, as every layer was at 6 layers. Figure 6 grey dots (d48ref.json).
