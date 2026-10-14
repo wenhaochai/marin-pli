@@ -258,6 +258,10 @@ FOP_FROM_PASS = int(os.environ.get("FOP_FROM_PASS", "2"))
 # FOP_BLOCK_NORM=1 (2026-10-13 review): AdamH's norm-preserving head step on the kept rows alone after the freeze, so they
 # keep about their baseline rate instead of ~4x (freeze_rows_muonh.py, freeze_block_norm); run tag suffix b.
 FOP_BLOCK_NORM = os.environ.get("FOP_BLOCK_NORM", "0") == "1"
+# FOP_SLOW > 0 (owner, 2026-10-14; Q5b follow-up G): with VARIANT=fop and FOP_BLOCK_NORM=1, the rare output rows are
+# slowed instead of stopped: they keep learning at FOP_SLOW times the learning rate on their own block
+# (freeze_rows_muonh.py, freeze_rare_scale); run tag suffix -slow<FOP_SLOW>.
+FOP_SLOW = float(os.environ.get("FOP_SLOW", "0"))
 # VARIANT=fip (owner, 2026-10-13; Q4c): as fop, with the rare tokens' INPUT rows (the embedding, MuonH's plain-Adam group)
 # frozen instead of their output rows, from update round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too; the
 # same FO_K and FOP_FROM_PASS knobs. Run tag -fip<FO_K/1000>kp<pass>.
@@ -406,7 +410,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "fo":
         variant_tags += f"-fo{FO_K // 1000}k"
     if VARIANT == "fop":
-        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}" + ("b" if FOP_BLOCK_NORM else "")
+        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}" + ("b" if FOP_BLOCK_NORM else "") + (f"-slow{FOP_SLOW:g}" if FOP_SLOW else "")
     if VARIANT == "fip":
         variant_tags += f"-fip{FO_K // 1000}kp{FOP_FROM_PASS}"
     if VARIANT == "lr":
@@ -563,12 +567,16 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     if VARIANT == "fip" and TIE:
         raise ValueError("VARIANT=fip freezes input rows only: untied tables (TIE=0)")
+    if not 0 <= FOP_SLOW < 1:
+        raise ValueError(f"FOP_SLOW={FOP_SLOW}: must lie in [0, 1)")
+    if FOP_SLOW and not (VARIANT == "fop" and FOP_BLOCK_NORM):
+        raise ValueError(f"FOP_SLOW={FOP_SLOW}: only with VARIANT=fop and FOP_BLOCK_NORM=1")
     if VARIANT in ("fop", "fip") and FOP_FROM_PASS < 2:
         raise ValueError(f"FOP_FROM_PASS={FOP_FROM_PASS}: the rows learn during pass 1, so 2 or later")
     opt_cls, opt_extra = MuonHConfig, {}
     if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
-                                                         freeze_block_norm=FOP_BLOCK_NORM)
+                                                         freeze_block_norm=FOP_BLOCK_NORM, freeze_rare_scale=FOP_SLOW)
     if VARIANT == "fip":   # the input rows, from the same update as fop
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
                                                          freeze_table="embed")
