@@ -29,7 +29,7 @@
 # A training task with no first step after PAIR_FIRST_STEP_MIN (25) min or a silent log for PAIR_STALL_MIN (30) min is
 # stopped (a hung half must not hold 4 GPUs at 0%). Run ids come from CPU dry runs before any GPU task starts.
 set -euo pipefail   # every command that may fail below is written as `x=0; cmd || x=$?` or `|| true`
-cd /scratch/gpfs/GROUP/USER/project/marin-pls
+cd /scratch/gpfs/GROUP/USER/project/marin-pls-hcpos   # the pls-hcpos worktree (its code; the venv stays marin-pls's, pls_env.sh)
 source scripts/della/pls_env.sh
 PY=${PAIR_TEST_PY:-$PY}   # tests only: a stub in place of the launcher
 PT=/scratch/gpfs/GROUP/USER/tools/packed_task.sh

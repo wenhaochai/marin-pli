@@ -196,7 +196,12 @@ if PART == "main":
         hs = hc.transformer.layers.stacked
         hc_same = dataclasses.replace(hc, transformer=dataclasses.replace(hc.transformer, layers=dataclasses.replace(hc.transformer.layers, stacked=dataclasses.replace(hs, self_attn=ps.self_attn, mlp=ps.mlp, ln_1=ps.ln_1, ln_2=ps.ln_2))), embeddings=pre.embeddings)
         leaves_close(outs(hc_same).array / 4.0, o_pre.array, "hc / 4 vs preln", rtol=1e-4, atol=1e-5)
-        for arch in ("hc", "mhc"):
+        hcp = model("hc_pos", False)
+        hcp_same = dataclasses.replace(hcp, transformer=dataclasses.replace(hcp.transformer, layers=dataclasses.replace(hcp.transformer.layers, stacked=dataclasses.replace(hc.transformer.layers.stacked, arch="hc_pos"))), embeddings=hc.embeddings)
+        assert hcp_same.transformer.layers.stacked.arch == "hc_pos" and hcp_same.transformer.arch == "hc_pos"
+        leaves_close(outs(hcp_same).array, outs(hc).array, "hc_pos at init vs hc at init (same weights)", rtol=1e-5, atol=1e-6)
+        print("4. hc_pos at init == hc at init with the same weights (every write 2 sigmoid(0) = 1)")
+        for arch in ("hc", "mhc", "hc_pos"):
             st = model(arch, False).transformer.layers.stacked
             np.testing.assert_allclose(np.asarray(st.self_attn.o_proj.weight.array), 0.5 * np.asarray(ps.self_attn.o_proj.weight.array), rtol=1e-6)
             np.testing.assert_allclose(np.asarray(st.mlp.down_proj.weight.array), 0.5 * np.asarray(ps.mlp.down_proj.weight.array), rtol=1e-6)
@@ -245,9 +250,9 @@ if PART == "main":
             return hax.named(jnp.asarray(base + rng6.normal(size=a.array.shape) * sc, jnp.float32), a.axes)
 
         H0 = hax.named(jnp.asarray(rng6.normal(size=(m_, B, T, 48)), jnp.float32), (Axis("stream", m_), Batch, Pos, E48))
-        for arch in ("hc", "mhc"):
+        for arch in ("hc", "mhc", "hc_pos"):
             lay0 = per_layer(model(arch, False).transformer.layers)[1]  # layer index 1: sublayers 2, 3
-            if arch == "hc":
+            if arch in ("hc", "hc_pos"):
                 hyp = tuple(HyperParams(rnd(h.read, .3), rnd(h.res, .3), rnd(h.write, .3), rnd(h.w_read, .5), rnd(h.w_res, .5), rnd(h.w_write, .5), hax.named(jnp.asarray([0.7, 0.4]), h.scale.axes)) for h in lay0.hyper)
             else:
                 hyp = tuple(MhcParams(rnd(h.phi, .2), rnd(h.bias, 1.0), hax.named(jnp.asarray([0.7, 0.4, 0.9]), h.gain.axes)) for h in lay0.hyper)
@@ -257,13 +262,13 @@ if PART == "main":
             for j in range(2):
                 p = hyp[j]
                 k_sub = 2 + j
-                if arch == "hc":
+                if arch in ("hc", "hc_pos"):
                     Hn = Hr / np.sqrt(np.mean(Hr ** 2, axis=-1, keepdims=True) + 1e-6)
                     dr, dres, dw = np.einsum("sbtd,d->bts", Hn, p.w_read.array), np.einsum("sbtd,do->btso", Hn, p.w_res.array), np.einsum("sbtd,d->bts", Hn, p.w_write.array)
                     hot = (np.arange(m_) == k_sub % m_).astype(np.float64)
                     r = hot + p.read.array + 0.7 * np.tanh(dr)
                     A = np.eye(m_) + p.res.array + 0.7 * np.tanh(dres)  # (b, t, in, out)
-                    w = 1 + p.write.array + 0.4 * np.tanh(dw)
+                    w = 1 + p.write.array + 0.4 * np.tanh(dw) if arch == "hc" else 2 / (1 + np.exp(-(p.write.array + 0.4 * np.tanh(dw))))
                     x = np.einsum("bts,sbtd->btd", r, Hr)
                     f = arr(lay.branch(j, hax.named(jnp.asarray(x, jnp.float32), (Batch, Pos, E48)), ex.attn_mask, key=None, pos_ids=None), (Batch, Pos, E48))
                     Hr = np.einsum("btso,sbtd->obtd", A, Hr) + np.einsum("bto,btd->obtd", w, f)
@@ -300,12 +305,12 @@ if PART == "main":
         # 8. optimizer labels
         from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig  # noqa: E402
         from levanter.optim.muonh import MuonHConfig  # noqa: E402
-        for arch in ("hc", "mhc", "attnres"):
+        for arch in ("hc", "mhc", "attnres", "hc_pos"):
             mdl = model(arch)
             lab = DepthArchMuonHConfig().create_mask(mdl)
             base_lab = MuonHConfig().create_mask(mdl)
             st, lb, bb = mdl.transformer.layers.stacked, lab.transformer.layers.stacked, base_lab.transformer.layers.stacked
-            new_leaves = jax.tree.leaves(lb.hyper) if arch in ("hc", "mhc") else jax.tree.leaves((lb.query, lb.key_gain, lab.transformer.final_query, lab.transformer.final_key_gain))
+            new_leaves = jax.tree.leaves(lb.hyper) if arch in ("hc", "mhc", "hc_pos") else jax.tree.leaves((lb.query, lb.key_gain, lab.transformer.final_query, lab.transformer.final_key_gain))
             assert new_leaves and all(x == "adam_new" for x in new_leaves), new_leaves
             same = [(a, b) for a, b in zip(jax.tree.leaves((lab.embeddings, lab.lm_head, lab.aux_lm_heads, lab.aux_norms, lb.self_attn, lb.mlp, lb.ln_1, lb.ln_2)), jax.tree.leaves((base_lab.embeddings, base_lab.lm_head, base_lab.aux_lm_heads, base_lab.aux_norms, bb.self_attn, bb.mlp, bb.ln_1, bb.ln_2)))]
             assert all(a == b for a, b in same) and {a for a, _ in same} == {"adam", "adamh", "muonh"}, set(a for a, _ in same)
@@ -475,7 +480,7 @@ if PART == "prod":
     seg9 = np.cumsum(np.roll(tok9, 1, axis=1) == 1, axis=1).astype(np.int32); seg9[:, 0] = 0
     ex9 = LmExample(tokens=hax.named(jnp.asarray(tok9, jnp.int32), (Axis("batch", 2), Pos9)), loss_weight=hax.named(jnp.ones((2, T9)), (Axis("batch", 2), Pos9)),
                     attn_mask=AttentionMask.causal().with_segment_ids(hax.named(jnp.asarray(seg9), (Axis("batch", 2), Pos9))))
-    for arch in ("hc", "mhc", "attnres", "attnres_block", "moda"):
+    for arch in ("hc", "mhc", "attnres", "attnres_block", "moda", "hc_pos"):
         cfg9 = PerLayerQwen3Config(max_seq_len=T9, hidden_dim=128, intermediate_dim=448, num_layers=L48, num_heads=2, num_kv_heads=2, hybrid_norm=True, attn_backend=AttentionBackend.VANILLA,
                                    pls_weight=1.0, pls_separate_heads=True, depth_arch=arch, scan_layers=False, moda_chunk=32)
         m9 = PerLayerQwen3LMHeadModel.init(Vocab, cfg9, key=key0)
@@ -498,7 +503,7 @@ if PART == "prod":
             first = float(loss9) if first is None else first
             upd, st9 = opt.update(g9, st9, eqx.filter(m9, eqx.is_inexact_array))
             stk = upd.transformer.layers.stacked
-            new = stk.hyper if arch in ("hc", "mhc") else ((stk.query, stk.key_gain) if arch.startswith("attnres") else None)
+            new = stk.hyper if arch in ("hc", "mhc", "hc_pos") else ((stk.query, stk.key_gain) if arch.startswith("attnres") else None)
             if new is not None:
                 worst = max(worst, max(float(jnp.max(jnp.abs(x.array if isinstance(x, hax.NamedArray) else x))) for x in jax.tree.leaves(new, is_leaf=lambda z: isinstance(z, hax.NamedArray))))
             m9 = eqx.apply_updates(m9, upd)

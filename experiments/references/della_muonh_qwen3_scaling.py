@@ -182,7 +182,7 @@ if PARAM_MAP:
 # the same 32 sequences per GPU as 32 accumulated microbatches; the gradient differs only in summation order, and a run
 # resumes from a checkpoint saved at another microbatch unchanged. Set in code because the queued jobs' environments were
 # fixed at submit.
-PARAM_MAP_PDP1 = ("hc", "mhc", "attnres", "attnres_block", "moda")
+PARAM_MAP_PDP1 = ("hc", "mhc", "attnres", "attnres_block", "moda", "hc_pos")
 # RUN_TAG appends a literal suffix to the run id ONLY (output path and W&B name); it changes nothing about training.
 # Its purpose is determinism probes: two runs with the same SEED and different RUN_TAGs are the identical computation
 # under two names, so their difference measures the hardware/compiler nondeterminism floor.
@@ -406,9 +406,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
     # every other run, the baseline included, keeps MuonHConfig exactly.
-    if ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
+    if ARCH in ("hc", "mhc", "attnres", "attnres_block", "hc_pos") and PLS_OPT_SPLIT:
         from experiments.references.depth_arch_qwen3 import DepthArchSplitAuxMuonHConfig as _Opt
-    elif ARCH in ("hc", "mhc", "attnres", "attnres_block"):
+    elif ARCH in ("hc", "mhc", "attnres", "attnres_block", "hc_pos"):
         from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig as _Opt
     elif PLS_OPT_SPLIT and HEADS_FROM:
         raise ValueError("PLS_OPT_SPLIT with HEADS_FROM: the heads-only refit has its own optimizer")

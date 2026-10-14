@@ -27,7 +27,10 @@ and mhc, j = 0 attention, 1 MLP), L the number of layers, RN an RMSNorm with a l
                    then column and row normalisation, 20 rounds ending on columns, eps 1e-6). Bias init: read +8 on
                    stream k mod m and -8 elsewhere, write 0, residual 0 on the diagonal and -8 off it. Routing
                    and mixing in float32
-    hc, mhc        the attention output and MLP down projections are scaled by 1/sqrt(m) at init
+    hc_pos         hc with every write kept positive, w = 2 sigmoid(offset + s * tanh(RMS(H_s) W)) (1 at init, as hc), the
+                   write form of mhc; read and mixing as hc. A zero-sum write (invisible to the readouts, which see the
+                   sum of the streams) is then impossible (pls hidden-write test, 2026-10-14)
+    hc, mhc        the attention output and MLP down projections are scaled by 1/sqrt(m) at init (hc_pos as hc)
     attnres        every sublayer's input is a softmax mix of the embedding and all earlier sublayer outputs,
                    sum_i softmax_i(q . (g * RMS(v_i))) v_i with a learned pseudo-query q (init 0, a uniform mean) and a
                    key gain g (init 1) per sublayer, and a final pair for the head
@@ -80,9 +83,9 @@ from levanter.optim.config import OptimizerConfig
 from levanter.optim.muonh import MuonHConfig, scale_by_adamh, scale_with_muonh
 from levanter.utils.jax_utils import leaf_key_paths
 
-ARCHS = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc", "attnres", "attnres_block", "moda")
+ARCHS = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc", "attnres", "attnres_block", "moda", "hc_pos")
 _POST = ("sandwich", "deepnorm", "keel")
-SCANNED = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc")  # fixed-size state: one compiled layer
+SCANNED = ("preln", "sandwich", "lns", "deepnorm", "keel", "hc", "mhc", "hc_pos")  # fixed-size state: one compiled layer
 MHC_READ_BIAS, MHC_RES_OFF_DIAGONAL = 8.0, -8.0  # DepthBench's "0/-8 gap-8" init
 
 
@@ -196,12 +199,12 @@ class DepthArchLayer(eqx.Module):
             attn = eqx.tree_at(lambda a: (a.v_proj, a.o_proj), attn, (scale(attn.v_proj, b), scale(attn.o_proj, b)))
             mlp = eqx.tree_at(lambda f: (f.gate_proj, f.up_proj, f.down_proj), mlp, (scale(mlp.gate_proj, b), scale(mlp.up_proj, b), scale(mlp.down_proj, b)))
         hyper = None
-        if arch in ("hc", "mhc"):
+        if arch in ("hc", "mhc", "hc_pos"):
             m = cast(Any, config).hc_streams
             b = 1.0 / math.sqrt(m)
             attn = eqx.tree_at(lambda a: a.o_proj, attn, scale(attn.o_proj, b))
             mlp = eqx.tree_at(lambda f: f.down_proj, mlp, scale(mlp.down_proj, b))
-            hyper = tuple((HyperParams if arch == "hc" else MhcParams).init(config.Embed, m) for _ in range(2))
+            hyper = tuple((MhcParams if arch == "mhc" else HyperParams).init(config.Embed, m) for _ in range(2))
         if arch == "deepnorm":
             post = tuple(hnn.LayerNorm.init(config.Embed, eps=config.layer_norm_epsilon, use_weight=True, use_bias=False) for _ in range(2))
         elif arch in _POST:
@@ -277,7 +280,10 @@ class DepthArchLayer(eqx.Module):
             d_write = hax.dot(Hn, f32(p.w_write), axis=Embed).rename({"stream": "stream_out"})
             read = c_read + f32(p.read) + s_rr * hax.tanh(d_read)
             res = c_res + f32(p.res) + s_rr * hax.tanh(d_res)
-            write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
+            if self.arch == "hc_pos":  # writes kept positive as in mHC: 2 sigmoid(offset + dynamic part), 1 at init like hc
+                write = 2.0 * hax.nn.sigmoid(f32(p.write) + s_w * hax.tanh(d_write))
+            else:
+                write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
@@ -433,7 +439,7 @@ class DepthArchTransformer(eqx.Module):
         cfg, arch, L = self.config, self.arch, self.config.num_layers
         if arch in SCANNED:
             skeys = maybe_rng_split(key, L) if key is not None else None
-            if arch in ("hc", "mhc"):
+            if arch in ("hc", "mhc", "hc_pos"):
                 m = cast(Any, cfg).hc_streams
 
                 def hstep(layer, H, i, *, key):
