@@ -66,8 +66,8 @@ from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
-from experiments.references.table_variants_qwen3 import (ComposedResidualQwen3Config, FrozenOutQwen3Config, LowRankQwen3Config,
-                                                         RareTargetMaskQwen3Config)
+from experiments.references.table_variants_qwen3 import (ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
+                                                         LowRankQwen3Config, RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
 from experiments.references.over_vocab_qwen3 import OverVocabQwen3Config
@@ -267,6 +267,10 @@ RM_MODE = os.environ.get("RM_MODE", "loss")
 if RM_MODE not in ("loss", "freeze", "drop"):
     raise ValueError(f"RM_MODE={RM_MODE!r}: loss, freeze or drop")
 CV_RES_SCALE = float(os.environ.get("CV_RES_SCALE", "0.1"))
+# VARIANT=cvd (owner, 2026-10-13; Q10 rescue C): the baseline's own input table; in training, a rare input token's row is
+# replaced with probability CVD_P by the mean of its CV_K-token pieces' rows (ComposedDropoutQwen3Config); evaluation uses
+# the own rows. Tag -cvd<K/1000>k-p<CVD_P>.
+CVD_P = float(os.environ.get("CVD_P", "0.5"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
 if PASS_DATA and not (PASS_DATA == "rs" or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
@@ -334,9 +338,9 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr") and VOCAB_K:
+if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -411,6 +415,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}" + {"loss": "", "freeze": "f", "drop": "d"}[RM_MODE]
     if VARIANT == "cvr":
         variant_tags += f"-cvin{CV_K // 1000}k-res{CV_RES_SCALE:g}"
+    if VARIANT == "cvd":
+        variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -522,6 +528,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError("VARIANT=cvr composes the input table only (CV_SIDE=in)")
         cv_map = f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz"
         model_cls, model_extra = ComposedResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=False, cv_res_scale=CV_RES_SCALE)
+    elif VARIANT == "cvd":
+        if TIE:
+            raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
+        model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", cvd_p=CVD_P, cvd_seed=SEED)
     elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
         model_cls, model_extra = OverVocabQwen3Config, dict(
