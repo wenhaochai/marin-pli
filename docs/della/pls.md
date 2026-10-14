@@ -368,6 +368,10 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    of that visible state -> full cost, L48 gap 0.08-0.12. NOT a blind test: a partial MoDA gap (0.097 against Sandwich-LN
    0.089 at the same step) was seen on 2026-10-13. The theory is post hoc on all 8 designs; its blind tests are the
    mechanism measurement below and a causal run.
+   MoDA result (15341589 COMPLETED 2026-10-14 10:16): L48 train separate heads 3.051, probes 2.948, gap .103 -> inside
+   0.08-0.12, as predicted (not blind). Its gap curve has the single-stream shape; its probes model ends 3rd lowest at L48
+   (mHC 2.922, HC 2.944, MoDA 2.948, AttnRes (Block) 2.953). Page v62 / site 44cfd0e: Figs 7, 9, 10 complete; MoDA bar
+   (grey, one residual stream) added to Fig 11.
    Mechanism test on existing checkpoints (scripts/della/pls_hc_hidden_cpu.py): HC separate heads should hold more of its
    state in the zero-sum stream part than HC probes; mHC little in either, and its static writes all positive.
    Mechanism test result (job 15534022, 2 x 512 c4 tokens): the state-level prediction FAILS. Zero-sum share of the
