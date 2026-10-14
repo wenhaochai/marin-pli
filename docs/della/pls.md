@@ -344,6 +344,9 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    model is weaker than AttnRes (Block)'s. Its probe readouts jump between 3.3 and 7.8 nats from layer 17 on (the mixes
    need not carry next-token information), so on the page it has its own y range in Figure 7 and stays out of Figures
    8-9. MoDA, HC, mHC training (MoDA resumes at step 3730 in 15341589).
+   Hyper-Connections finished (2026-10-13 23:41, job 15341054): L48 train sep/probes 2.992/2.944 (+0.048, about half the
+   others), eval 3.704/3.615 (+0.089); both models lowest of all designs at layer 48; probes fall steeply between layers
+   11 and 17. Page Figures 7, 9, 10 and record (figure numbers moved up after the new Figure 8) updated.
    AttnRes (Full) instability (2026-10-13): of the 14 finished 48-layer runs, only AttnRes (Full) with probes (its
    ordinary model) has layer-48 loss spikes (11 events > 0.3 nats above the 101-step median, from step 630 on; all
    others 0). At step 2106 its last readout went from 3.41 to 8.32 in one step while the probe readouts below did not
