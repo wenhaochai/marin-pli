@@ -347,6 +347,9 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    Hyper-Connections finished (2026-10-13 23:41, job 15341054): L48 train sep/probes 2.992/2.944 (+0.048, about half the
    others), eval 3.704/3.615 (+0.089); both models lowest of all designs at layer 48; probes fall steeply between layers
    11 and 17. Page Figures 7, 9, 10 and record (figure numbers moved up after the new Figure 8) updated.
+   Same-depth reference (2026-10-14): the ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
+   of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
+   is a worse 12-layer model than a dedicated one, as every layer was at 6 layers. Figure 6 grey dots (d48ref.json).
    AttnRes (Full) instability (2026-10-13): of the 14 finished 48-layer runs, only AttnRes (Full) with probes (its
    ordinary model) has layer-48 loss spikes (11 events > 0.3 nats above the 101-step median, from step 630 on; all
    others 0). At step 2106 its last readout went from 3.41 to 8.32 in one step while the probe readouts below did not

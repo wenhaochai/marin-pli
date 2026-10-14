@@ -220,11 +220,19 @@ def panel48(arch, ys=(3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5)):
     if v48:   # the finished designs' axes, so every panel reads on one scale
         return dict(v48, yticks=[t for t in v48["yticks"] if t[0] in ys], marks=[], empty=STATUS48.get(arch, QUEUED))
     return empty_view(x48(arch), 2.9, 5.0, STATUS48.get(arch, QUEUED), ys=ys)
+# Ordinary models of 12, 24 and 36 layers (same recipe and tokens; owner popup 2026-10-11): grey dots at the backbone
+# compute of that depth, final training loss (d48ref.json, fetch_d48ref.py; finished runs only)
+LEG48 = [[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Probes only", "zh": "只加探针"}, RED, "line"]]
+REF48 = {int(k): v for k, v in json.loads((HERE / "d48ref.json").read_text()).items()} if (HERE / "d48ref.json").exists() else {}
+p48 = panel48("")
+if REF48 and p48.get("marks") is not None and not p48.get("empty"):
+    xr = x48("")
+    p48 = dict(p48, marks=p48["marks"] + [dots(pts([xr[d - 1] for d in sorted(REF48)], [REF48[d]["train"] for d in sorted(REF48)]), GREY)])
 figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers of width 512", "zh": "按层的最终训练损失，48 层、宽 512 的网络"},
-                       legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"], [{"en": "Probes only", "zh": "只加探针"}, RED, "line"]],
-                       quantity=CE, xlabel=XL, height=320, panels=[panel48("")])
+                       legend=LEG48 + ([[{"en": "Ordinary models by depth", "zh": "各深度的普通模型"}, GREY, "dot"]] if REF48 else []),
+                       quantity=CE, xlabel=XL, height=320, panels=[p48])
 figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and architecture, 48 layers of width 512", "zh": "按层和架构的最终训练损失，48 层、宽 512 的网络"},
-                            legend=figs["fig-d48"]["legend"],
+                            legend=LEG48,
                             quantity=CE, xlabel=XL, height=200, cols=1,   # one column, each panel the full 640 canvas (owner, 2026-10-11: three columns too small; trying one)
                             panels=[dict(**panel48(k, ys=(3, 3.5, 4, 5)), label={"en": n, "zh": n}) for k, n in ARCH])
 
