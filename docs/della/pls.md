@@ -357,6 +357,10 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    Declined by the owner (2026-10-13, via the terminal session): a 48-layer ordinary Sandwich-LN model without probes
    (the shared clip group check), a Sandwich-LN 48-layer seed 1 pair, an AttnRes (Full) probes run with a stabilized head
    softmax, and a second width-depth shape. Do not propose them again unless the results call for it.
+   MTP and every layer (owner 2026-10-13, DeepSeek-V3 form; page question h-mtp, placeholder fig-mtp): branch pls-mtp
+   (worktree marin-pls-mtp, 2cb07e35f4): PLS_MTP_W (one DeepSeek-V3 MTP module on the last layer predicting x_{t+2})
+   and PLS_FUT (detached probes on x_{t+2} at every layer), CPU tests scripts/della/pls_mtp_cpu_test.py. Pair job
+   15523669: 130m, NTP vs NTP + MTP 0.3, both with x_{t+1} probes (PLS_OPT_SPLIT=1) and x_{t+2} probes.
    Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
    4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
    so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).

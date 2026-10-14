@@ -336,6 +336,19 @@ SETS10 = [(HF["-pls1-sep"]["eval"], BLUE3), (HF["-pls1-sep-headft2000"]["eval"],
 marks10 = sum(([line(pchip(x3, np.array(y, float)), c), dots(pts(x3, y), c)] for y, c in SETS10), [])
 v10 = view(np.tile(x3, len(SETS10)), np.concatenate([np.array(y, float) for y, _ in SETS10]), endpoints_only=True)
 v10["yticks"] = [[a, f"{a:g}"] for a in (3.5, 4, 4.5, 5, 6, 7) if v10["ylim"][0] <= a <= v10["ylim"][1]]
+# Last figure (placeholder; owner popup 2026-10-13, DeepSeek-V3 form): MTP and every layer. 130m, 6 layers, one pair job
+# (15523669, branch pls-mtp): NTP and NTP + one DeepSeek-V3 MTP module (weight 0.3), both with detached probes on every
+# layer for x_{t+1} and for x_{t+2}. Panels: final probe loss by layer for each target; the ordinary models by depth as
+# grey dots on the x_{t+1} panel. Filled once the two runs finish.
+MTP_STATUS = QUEUED
+MTPC = "#1E8E3E"   # GM2 green 600: NTP + MTP (red stays the probes of the ordinary NTP model, as on the rest of the page)
+figs["fig-mtp"] = dict(title={"en": "Final probe loss by layer, NTP and MTP, 130m", "zh": "按层的探针最终损失，NTP 与 MTP，130m"},
+                       legend=[[{"en": "NTP", "zh": "NTP"}, RED, "line"], [{"en": "NTP + MTP", "zh": "NTP + MTP"}, MTPC, "line"],
+                               [{"en": "Ordinary models by depth", "zh": "各深度的普通模型"}, GREY, "dot"]],
+                       quantity=CE, xlabel=XL, height=220, cols=1,
+                       panels=[dict(**empty_view(x6, 2.9, 10, MTP_STATUS, ys=(3, 4, 5, 6, 8)), label=lab)
+                               for lab in ({"en": "Probes for the next token", "zh": "预测下一个词的探针"}, {"en": "Probes for the token after next", "zh": "预测下下个词的探针"})])
+
 figs["fig-headft"] = dict(title={"en": "Per-layer loss before and after retraining the heads, 300m", "zh": "重训读出头前后的逐层损失，300m"},
                           legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE3, "line"], [{"en": "Separate heads, heads retrained", "zh": "独立头，重训读出头"}, BLUE7, "line"],
                                   [{"en": "Probes only", "zh": "只加探针"}, RED3, "line"], [{"en": "Probes only, heads retrained", "zh": "只加探针，重训读出头"}, RED, "line"]],
