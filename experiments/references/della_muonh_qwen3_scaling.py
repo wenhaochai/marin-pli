@@ -255,6 +255,9 @@ LR_RANK = int(os.environ.get("LR_RANK", "48"))
 # of the tokens outside the FO_K truncation (specials excluded) from pass FOP_FROM_PASS of 8 on, i.e. from update
 # round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too (freeze_rows_muonh.py). Run tag -fop<FO_K/1000>kp<pass>.
 FOP_FROM_PASS = int(os.environ.get("FOP_FROM_PASS", "2"))
+# FOP_BLOCK_NORM=1 (2026-10-13 review): AdamH's norm-preserving head step on the kept rows alone after the freeze, so they
+# keep about their baseline rate instead of ~4x (freeze_rows_muonh.py, freeze_block_norm); run tag suffix b.
+FOP_BLOCK_NORM = os.environ.get("FOP_BLOCK_NORM", "0") == "1"
 RM_K = int(os.environ.get("RM_K", "8000"))
 RM_FROM_PASS = int(os.environ.get("RM_FROM_PASS", "5"))
 RM_MODE = os.environ.get("RM_MODE", "loss")
@@ -396,7 +399,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "fo":
         variant_tags += f"-fo{FO_K // 1000}k"
     if VARIANT == "fop":
-        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}"
+        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}" + ("b" if FOP_BLOCK_NORM else "")
     if VARIANT == "lr":
         variant_tags += f"-lr{LR_RANK}"
     if VARIANT == "rm":
@@ -547,7 +550,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         raise ValueError(f"FOP_FROM_PASS={FOP_FROM_PASS}: the rows learn during pass 1, so 2 or later")
     opt_cls, opt_extra = MuonHConfig, {}
     if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
-        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1))
+        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
+                                                         freeze_block_norm=FOP_BLOCK_NORM)
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
