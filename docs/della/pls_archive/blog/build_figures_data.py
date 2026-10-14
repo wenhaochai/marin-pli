@@ -250,6 +250,29 @@ figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design
                            panels=[dict(xlim=[-3, 49], ylim=[2.75, 5.85], xticks=LX, yticks=lin_ticks(3.0, 5.5, 0.5), label=lab,
                                         marks=[line(pts(k48, done48[a][j]), DCOL[a], 1.8) for a, _ in drawn])
                                    for j, lab in ((0, {"en": "Separate heads", "zh": "独立头"}), (1, {"en": "Probes only", "zh": "只加探针"}))])
+# Figure 8 (placeholder for seed 1; owner popup 2026-10-13): AttnRes (Full), layer-48 training loss by step, separate heads
+# and probes, one panel per init seed. With seed 0 the probes run's last readout jumped from 3.41 to 8.32 at step 2106
+# (the head's depth softmax collapsed: grad/norm/transformer.final_query 0.12 -> 3.8e-07) and came back over ~1000 steps;
+# seed 1 (SEED=1, data order unchanged; jobs 15520124-26) tests whether the design's missing last-layer cost comes from it.
+# Mean of 20 steps, from step 100. Seed 1 is drawn once fetch_d48g4.py has its complete runs in d48g4.npz.
+SEED1_STATUS = QUEUED
+def seed_panel(sfx, word, label):
+    tags = [f"-sep{b}-aattnres-vs-d48{sfx}-g4" for b in ("", "-bbfrozen")]
+    if not all(t + "/ce" in G4 for t in tags):
+        return dict(SV, marks=[], empty=word, label=label)
+    marks = []
+    for t, c in zip(tags, (BLUE7, RED)):
+        st, ce = G4[t + "/step"], G4[t + "/ce"][:, -1]; m = st >= 100
+        xs, y = smooth(st[m], ce[m], 20); idx = np.unique(np.linspace(0, len(xs) - 1, 400).astype(int))
+        marks.append(line(pts(xs[idx], y[idx]), c, 1.4))
+    return dict(SV, marks=marks, label=label)
+SV = dict(ylog=True, yoff=YOFF, xlim=[0, 5100], ylim=[2.9, 16], xticks=[[v, f"{v:,}"] for v in range(0, 5001, 1000)],
+          yticks=[[a, f"{a:g}"] for a in (3, 3.5, 4, 5, 6, 8)])
+figs["fig-attnres-seed"] = dict(title={"en": "AttnRes (Full) layer-48 training loss by init seed, 48 layers", "zh": "AttnRes (Full) 第 48 层的训练损失，按初始化种子，48 层"},
+                                legend=figs["fig-d48"]["legend"], quantity={"en": "Training loss (nats, log scale)", "zh": "训练损失（nats，对数坐标）"},
+                                xlabel={"en": "Step", "zh": "步数"}, height=200, cols=1,
+                                panels=[seed_panel("", None, {"en": "Seed 0", "zh": "种子 0"}), seed_panel("-s1", SEED1_STATUS, {"en": "Seed 1", "zh": "种子 1"})])
+
 for a, n in drawn:
     print("fig-d48-gap", n, "min", round(float(gaps[a].min()), 3), "L48", round(float(gaps[a][-1]), 3))
 

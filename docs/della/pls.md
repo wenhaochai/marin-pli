@@ -344,6 +344,16 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    model is weaker than AttnRes (Block)'s. Its probe readouts jump between 3.3 and 7.8 nats from layer 17 on (the mixes
    need not carry next-token information), so on the page it has its own y range in Figure 7 and stays out of Figures
    8-9. MoDA, HC, mHC training (MoDA resumes at step 3730 in 15341589).
+   AttnRes (Full) instability (2026-10-13): of the 14 finished 48-layer runs, only AttnRes (Full) with probes (its
+   ordinary model) has layer-48 loss spikes (11 events > 0.3 nats above the 101-step median, from step 630 on; all
+   others 0). At step 2106 its last readout went from 3.41 to 8.32 in one step while the probe readouts below did not
+   move: the head's depth softmax saturated (grad/norm/transformer.final_query 0.12 -> 3.8e-07, back by step 2300), and
+   the run took ~1000 steps to recover. Not at a resume (resumes at 2308, 4632). Before it, the gap (sep - probes, L48
+   train) was +0.00..+0.03 (other designs +0.03..+0.07 at the same steps) and the ordinary model was level with AttnRes
+   (Block)'s (3.438 vs 3.452 at step 2000). The separate-heads run never spikes. So the missing last-layer cost is at
+   least partly the ordinary run's spikes. Test (owner popup 2026-10-13): seed 1 (SEED=1, data order unchanged) pair
+   scripts/della/pls_d48_g4_attnres_seed1.sh, jobs 15520124-26; page Figure 8 placeholder (fig-attnres-seed).
+   Script: docs/della/pls_archive/status/attnres_params.py (param and grad norms from W&B).
    Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
    4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
    so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).
