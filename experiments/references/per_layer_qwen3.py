@@ -30,6 +30,16 @@ first and separate heads after. Probe (``pls_probe``, diagnostic runs): every tr
 each intermediate loss's gradient and the final loss's gradient on the trunk they share, their norm ratio, and every
 readout's in-context score (late-position minus early-position CE), all stop-gradient: the candidate signals for a
 metric-driven schedule.
+
+Multi-token prediction (``pls_mtp_weight`` > 0): one DeepSeek-V3 MTP module (depth 1; DeepSeek-AI 2024, sec. 2.2) on the
+final layer. At position t it takes the last layer's pre-norm output h_t and the shared embedding of x_{t+1},
+x' = W [RMSNorm(h_t); RMSNorm(Emb(x_{t+1}))] (W: 2d -> d), runs one more decoder layer of the trunk's design (causal over the
+positions, the same attention mask), applies its own RMSNorm and decodes with the shared lm_head to predict x_{t+2}; the
+loss adds pls_mtp_weight times that CE. The embedding and the lm_head are shared, so the MTP loss trains them and the trunk.
+Future probes (``pls_future_probes``): every layer k (the last included) gets a detached readout of its own (RMSNorm +
+vocab head, ``fut_norms`` / ``fut_lm_heads``) trained on x_{t+2}; no gradient reaches the backbone. Targets x_{t+2} are
+masked where t+2 leaves the window or crosses a document boundary (segment ids); the weight is the baseline's loss
+weight at t+1, as for the objective-hillclimb MTP (objective_qwen3._mtp_loss).
 """
 
 import dataclasses
@@ -62,6 +72,8 @@ from levanter.eval import EvalResult, TaggedEvaluator, _ensure_named_lm_example,
 from levanter.metrics import Metric, ReductionType
 from levanter.models.lm_model import LmConfig, LmExample
 from levanter.models.loss import fused_cross_entropy_loss_and_logsumexp_penalty, maybe_fused_next_token_loss, next_token_loss_weight
+from levanter.layers.attention import AttentionMask
+from levanter.models.llama import LlamaDecoderLayer
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.optim.config import OptimizerConfig
 from levanter.optim.muonh import MuonHConfig, scale_by_adamh, scale_with_muonh
@@ -115,7 +127,7 @@ class HeadsOnlyMuonHConfig(MuonHConfig):
         return jax.tree_util.tree_map(lambda label, path: label if _is_head_path(path) else "frozen", base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
 
 
-_AUX_PATHS = ("aux_lm_heads", "aux_norms")  # the intermediate readouts' own parameters (separate heads)
+_AUX_PATHS = ("aux_lm_heads", "aux_norms", "fut_lm_heads", "fut_norms")  # the readouts' own parameters (separate heads, future probes)
 
 
 @OptimizerConfig.register_subclass("muonH_pls_split")
@@ -233,6 +245,10 @@ class PerLayerQwen3Config(Qwen3Config):
     hc_streams: int = 4  # hc, mhc: residual streams
     attnres_blocks: int = 8  # attnres_block: blocks
     moda_chunk: int = 1024  # moda: query positions per attention chunk
+    # Multi-token prediction: weight of one DeepSeek-V3 MTP module's loss on x_{t+2} (module docstring); 0 = none.
+    pls_mtp_weight: float = 0.0
+    # Future probes: a detached readout per layer (the last included) trained on x_{t+2}; the backbone never sees them.
+    pls_future_probes: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -272,6 +288,10 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("pls_on_start without pls_on_end")
         if self.pls_on_end and (not self.pls_separate_heads or self.pls_detach_backbone or self.pls_local_heads or self.pls_heads_only or self.pls_off_end or self.pls_pcgrad or self.pls_probe):
             raise ValueError("a late start needs pls_separate_heads, without pls_detach_backbone, pls_local_heads, pls_heads_only, pls_off_*, pls_pcgrad or pls_probe")
+        if self.pls_mtp_weight < 0:
+            raise ValueError(f"pls_mtp_weight must be >= 0, got {self.pls_mtp_weight}")
+        if (self.pls_mtp_weight > 0 or self.pls_future_probes) and (self.depth_arch != "baseline" or self.pls_local_heads or self.pls_heads_only or self.pls_probe or self.pls_off_end or self.pls_on_end or self.pls_pcgrad):
+            raise ValueError("pls_mtp_weight and pls_future_probes run on the baseline transformer, without pls_local_heads, pls_heads_only, pls_probe, a weight schedule, a late start or pls_pcgrad")
         half = self.max_seq_len // 2
         a, b = self.pls_probe_early
         if self.pls_probe and (half % self.pls_monitor_stride or not 0 <= a < b <= half):
@@ -293,6 +313,11 @@ class PerLayerQwen3Config(Qwen3Config):
         if self.pls_local_heads:  # the recompute of layers 0..L-2: their share of the base backbone
             backbone = base - 2 * self.hidden_dim * vocab_size
             extra += backbone * (self.num_layers - 1) / self.num_layers
+        backbone = base - 2 * self.hidden_dim * vocab_size
+        if self.pls_future_probes:  # one more readout per layer
+            extra += self.num_layers * 2 * self.hidden_dim * vocab_size
+        if self.pls_mtp_weight > 0:  # one more decoder layer, the 2d -> d projection and one more lm_head matmul
+            extra += backbone / self.num_layers + 2 * 2 * self.hidden_dim * self.hidden_dim + 2 * self.hidden_dim * vocab_size
         if self.pls_heads_only:  # the backbone runs forward only: 1 of the 3 forward-equivalents a trained part costs
             backbone = base - 2 * self.hidden_dim * vocab_size
             return backbone / 3 + 2 * self.hidden_dim * vocab_size + extra
@@ -340,9 +365,49 @@ def _every(x: NamedArray, axis_name: str, stride: int, start: int) -> NamedArray
     return x.unflatten_axis(ax, (hax.Axis("pls_chunk", ax.size // stride), hax.Axis("pls_stride", stride)))["pls_stride", 0]
 
 
+def _segment_ids(example: LmExample) -> Optional[NamedArray]:
+    mask = example.attn_mask
+    if not isinstance(mask, AttentionMask) or mask.segment_ids is None:
+        return None
+    return mask.segment_ids[0]
+
+
+class MtpModule(eqx.Module):
+    """One DeepSeek-V3 MTP module (depth 1): x' = proj [hnorm(h_t); enorm(Emb(x_{t+1}))], one decoder layer of the trunk's
+    design, then its own RMSNorm; the caller decodes the result with the shared lm_head."""
+
+    hnorm: hnn.RmsNorm
+    enorm: hnn.RmsNorm
+    proj: hnn.Linear  # mtp_cat (2 x hidden) -> embed
+    block: LlamaDecoderLayer
+    norm: hnn.RmsNorm
+
+    @staticmethod
+    def init(config: "PerLayerQwen3Config", *, key) -> "MtpModule":
+        k_p, k_b = jrandom.split(key)
+        Cat = hax.Axis("mtp_cat", 2 * config.Embed.size)
+        return MtpModule(
+            config.mk_LayerNorm(config.Embed),
+            config.mk_LayerNorm(config.Embed),
+            hnn.Linear.init(In=Cat, Out=config.Embed, key=k_p, use_bias=False, out_first=True),
+            LlamaDecoderLayer.init(config, key=k_b),
+            config.mk_LayerNorm(config.Embed),
+        )
+
+    def __call__(self, h: NamedArray, e_next: NamedArray, mask, *, key=None) -> NamedArray:
+        Embed = h.resolve_axis("embed")
+        x = hax.concatenate("mtp_cat", [self.hnorm(h).rename({Embed.name: "mtp_cat"}), self.enorm(e_next).rename({Embed.name: "mtp_cat"})])
+        x = self.proj(x)
+        x = self.block(x, mask, key=key, pos_ids=None)
+        return self.norm(x)
+
+
 class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
     aux_norms: Optional[tuple] = None  # pls_separate_heads: one RMSNorm per intermediate layer
     aux_lm_heads: Optional[tuple] = None  # pls_separate_heads: one Embed -> Vocab head per intermediate layer
+    mtp: Optional[MtpModule] = None  # pls_mtp_weight > 0: the MTP module
+    fut_norms: Optional[tuple] = None  # pls_future_probes: one RMSNorm per layer
+    fut_lm_heads: Optional[tuple] = None  # pls_future_probes: one Embed -> Vocab head per layer, predicting x_{t+2}
 
     @classmethod
     def init(cls, Vocab, config: PerLayerQwen3Config, *, key):  # type: ignore[override]
@@ -358,7 +423,14 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             from experiments.references.depth_arch_qwen3 import DepthArchTransformer
 
             transformer = DepthArchTransformer.init(config, config.depth_arch, key=jrandom.fold_in(key, 0xD7))
-        return cls(transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads)
+        # Own key streams again, so every parameter above stays byte-identical with these off.
+        mtp = MtpModule.init(config, key=jrandom.fold_in(key, 0x3A)) if config.pls_mtp_weight > 0 else None
+        fut_norms = fut_lm_heads = None
+        if config.pls_future_probes:
+            keys = jrandom.split(jrandom.fold_in(key, 0xF2), config.num_layers)
+            fut_norms = tuple(config.mk_LayerNorm(config.Embed) for _ in range(config.num_layers))
+            fut_lm_heads = tuple(hnn.Linear.init(In=config.Embed, Out=Vocab, key=k, use_bias=False, out_first=True) for k in keys)
+        return cls(transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads, mtp, fut_norms, fut_lm_heads)
 
     def _shape(self, k: int) -> float:
         """Layer k's share of pls_weight (pls_weight_shape)."""
@@ -452,6 +524,35 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         return maybe_fused_next_token_loss(
             self.Pos, self.Embed, self.Vocab, self._layer(outs, k, detach_head=detach_head, detach_input=detach_input), lm_head, example.tokens, loss_weight=example.loss_weight, **kw
         )
+
+    def _skip_targets(self, example: LmExample) -> tuple[NamedArray, NamedArray]:
+        """(ids, weight) for predicting x_{t+2} at position t with the fused next-token kernel, which shifts its targets
+        by one: ids = tokens rolled by -1; weight = the baseline's loss weight at t+1, 0 where t+2 leaves the window or
+        lies in another document."""
+        Pos = example.tokens.resolve_axis(self.Pos.name)
+        batch_axes = tuple(ax for ax in example.tokens.axes if ax.name != Pos.name)
+        position = hax.arange(Pos).broadcast_axis(batch_axes)
+        base = example.loss_weight if example.loss_weight is not None else hax.ones(example.tokens.axes, dtype=jnp.float32)
+        weight = hax.roll(base, -1, Pos) * (position + 2 <= Pos.size - 1).astype(base.dtype)
+        seg = _segment_ids(example)
+        if seg is not None:
+            weight = weight * (seg == hax.roll(seg, -2, Pos)).astype(weight.dtype)
+        return hax.roll(example.tokens, -1, Pos), weight
+
+    def _mtp_ce(self, outs: NamedArray, example: LmExample, *, key, **kw) -> NamedArray:
+        """CE of the MTP module's prediction of x_{t+2} (shared embedding and lm_head)."""
+        Pos = example.tokens.resolve_axis(self.Pos.name)
+        h = outs[self.transformer.layers.Block.name, self.config.num_layers - 1]
+        e_next = self.embeddings.embed(hax.roll(example.tokens, -1, Pos))  # x_{t+1}; the wrapped last position is masked
+        pred = cast(MtpModule, self.mtp)(h, e_next, example.attn_mask, key=key)
+        ids, weight = self._skip_targets(example)
+        return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, pred, self.get_lm_head(), ids, loss_weight=weight, **kw)
+
+    def _future_ce(self, outs: NamedArray, k: int, example: LmExample, **kw) -> NamedArray:
+        """CE of layer k's future probe on x_{t+2}: its own norm and head on the stop-gradient layer output."""
+        h = cast(Any, self.fut_norms)[k](jax.lax.stop_gradient(outs[self.transformer.layers.Block.name, k]))
+        ids, weight = self._skip_targets(example)
+        return maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, h, cast(Any, self.fut_lm_heads)[k].weight, ids, loss_weight=weight, **kw)
 
     def _subset_ce(self, outs: NamedArray, k: int, example: LmExample, select, *, logit_soft_cap) -> jax.Array:
         """Stop-gradient CE of layer k's readout on the positions ``select`` keeps (targets x_{t+1}, the baseline's
@@ -613,6 +714,15 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             loss, per = jax.lax.cond(jnp.asarray(step) < cfg.pls_off_end, lambda: supervised(weight), monitored)
         values = {f"pls/L{k}": per[k] for k in range(L - 1)}
         values[f"pls/L{L - 1}"] = jnp.asarray(_scalar(final), jnp.float32)
+        if cfg.pls_mtp_weight > 0:  # own key stream: the layer keys above are unchanged
+            mtp = self._mtp_ce(outs, example, key=jrandom.fold_in(key, 0x3A), **kw)
+            loss = loss + mtp * cfg.pls_mtp_weight
+            values["pls/mtp"] = jnp.asarray(_scalar(mtp), jnp.float32)
+        if cfg.pls_future_probes:
+            for k in range(L):
+                ce = self._future_ce(outs, k, example, **kw)
+                loss = loss + ce
+                values[f"pls2/L{k}"] = jnp.asarray(_scalar(ce), jnp.float32)
         if weight is not None:
             values["pls/weight"] = weight
         if bb_gain is not None:

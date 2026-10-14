@@ -29,13 +29,13 @@
 # A training task with no first step after PAIR_FIRST_STEP_MIN (25) min or a silent log for PAIR_STALL_MIN (30) min is
 # stopped (a hung half must not hold 4 GPUs at 0%). Run ids come from CPU dry runs before any GPU task starts.
 set -euo pipefail   # every command that may fail below is written as `x=0; cmd || x=$?` or `|| true`
-cd /scratch/gpfs/GROUP/USER/project/marin-pls
+cd /scratch/gpfs/GROUP/USER/project/marin-pls-mtp   # the pls-mtp worktree (its code; the venv stays marin-pls's, pls_env.sh)
 source scripts/della/pls_env.sh
 PY=${PAIR_TEST_PY:-$PY}   # tests only: a stub in place of the launcher
 PT=/scratch/gpfs/GROUP/USER/tools/packed_task.sh
 LAUNCH=experiments.references.della_muonh_qwen3_scaling
 unset SMOKE_STEPS TOTAL_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN
-unset SIZE LAYERS ARCH PDP PLS_W PLS_DETACH PLS_SEP PLS_DETACH_BB PLS_LOCAL PLS_SHAPE PLS_PCGRAD PLS_OFF PLS_ON PLS_PROBE PLS_MON PLS_EVAL SEED RUN_TAG LR_MUL WARMUP HEADS_FROM PARAM_MAP PLS_SCAN_FIX PLS_OPT_SPLIT HEADS_WARMUP PATHS_SHARD PARAM_MAP_PDP PARAM_MAP_MEM_FRACTION
+unset SIZE LAYERS ARCH PDP PLS_W PLS_DETACH PLS_SEP PLS_DETACH_BB PLS_LOCAL PLS_SHAPE PLS_PCGRAD PLS_OFF PLS_ON PLS_PROBE PLS_MON PLS_EVAL SEED RUN_TAG LR_MUL WARMUP HEADS_FROM PARAM_MAP PLS_SCAN_FIX PLS_OPT_SPLIT HEADS_WARMUP PATHS_SHARD PARAM_MAP_PDP PARAM_MAP_MEM_FRACTION PLS_MTP_W PLS_FUT
 
 module load proxy/default 2>/dev/null || true  # wandb only
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}
