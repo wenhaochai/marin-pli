@@ -370,6 +370,14 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    mechanism measurement below and a causal run.
    Mechanism test on existing checkpoints (scripts/della/pls_hc_hidden_cpu.py): HC separate heads should hold more of its
    state in the zero-sum stream part than HC probes; mHC little in either, and its static writes all positive.
+   Mechanism test result (job 15534022, 2 x 512 c4 tokens): the state-level prediction FAILS. Zero-sum share of the
+   stream energy, mean over layers 1-47: HC separate heads 0.26, HC probes 0.59, mHC 0.35 / 0.36. HC's separate-heads model
+   keeps LESS of its state out of the readouts' sight, not more (high in layers 1-12, then about 0.05-0.15 from layer 13);
+   mHC is not low (unequal positive writes still put a zero-sum part in the streams). At the write level a narrower
+   version fits: sublayers whose static write is >80% zero-sum (nearly invisible): HC separate heads 10/96 (layers
+   4-14, 19), HC probes 1, mHC 0 and 0; negative write entries 14/96 vs 2/96, mHC 0 by construction. Post hoc again.
+   Next (job 15534928): remove the zero-sum part after layer c and measure the layer-48 CE rise (how much later layers
+   need what the readouts cannot see).
    Same-depth reference (2026-10-14): the ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
    is a worse 12-layer model than a dedicated one, as every layer was at 6 layers. Figure 6 grey dots (d48ref.json).
