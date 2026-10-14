@@ -385,6 +385,11 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    separate heads HC confines that use to layers 4-16, where its static zero-sum writes sit. mHC barely uses it. So the
    narrower claim survives: the design that both offers and uses readout-invisible storage pays half; the causal training
    test (HC with writes forced positive, mHC with signed writes) is the next step and needs the owner's approval.
+   Causal test submitted (owner popup 2026-10-14): ARCH=hc_pos on branch pls-hcpos (worktree marin-pls-hcpos), HC with
+   every write 2 sigmoid(offset + dynamic) > 0, identical to hc at init; 48-layer pair chain 15536266 -> 15536267.
+   Prediction: L48 train gap 0.048 -> about 0.10, and the ablation dependence drops toward mHC's. Page: new question
+   "Why does Hyper-Connections pay only half?" with Figure 11 (bars: layer-48 gap of the 5 single-stream designs, HC,
+   mHC, HC with positive writes queued); figures 11-15 became 12-16.
    Same-depth reference (2026-10-14): 24 layers done: train 3.057 / eval 3.753, layer 24 of the separate-heads model
    +0.07 / +0.10 above it, and it ends below that model's layer 48 (3.093 / 3.827). The ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12

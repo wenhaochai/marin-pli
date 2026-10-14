@@ -258,6 +258,23 @@ figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design
                            panels=[dict(xlim=[-3, 49], ylim=[2.75, 5.85], xticks=LX, yticks=lin_ticks(3.0, 5.5, 0.5), label=lab,
                                         marks=[line(pts(k48, done48[a][j]), DCOL[a], 1.8) for a, _ in drawn])
                                    for j, lab in ((0, {"en": "Separate heads", "zh": "独立头"}), (1, {"en": "Probes only", "zh": "只加探针"}))])
+# Figure 11 (placeholder; owner popup 2026-10-14): why HC pays about half. Layer-48 final training loss, separate heads minus
+# probes, for the five single-stream designs, HC, mHC and HC with writes kept positive (ARCH=hc_pos, branch pls-hcpos):
+# the causal test of the hidden-write account (docs/della/pls.md). Bars on a categorical axis; the hc_pos bar joins when
+# its pair finishes (its category label says Queued / Running until then).
+HCPOS_STATUS = QUEUED
+CYAN3 = "#78D9EC"   # GM2 cyan 300: HC with positive writes, beside HC's cyan 900
+WSET = [("", "Sandwich-LN", GREY), ("preln", "Pre-LN", GREY), ("lns", "LNS", GREY), ("deepnorm", "DeepNorm", GREY), ("keel", "KEEL", GREY),
+        ("hc", "HC", DCOL["hc"]), ("mhc", "mHC", DCOL["mhc"]), ("hc_pos", None, CYAN3)]
+wval = [round(float(done48[a][0][-1] - done48[a][1][-1]), 4) if a in done48 else None for a, _, _ in WSET]
+wcats = [{"en": n, "zh": n} if n else ({"en": "HC, w > 0", "zh": "HC，w > 0"} if a in done48 else HCPOS_STATUS) for a, n, _ in WSET]   # the legend names the colour
+figs["fig-hc-write"] = dict(title={"en": "Last-layer cost of separate heads by design, 48 layers", "zh": "各设计下独立头在最后一层的代价，48 层"},
+                            legend=[[{"en": "One residual stream", "zh": "单个残差流"}, GREY, "box"], [{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, DCOL["hc"], "box"],
+                                    [{"en": "mHC", "zh": "mHC"}, DCOL["mhc"], "box"], [{"en": "HC with positive writes", "zh": "写入为正的 HC"}, CYAN3, "box"]],
+                            quantity={"en": "Layer-48 training loss, separate heads minus probes (nats)", "zh": "第 48 层训练损失，独立头减只加探针（nats）"}, height=240,
+                            panels=[dict(xlim=[-0.6, len(WSET) - 0.4], ylim=[0, 0.15], yticks=lin_ticks(0, 0.15, 0.05, "{:.2f}"), cats=wcats,
+                                         marks=[dict(type="bars", color=c, vals=[v if i == j else None for j, v in enumerate(wval)]) for i, (_, _, c) in enumerate(WSET)])])
+print("fig-hc-write", dict(zip([n or a for a, n, _ in WSET], wval)))
 # Figure 8 (placeholder for seed 1; owner popup 2026-10-13): AttnRes (Full), layer-48 training loss by step, separate heads
 # and probes, one panel per init seed. With seed 0 the probes run's last readout jumped from 3.41 to 8.32 at step 2106
 # (the head's depth softmax collapsed: grad/norm/transformer.final_query 0.12 -> 3.8e-07) and came back over ~1000 steps;
