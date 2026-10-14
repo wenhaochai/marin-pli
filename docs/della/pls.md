@@ -354,6 +354,9 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    least partly the ordinary run's spikes. Test (owner popup 2026-10-13): seed 1 (SEED=1, data order unchanged) pair
    scripts/della/pls_d48_g4_attnres_seed1.sh, jobs 15520124-26; page Figure 8 placeholder (fig-attnres-seed).
    Script: docs/della/pls_archive/status/attnres_params.py (param and grad norms from W&B).
+   Declined by the owner (2026-10-13, via the terminal session): a 48-layer ordinary Sandwich-LN model without probes
+   (the shared clip group check), a Sandwich-LN 48-layer seed 1 pair, an AttnRes (Full) probes run with a stabilized head
+   softmax, and a second width-depth shape. Do not propose them again unless the results call for it.
    Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
    4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
    so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).
