@@ -378,7 +378,15 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    4-14, 19), HC probes 1, mHC 0 and 0; negative write entries 14/96 vs 2/96, mHC 0 by construction. Post hoc again.
    Next (job 15534928): remove the zero-sum part after layer c and measure the layer-48 CE rise (how much later layers
    need what the readouts cannot see).
-   Same-depth reference (2026-10-14): the ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
+   Ablation result (job 15534928): every stream replaced by the stream mean after layer c (readout c unchanged), L48 CE
+   rise at c = 4/8/12/16/20/28/36/44: HC sep +0.65/+1.12/+1.07/+0.45/+0.24/+0.07/+0.02/0; HC probes +2.67/+1.40/+0.56/
+   +1.13/+2.24/+2.38/+0.10/+0.04; mHC sep +0.21/+0.29/+0.22/+0.14/+0.11/+0.06/+0.01/0; mHC probes +0.06/+0.12/+0.13/+0.18/
+   +0.20/+0.23/+0.09/+0.10. HC really uses the invisible part as storage (about 5x mHC's dependence in both setups); under
+   separate heads HC confines that use to layers 4-16, where its static zero-sum writes sit. mHC barely uses it. So the
+   narrower claim survives: the design that both offers and uses readout-invisible storage pays half; the causal training
+   test (HC with writes forced positive, mHC with signed writes) is the next step and needs the owner's approval.
+   Same-depth reference (2026-10-14): 24 layers done: train 3.057 / eval 3.753, layer 24 of the separate-heads model
+   +0.07 / +0.10 above it, and it ends below that model's layer 48 (3.093 / 3.827). The ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
    is a worse 12-layer model than a dedicated one, as every layer was at 6 layers. Figure 6 grey dots (d48ref.json).
    AttnRes (Full) instability (2026-10-13): of the 14 finished 48-layer runs, only AttnRes (Full) with probes (its
