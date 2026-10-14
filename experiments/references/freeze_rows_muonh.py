@@ -24,6 +24,10 @@ about lr * norm(p_kept), roughly 4x their baseline rate at K = 8000 of 128256. `
 the head's step as AdamH on the kept rows alone: u is AdamH's own m_hat / (sqrt(v_hat) + eps) read from the updated
 state, restricted to the kept rows, the step is lr * norm(p_kept) along u_kept / norm(u_kept), and the kept rows are
 renormalised to norm(p_kept); the frozen rows do not move, so the whole head keeps its norm too.
+
+``freeze_table="embed"`` (Q4c, owner 2026-10-13) freezes the same rows of the input embedding instead: MuonH puts the
+embedding in its plain-Adam group (no norm preservation), so zeroing the rows' gradient and update leaves the other rows
+exactly as Adam moves them; only the Adam group's gradient clipping sees a slightly smaller norm after the freeze.
 """
 
 from dataclasses import dataclass
@@ -40,20 +44,28 @@ from levanter.optim.muonh import MuonHConfig
 from levanter.optim.util import _NORM_FLOOR
 
 
-def freeze_rows(tree, lo: int, keep_last: int, frozen):
-    """``tree`` with rows lo .. V - keep_last - 1 of lm_head.weight zeroed where ``frozen`` (a traced bool)."""
-    w = tree.lm_head.weight
+TABLES = {   # freeze_table -> the table's weight in a model-shaped tree (params, gradients, updates)
+    "lm_head": lambda t: t.lm_head.weight,
+    "embed": lambda t: t.embeddings.token_embeddings.weight,   # MuonH's plain-Adam group: no norm preservation
+}
+
+
+def freeze_rows(tree, lo: int, keep_last: int, frozen, table: str = "lm_head"):
+    """``tree`` with rows lo .. V - keep_last - 1 of the table (lm_head.weight or the input embedding) zeroed where
+    ``frozen`` (a traced bool)."""
+    get = TABLES[table]
+    w = get(tree)
     if w is None:
         return tree
     vocab = [a for a in w.axes if a.name == "vocab"]
     if len(vocab) != 1:
-        raise ValueError(f"lm_head.weight axes {w.axes}: expected one 'vocab' axis")
+        raise ValueError(f"{table} weight axes {w.axes}: expected one 'vocab' axis")
     V = vocab[0]
     if not 0 < lo < V.size - keep_last:
         raise ValueError(f"freeze_lo={lo} must lie in (0, {V.size - keep_last}) for a vocabulary of {V.size}")
     ids = hax.arange(V)
     rows = (ids >= lo) & (ids < V.size - keep_last) & frozen
-    return eqx.tree_at(lambda t: t.lm_head.weight, tree, hax.where(rows, hax.zeros_like(w), w).rearrange(w.axes))
+    return eqx.tree_at(get, tree, hax.where(rows, hax.zeros_like(w), w).rearrange(w.axes))
 
 
 def kept_block_step(updates, new_state, params, lo: int, keep_last: int, eps: float, b1: float, b2: float):
@@ -93,6 +105,7 @@ class FreezeRowsMuonHConfig(MuonHConfig):
     freeze_keep_last: int = 256
     freeze_from_step: int = 0
     freeze_block_norm: bool = False   # after the freeze, AdamH's norm-preserving step on the kept rows alone
+    freeze_table: str = "lm_head"     # lm_head (output rows, AdamH) | embed (input rows, plain Adam; 2026-10-13, Q4c)
 
     def build(self, num_train_steps):
         if self.freeze_from_step < 0:
@@ -100,12 +113,16 @@ class FreezeRowsMuonHConfig(MuonHConfig):
         inner = super().build(num_train_steps)
         lo, keep, s0 = self.freeze_lo, self.freeze_keep_last, self.freeze_from_step
 
-        eps, b1, b2, block = self.epsilon, self.beta1, self.beta2, self.freeze_block_norm
+        eps, b1, b2, block, table = self.epsilon, self.beta1, self.beta2, self.freeze_block_norm, self.freeze_table
+        if table not in TABLES:
+            raise ValueError(f"freeze_table={table!r}: one of {sorted(TABLES)}")
+        if block and table != "lm_head":
+            raise ValueError("freeze_block_norm applies to the AdamH head only (the input table is plain Adam)")
 
         def update_fn(updates, state, params=None, **extra):
             frozen = jnp.asarray(state.count) >= s0   # the index of this update
-            updates, new_state = inner.update(freeze_rows(updates, lo, keep, frozen), state, params, **extra)
-            updates = freeze_rows(updates, lo, keep, frozen)
+            updates, new_state = inner.update(freeze_rows(updates, lo, keep, frozen, table), state, params, **extra)
+            updates = freeze_rows(updates, lo, keep, frozen, table)
             if block:
                 updates = jax.lax.cond(frozen, lambda u: kept_block_step(u, new_state, params, lo, keep, eps, b1, b2), lambda u: u, updates)
             return updates, new_state

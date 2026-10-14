@@ -258,6 +258,9 @@ FOP_FROM_PASS = int(os.environ.get("FOP_FROM_PASS", "2"))
 # FOP_BLOCK_NORM=1 (2026-10-13 review): AdamH's norm-preserving head step on the kept rows alone after the freeze, so they
 # keep about their baseline rate instead of ~4x (freeze_rows_muonh.py, freeze_block_norm); run tag suffix b.
 FOP_BLOCK_NORM = os.environ.get("FOP_BLOCK_NORM", "0") == "1"
+# VARIANT=fip (owner, 2026-10-13; Q4c): as fop, with the rare tokens' INPUT rows (the embedding, MuonH's plain-Adam group)
+# frozen instead of their output rows, from update round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too; the
+# same FO_K and FOP_FROM_PASS knobs. Run tag -fip<FO_K/1000>kp<pass>.
 RM_K = int(os.environ.get("RM_K", "8000"))
 RM_FROM_PASS = int(os.environ.get("RM_FROM_PASS", "5"))
 RM_MODE = os.environ.get("RM_MODE", "loss")
@@ -331,9 +334,9 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT in ("cv", "fo", "fop", "lr", "rm", "cvr") and VOCAB_K:
+if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "lr", "rm", "cvr", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -400,6 +403,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-fo{FO_K // 1000}k"
     if VARIANT == "fop":
         variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}" + ("b" if FOP_BLOCK_NORM else "")
+    if VARIANT == "fip":
+        variant_tags += f"-fip{FO_K // 1000}kp{FOP_FROM_PASS}"
     if VARIANT == "lr":
         variant_tags += f"-lr{LR_RANK}"
     if VARIANT == "rm":
@@ -546,12 +551,17 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         attn_backend=AttentionBackend.JAX_FLASH,
         **model_extra,
     )
-    if VARIANT == "fop" and FOP_FROM_PASS < 2:
+    if VARIANT == "fip" and TIE:
+        raise ValueError("VARIANT=fip freezes input rows only: untied tables (TIE=0)")
+    if VARIANT in ("fop", "fip") and FOP_FROM_PASS < 2:
         raise ValueError(f"FOP_FROM_PASS={FOP_FROM_PASS}: the rows learn during pass 1, so 2 or later")
     opt_cls, opt_extra = MuonHConfig, {}
     if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
                                                          freeze_block_norm=FOP_BLOCK_NORM)
+    if VARIANT == "fip":   # the input rows, from the same update as fop
+        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
+                                                         freeze_table="embed")
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
