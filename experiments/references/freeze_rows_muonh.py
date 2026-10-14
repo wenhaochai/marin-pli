@@ -34,6 +34,15 @@ exactly as Adam moves them; only the Adam group's gradient clipping sees a sligh
 alone, the kept rows as with ``freeze_block_norm`` and the rare rows with the learning rate times ``freeze_rare_scale``,
 each block renormalised to its own norm. At a scale of 0 the old ``freeze_block_norm`` path runs unchanged (rare rows'
 gradient and moments zeroed); a positive scale needs ``freeze_block_norm`` and the head.
+
+``freeze_also_embed=True`` (owner, 2026-10-14; follow-up I) adds, on the slowed-head path, the ``freeze_table="embed"``
+stop of the same rare rows of the input embedding (gradient zeroed before MuonH, update zeroed after), so the rare input
+rows stop and the rare output rows slow from the same update.
+
+``freeze_table="res"`` (owner, 2026-10-14; follow-up J) stops every row of ``embeddings_res``, the rare tokens' residual
+rows of the composed input table (table_variants_qwen3.ComposedResidualQwen3Config, MuonH's plain-Adam group), the same
+way; ``freeze_lo`` and ``freeze_keep_last`` do not apply, since that table holds the rare tokens only. The shared rows of
+the input embedding, which the rare rows are composed from, keep learning.
 """
 
 from dataclasses import dataclass
@@ -53,13 +62,19 @@ from levanter.optim.util import _NORM_FLOOR
 TABLES = {   # freeze_table -> the table's weight in a model-shaped tree (params, gradients, updates)
     "lm_head": lambda t: t.lm_head.weight,
     "embed": lambda t: t.embeddings.token_embeddings.weight,   # MuonH's plain-Adam group: no norm preservation
+    "res": lambda t: t.embeddings_res,                            # the composed model's residual rows: all rare (J)
 }
 
 
 def freeze_rows(tree, lo: int, keep_last: int, frozen, table: str = "lm_head"):
     """``tree`` with rows lo .. V - keep_last - 1 of the table (lm_head.weight or the input embedding) zeroed where
-    ``frozen`` (a traced bool)."""
+    ``frozen`` (a traced bool); with table "res", every row of embeddings_res (lo and keep_last unused)."""
     get = TABLES[table]
+    if table == "res":   # every row is a rare token's residual
+        w = getattr(tree, "embeddings_res", None)
+        if w is None:
+            raise ValueError("freeze_table='res' needs a model with embeddings_res (VARIANT=cvr)")
+        return eqx.tree_at(get, tree, hax.named(jnp.where(frozen, jnp.zeros_like(w.array), w.array), w.axes))
     w = get(tree)
     if w is None:
         return tree
@@ -120,8 +135,9 @@ class FreezeRowsMuonHConfig(MuonHConfig):
     freeze_keep_last: int = 256
     freeze_from_step: int = 0
     freeze_block_norm: bool = False   # after the freeze, AdamH's norm-preserving step on the kept rows alone
-    freeze_table: str = "lm_head"     # lm_head (output rows, AdamH) | embed (input rows, plain Adam; 2026-10-13, Q4c)
+    freeze_table: str = "lm_head"     # lm_head (output rows, AdamH) | embed (input rows, plain Adam; 2026-10-13, Q4c) | res (J)
     freeze_rare_scale: float = 0.0    # > 0: the rare rows keep learning at this times the learning rate (2026-10-14, G)
+    freeze_also_embed: bool = False   # with freeze_rare_scale: also stop the rare input rows (2026-10-14, I)
 
     def build(self, num_train_steps):
         if self.freeze_from_step < 0:
@@ -139,11 +155,18 @@ class FreezeRowsMuonHConfig(MuonHConfig):
             raise ValueError(f"freeze_rare_scale={scale}: must lie in [0, 1)")
         if scale > 0 and not (block and table == "lm_head"):
             raise ValueError("freeze_rare_scale needs freeze_block_norm on the head")
+        also_embed = self.freeze_also_embed
+        if also_embed and not scale > 0:
+            raise ValueError("freeze_also_embed applies to the slowed-head path only (freeze_rare_scale > 0)")
 
         def update_fn(updates, state, params=None, **extra):
             frozen = jnp.asarray(state.count) >= s0   # the index of this update
             if scale > 0:   # slowed, not stopped: the rare rows keep their gradient and moments
+                if also_embed:
+                    updates = freeze_rows(updates, lo, keep, frozen, "embed")
                 updates, new_state = inner.update(updates, state, params, **extra)
+                if also_embed:
+                    updates = freeze_rows(updates, lo, keep, frozen, "embed")
                 updates = jax.lax.cond(frozen, lambda u: kept_block_step(u, new_state, params, lo, keep, eps, b1, b2, scale), lambda u: u, updates)
                 return updates, new_state
             updates, new_state = inner.update(freeze_rows(updates, lo, keep, frozen, table), state, params, **extra)

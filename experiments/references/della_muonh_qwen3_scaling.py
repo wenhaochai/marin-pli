@@ -262,6 +262,13 @@ FOP_BLOCK_NORM = os.environ.get("FOP_BLOCK_NORM", "0") == "1"
 # slowed instead of stopped: they keep learning at FOP_SLOW times the learning rate on their own block
 # (freeze_rows_muonh.py, freeze_rare_scale); run tag suffix -slow<FOP_SLOW>.
 FOP_SLOW = float(os.environ.get("FOP_SLOW", "0"))
+# FOP_IN=1 (owner, 2026-10-14; follow-up I): with VARIANT=fop, FOP_BLOCK_NORM=1 and FOP_SLOW > 0, the rare INPUT rows also
+# stop from the same update, as VARIANT=fip does (freeze_rows_muonh.py, freeze_also_embed); run tag suffix -in.
+FOP_IN = os.environ.get("FOP_IN", "0") == "1"
+# CVR_RES_FREEZE=1 (owner, 2026-10-14; follow-up J): with VARIANT=cvr, every residual row stops from update
+# round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too (freeze_rows_muonh.py, freeze_table="res"); the shared
+# piece rows keep learning. Run tag suffix -resfp<pass>.
+CVR_RES_FREEZE = os.environ.get("CVR_RES_FREEZE", "0") == "1"
 # VARIANT=fip (owner, 2026-10-13; Q4c): as fop, with the rare tokens' INPUT rows (the embedding, MuonH's plain-Adam group)
 # frozen instead of their output rows, from update round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too; the
 # same FO_K and FOP_FROM_PASS knobs. Run tag -fip<FO_K/1000>kp<pass>.
@@ -410,7 +417,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "fo":
         variant_tags += f"-fo{FO_K // 1000}k"
     if VARIANT == "fop":
-        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}" + ("b" if FOP_BLOCK_NORM else "") + (f"-slow{FOP_SLOW:g}" if FOP_SLOW else "")
+        variant_tags += f"-fop{FO_K // 1000}kp{FOP_FROM_PASS}" + ("b" if FOP_BLOCK_NORM else "") + (f"-slow{FOP_SLOW:g}" if FOP_SLOW else "") + ("-in" if FOP_IN else "")
     if VARIANT == "fip":
         variant_tags += f"-fip{FO_K // 1000}kp{FOP_FROM_PASS}"
     if VARIANT == "lr":
@@ -418,7 +425,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "rm":
         variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}" + {"loss": "", "freeze": "f", "drop": "d"}[RM_MODE]
     if VARIANT == "cvr":
-        variant_tags += f"-cvin{CV_K // 1000}k-res{CV_RES_SCALE:g}"
+        variant_tags += f"-cvin{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "")
     if VARIANT == "cvd":
         variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
@@ -571,15 +578,26 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         raise ValueError(f"FOP_SLOW={FOP_SLOW}: must lie in [0, 1)")
     if FOP_SLOW and not (VARIANT == "fop" and FOP_BLOCK_NORM):
         raise ValueError(f"FOP_SLOW={FOP_SLOW}: only with VARIANT=fop and FOP_BLOCK_NORM=1")
-    if VARIANT in ("fop", "fip") and FOP_FROM_PASS < 2:
+    if FOP_IN and not (VARIANT == "fop" and FOP_BLOCK_NORM and FOP_SLOW):
+        raise ValueError("FOP_IN=1: only with VARIANT=fop, FOP_BLOCK_NORM=1 and FOP_SLOW > 0")
+    if FOP_IN and TIE:
+        raise ValueError("FOP_IN=1 freezes input rows apart from output rows: untied tables (TIE=0)")
+    if CVR_RES_FREEZE and VARIANT != "cvr":
+        raise ValueError("CVR_RES_FREEZE=1: only with VARIANT=cvr")
+    if (FOP_IN or CVR_RES_FREEZE) and (PASS_DATA.startswith("bpd") or DATA_EPOCHS not in (0, 1, 8)):
+        raise ValueError("FOP_IN / CVR_RES_FREEZE freeze at round(steps / 8): only with 8 equal passes or the full-data run")
+    if (VARIANT in ("fop", "fip") or CVR_RES_FREEZE) and FOP_FROM_PASS < 2:
         raise ValueError(f"FOP_FROM_PASS={FOP_FROM_PASS}: the rows learn during pass 1, so 2 or later")
     opt_cls, opt_extra = MuonHConfig, {}
     if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
-                                                         freeze_block_norm=FOP_BLOCK_NORM, freeze_rare_scale=FOP_SLOW)
+                                                         freeze_block_norm=FOP_BLOCK_NORM, freeze_rare_scale=FOP_SLOW, freeze_also_embed=FOP_IN)
     if VARIANT == "fip":   # the input rows, from the same update as fop
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
                                                          freeze_table="embed")
+    if CVR_RES_FREEZE:   # the residual rows, from the same update as fop
+        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
+                                                         freeze_table="res")
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
