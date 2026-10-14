@@ -364,9 +364,10 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
      AttnRes (Full) -.022: every sublayer output stored apart; a readout is one mix, an output can get ~0 weight in it
        -> no cost (confounded by its ordinary model's spikes; seed 1 pending).
      AttnRes (Block) .113: everything written joins the current block's running sum, which every readout sees -> full.
-   PRE-REGISTERED before its result (MoDA job 15341589 at ~step 4000/4958, due ~11:00): MoDA keeps one Pre-LN stream
-   that every readout sees; its depth keys and values are projections of that visible state -> full cost, L48 gap in
-   0.08-0.12. A gap below 0.06 refutes the theory for MoDA.
+   MoDA (job 15341589, due ~11:00): one Pre-LN stream that every readout sees; its depth keys and values are projections
+   of that visible state -> full cost, L48 gap 0.08-0.12. NOT a blind test: a partial MoDA gap (0.097 against Sandwich-LN
+   0.089 at the same step) was seen on 2026-10-13. The theory is post hoc on all 8 designs; its blind tests are the
+   mechanism measurement below and a causal run.
    Mechanism test on existing checkpoints (scripts/della/pls_hc_hidden_cpu.py): HC separate heads should hold more of its
    state in the zero-sum stream part than HC probes; mHC little in either, and its static writes all positive.
    Same-depth reference (2026-10-14): the ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
