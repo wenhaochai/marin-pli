@@ -197,7 +197,7 @@ def x48(arch):
 ARCH = [("preln", "Pre-LN"), ("lns", "LayerNorm Scaling"), ("deepnorm", "DeepNorm"), ("keel", "KEEL"), ("hc", "Hyper-Connections"),
         ("mhc", "mHC"), ("attnres", "AttnRes (Full)"), ("attnres_block", "AttnRes (Block)"), ("moda", "MoDA")]
 # status words while a design trains (update with the queue): runs started 2026-10-09
-STATUS48 = {"moda": RUNNING, "mhc": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN (2026-10-13)
+STATUS48 = {"moda": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN (2026-10-13)
 done48 = {a: g4(a) for a in [""] + [k for k, _ in ARCH] if g4(a) is not None}
 for a, ys in done48.items():
     print("d48", a or "sandwich", "separate heads L1 L24 L48", np.round(ys[0][[0, 23, 47]], 3), "probes", np.round(ys[1][[0, 23, 47]], 3))
@@ -240,7 +240,7 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
 # layer index (not compute), one colour per design (writing:plot categories). Figure 8: separate heads minus probes,
 # final training loss by layer. Figure 9: the two setups' absolute losses in two panels. Designs join as they finish.
 DES = [("", "Sandwich-LN")] + ARCH
-DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6", "attnres_block": "#3C4043", "hc": "#007B83"}   # GM2 600 (yellow 900), then grey 800, then cyan 900
+DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6", "attnres_block": "#3C4043", "hc": "#007B83", "mhc": "#C2185B"}   # GM2 600 (yellow 900), then grey 800, cyan 900, pink 700
 drawn = [(a, n) for a, n in DES if a in done48 and a in DCOL]   # no colour for AttnRes (Full): its probe readouts below layer 48 are not comparable (OWN_RANGE)
 LX = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
 def lin_ticks(lo, hi, step, fmt="{:.1f}"):

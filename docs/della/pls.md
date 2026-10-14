@@ -347,6 +347,10 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    Hyper-Connections finished (2026-10-13 23:41, job 15341054): L48 train sep/probes 2.992/2.944 (+0.048, about half the
    others), eval 3.704/3.615 (+0.089); both models lowest of all designs at layer 48; probes fall steeply between layers
    11 and 17. Page Figures 7, 9, 10 and record (figure numbers moved up after the new Figure 8) updated.
+   mHC finished (2026-10-14 02:40, job 15341056): L48 train sep/probes 3.024/2.922 (+0.102, the full Sandwich-LN cost,
+   unlike HC's half), eval 3.749/3.576 (+0.173). Its ordinary model ends lowest of all designs at layer 48; HC's separate
+   heads stay lowest with separate heads (2.992), so the HC "both lowest" line no longer holds. The mHC probes stay high
+   (gap about -1.4) through layer 27 and fall steeply over the last twenty layers. Page Figures 7, 9, 10, record updated.
    Same-depth reference (2026-10-14): the ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
    is a worse 12-layer model than a dedicated one, as every layer was at 6 layers. Figure 6 grey dots (d48ref.json).
