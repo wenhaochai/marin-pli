@@ -56,7 +56,8 @@ from levanter.models.loss import maybe_fused_next_token_loss, next_token_loss_we
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.trainer import current_train_step
 
-from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config, ComposedVocabQwen3LMHeadModel, load_map
+from experiments.references.composed_vocab_qwen3 import SMALL as SMALL_CV
+from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config, ComposedVocabQwen3LMHeadModel, compose, load_map, own_rows
 
 SMALL = "fo_small"   # axis of the trainable head rows (not "vocab", so no vocab sharding rule applies)
 RARE = "fo_rare"     # axis of the fixed rare rows
@@ -321,3 +322,72 @@ class ComposedResidualQwen3LMHeadModel(ComposedVocabQwen3LMHeadModel):
         w = w.at[k:self.full_vocab.size - N_SPECIAL].add((cfg.cv_res_scale * r.astype(jnp.float32)).astype(w.dtype))
         te = dataclasses.replace(te, weight=hax.named(w, (self.full_vocab, cfg.Embed)))
         return Qwen3LMHeadModel(plain.transformer, dataclasses.replace(plain.embeddings, token_embeddings=te), plain.lm_head)
+
+
+@LmConfig.register_subclass("qwen3_composed_dropout")
+@dataclass(frozen=True)
+class ComposedDropoutQwen3Config(Qwen3Config):
+    """Q10 rescue C (owner, 2026-10-13): the baseline model with its own 128K input table; at each training position
+    whose input token is rare (ids K .. V-257), with probability ``cvd_p`` the token's input row is replaced by the mean
+    of its K-token pieces' rows (``compose`` on the same table, so the gradient reaches the shared piece rows). Evaluation
+    (no train step) uses the own rows only, so the model at step 0 and at evaluation is the plain baseline shape. The draw
+    is a fixed function of (cvd_seed, train step), the same in the full-data and the repeated run."""
+
+    cvd_map: str = ""      # expand_full.npz of the K-token truncation
+    cvd_p: float = 0.5     # replacement probability at a rare-token position
+    cvd_seed: int = 0
+
+    def __post_init__(self):
+        super().__post_init__()
+        _check_untied(self)
+        if not self.cvd_map:
+            raise ValueError("cvd_map: the expand_full.npz path is required")
+        if not 0 < self.cvd_p <= 1:
+            raise ValueError(f"cvd_p={self.cvd_p}: must lie in (0, 1]")
+
+    @property  # type: ignore[override]
+    def model_type(self):  # noqa: D401
+        return ComposedDropoutQwen3LMHeadModel
+
+
+def n_small_of(path: str) -> int:
+    """Rows of the K-token small table (K ordinary rows plus the 256 specials)."""
+    return load_map(path)[3]
+
+
+class ComposedDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
+    @classmethod
+    def init(cls, Vocab: Axis, config: ComposedDropoutQwen3Config, *, key):  # type: ignore[override]
+        base = Qwen3LMHeadModel.init(Vocab, config, key=key)   # the baseline, bit for bit
+        _, _, counts, n_small = load_map(config.cvd_map)
+        if Vocab.size != len(counts):
+            raise ValueError(f"vocabulary axis has {Vocab.size} entries, the map {len(counts)}")
+        own_rows(config.cvd_map, Vocab.size)   # checks that the small rows are the own rows of tokens below K and the specials
+        return cls(base.transformer, base.embeddings, base.lm_head)
+
+    def _embed_train(self, input_ids: NamedArray, step) -> NamedArray:
+        cfg: ComposedDropoutQwen3Config = self.config  # type: ignore[assignment]
+        V = self.Vocab.size
+        te = self.embeddings.token_embeddings
+        W = te.weight.rearrange((self.Vocab.name, cfg.Embed.name))
+        own = jnp.asarray(own_rows(cfg.cvd_map, V))
+        small = hax.named(W.array[own], (Axis(SMALL_CV, len(own)), cfg.Embed))
+        comp = compose(small, self.Vocab, cfg.Embed, cfg.cvd_map)          # row t: mean of t's pieces' rows
+        x_own = te(input_ids)
+        x_comp = comp.take(self.Vocab.name, input_ids).astype(x_own.dtype)
+        k0 = n_small_of(cfg.cvd_map) - N_SPECIAL
+        ids = input_ids.array
+        rare = (ids >= k0) & (ids < V - N_SPECIAL)
+        draw = jax.random.bernoulli(jax.random.fold_in(jax.random.PRNGKey(cfg.cvd_seed), jnp.asarray(step)), cfg.cvd_p, ids.shape)
+        swap = hax.named(rare & draw, input_ids.axes)
+        x = hax.where(swap, x_comp, x_own)
+        if self.embeddings.norm is not None:
+            x = self.embeddings.norm(x)
+        return x
+
+    def activations(self, input_ids, attn_mask=None, *, key=None, pos_ids: Optional[NamedArray] = None):  # type: ignore[override]
+        step = current_train_step()
+        if step is None:   # evaluation: the own rows
+            return super().activations(input_ids, attn_mask, key=key, pos_ids=pos_ids)
+        x = self._embed_train(input_ids, step)
+        return self.transformer(x, attn_mask=attn_mask, key=key, pos_ids=pos_ids)
