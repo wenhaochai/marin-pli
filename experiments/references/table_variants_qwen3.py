@@ -25,7 +25,11 @@ standard deviation (each factor std = sqrt(sigma / sqrt(r)), sigma measured on t
 target is a rare token (ids rm_k .. V-257) get no loss. The remaining positions keep the baseline's gradient scale: the
 masked weighted mean is rescaled by the (gradient-free) kept share of the weight, so the loss is
 sum(w m l) / sum(w). The step comes from ``levanter.trainer.current_train_step()``; evaluation (no train step) is never
-masked.
+masked. Masking alone collapses the rare tokens (2026-10-13: Paloma 1.53 -> 2.84 bits per byte within 1,300 steps of the
+mask): the softmax still pushes their logits down at every kept position and nothing pushes them up. Two corrections
+(owner, 2026-10-13): the run script can also freeze the rare output rows in the optimizer (freeze_rows_muonh.py), and
+``rm_drop`` also leaves the rare ids out of the training softmax from the same step, so neither their rows nor the hidden
+states are pushed against them. Evaluation always uses the full softmax.
 
 ``ComposedResidualQwen3Config`` (Q10): the composed input table of ``ComposedVocabQwen3Config`` (cv_input; rows of tokens
 below K are their own, a rare token's row is the mean of its K-token pieces' rows) plus, for each rare token, its own
@@ -47,8 +51,8 @@ import jax.numpy as jnp
 
 import haliax as hax
 from haliax import Axis, NamedArray
-from levanter.models.lm_model import LmConfig
-from levanter.models.loss import next_token_loss_weight
+from levanter.models.lm_model import LmConfig, split_activations
+from levanter.models.loss import maybe_fused_next_token_loss, next_token_loss_weight
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.trainer import current_train_step
 
@@ -58,6 +62,7 @@ SMALL = "fo_small"   # axis of the trainable head rows (not "vocab", so no vocab
 RARE = "fo_rare"     # axis of the fixed rare rows
 RANK = "lr_rank"     # axis of the low-rank factors
 RES = "cvr_rare"     # axis of the composed-input residual rows
+KEPT = "rm_kept"     # axis of the head rows a dropped-softmax step keeps (ids below rm_k and the specials)
 N_SPECIAL = 256
 
 
@@ -208,6 +213,7 @@ class LowRankQwen3LMHeadModel(Qwen3LMHeadModel):
 class RareTargetMaskQwen3Config(Qwen3Config):
     rm_k: int = 8000          # targets with ids rm_k .. V-257 are "rare"
     rm_from_step: int = 0     # train steps >= this drop the loss of rare targets
+    rm_drop: bool = False     # and, from that step on, leave the rare ids out of the training softmax too
 
     def __post_init__(self):
         super().__post_init__()
@@ -239,11 +245,41 @@ class RareTargetMaskQwen3LMHeadModel(Qwen3LMHeadModel):
         keep = jnp.where(jnp.asarray(step) >= cfg.rm_from_step, ~rare, True)
         w = example.loss_weight if example.loss_weight is not None else hax.ones(example.tokens.axes, dtype=jnp.float32)
         w2 = w * hax.named(keep, example.tokens.axes).astype(w.dtype)
-        loss = super().compute_next_token_loss(dataclasses.replace(example, loss_weight=w2), key=key, reduction=reduction, reduction_axis=None, **kw)
+        if not cfg.rm_drop:
+            loss = super().compute_next_token_loss(dataclasses.replace(example, loss_weight=w2), key=key, reduction=reduction, reduction_axis=None, **kw)
+        else:
+            loss = self._drop_loss(example, w2, jnp.asarray(step) >= cfg.rm_from_step, key=key, **kw)
         # sum(w m l) / sum(w m) x sum(w m) / sum(w) = sum(w m l) / sum(w): the kept positions' gradients keep their scale
         wa, wb = next_token_loss_weight(self.Pos, w2), next_token_loss_weight(self.Pos, w)
         scale = jax.lax.stop_gradient(jnp.sum(wa.array.astype(jnp.float32)) / jnp.maximum(jnp.sum(wb.array.astype(jnp.float32)), 1e-9))
         return loss * scale
+
+    def _drop_loss(self, example, w2, dropped, *, key=None, logsumexp_weight=None, loss_dtype=jnp.float32, logit_soft_cap=None):
+        """The masked mean loss of ``compute_next_token_loss``; where ``dropped`` (a traced bool) its softmax covers only
+        the ids below rm_k and the 256 specials: the head's other rows are cut out and the targets renumbered (a rare
+        target, whose weight is already 0, becomes id 0). Before the drop step it is the plain full-softmax loss."""
+        cfg: RareTargetMaskQwen3Config = self.config  # type: ignore[assignment]
+        V, k = self.Vocab.size, cfg.rm_k
+        x, aux = split_activations(self.activations(example.tokens, example.attn_mask, key=key))
+        head = self.get_lm_head()
+
+        def ce(h, ids, Label):
+            return maybe_fused_next_token_loss(self.Pos, cfg.Embed, Label, x, h, ids, loss_weight=w2, reduction=hax.mean,
+                                               reduction_axis=None, logsumexp_weight=logsumexp_weight, dtype=loss_dtype,
+                                               logit_soft_cap=logit_soft_cap)
+
+        def full(_):
+            return ce(head, example.tokens, self.Vocab)
+
+        def kept(_):
+            w = head.rearrange((self.Vocab.name, cfg.Embed.name)).array
+            small = jnp.concatenate([w[:k], w[V - N_SPECIAL:]], axis=0)
+            Kept = Axis(KEPT, k + N_SPECIAL)
+            ids = example.tokens.array
+            ids2 = jnp.where(ids < k, ids, jnp.where(ids >= V - N_SPECIAL, ids - (V - N_SPECIAL) + k, 0)).astype(ids.dtype)
+            return ce(hax.named(small, (Kept, cfg.Embed)), hax.named(ids2, example.tokens.axes), Kept)
+
+        return jax.lax.cond(dropped, kept, full, None) + aux
 
 
 @LmConfig.register_subclass("qwen3_composed_residual")

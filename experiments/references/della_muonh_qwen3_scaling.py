@@ -242,6 +242,10 @@ FO_K = int(os.environ.get("FO_K", "8000"))
 LR_RANK = int(os.environ.get("LR_RANK", "48"))
 # Q10 (owner, 2026-10-11): can the Marin tokenizer repeat data as well as the 8K truncation?
 # VARIANT=rm: from pass RM_FROM_PASS of DATA_EPOCHS on, no loss on targets outside the RM_K truncation (tag -rm<K/1000>kp<pass>).
+# RM_MODE (owner, 2026-10-13, after the plain mask collapsed the rare tokens): loss (default, the mask alone) | freeze (also
+# MuonH frozen on the rare output rows from the same update, freeze_rows_muonh.py, with AdamH's norm-preserving step taken
+# on the kept rows alone so they keep about their baseline rate; tag suffix f) | drop (freeze, and the rare ids also leave
+# the training softmax from that step, rm_drop; tag suffix d).
 # VARIANT=cvr: the composed input table (VARIANT=cv, CV_SIDE=in) plus a residual row per rare token at CV_RES_SCALE (tag
 # -cvin<K/1000>k-res<scale>). PASS_DATA=rs | bpd<p>: the repeated part's 8 passes read from a pre-built cache
 # (vocab_materialize_passes.py, MARIN_PREFIX/materialized/<size>[-v<K>k]-rep8-<PASS_DATA>/train): pass 1 the baseline's
@@ -253,6 +257,9 @@ LR_RANK = int(os.environ.get("LR_RANK", "48"))
 FOP_FROM_PASS = int(os.environ.get("FOP_FROM_PASS", "2"))
 RM_K = int(os.environ.get("RM_K", "8000"))
 RM_FROM_PASS = int(os.environ.get("RM_FROM_PASS", "5"))
+RM_MODE = os.environ.get("RM_MODE", "loss")
+if RM_MODE not in ("loss", "freeze", "drop"):
+    raise ValueError(f"RM_MODE={RM_MODE!r}: loss, freeze or drop")
 CV_RES_SCALE = float(os.environ.get("CV_RES_SCALE", "0.1"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
 if PASS_DATA and not (PASS_DATA == "rs" or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
@@ -269,6 +276,15 @@ def _vocab_ratio(k: int) -> float:
     if not os.path.exists(path):
         raise FileNotFoundError(f"{path} is missing: run scripts/della/convert_small_vocab.sbatch for K={k} first")
     return json.load(open(path))["fineweb-edu-10B"]["ratio"]
+
+
+def _rm_from_step(s: dict) -> int:
+    """VARIANT=rm: the first masked train step, round(steps * (RM_FROM_PASS - 1) / 8) (5722 at 300m, 2 steps into pass 5,
+    as the plain mask's run; passes are round(steps / 8) = 1430 steps). A smoke test masks from the
+    same share of its own steps, so it runs both sides of the switch; the plain mask (RM_MODE=loss) keeps its formula."""
+    if RM_MODE == "loss":
+        return round(s["steps"] * (RM_FROM_PASS - 1) / DATA_EPOCHS)
+    return round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) * (RM_FROM_PASS - 1) / DATA_EPOCHS)
 
 
 def _pass_data_dir(size: str) -> str:
@@ -384,7 +400,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "lr":
         variant_tags += f"-lr{LR_RANK}"
     if VARIANT == "rm":
-        variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}"
+        variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}" + {"loss": "", "freeze": "f", "drop": "d"}[RM_MODE]
     if VARIANT == "cvr":
         variant_tags += f"-cvin{CV_K // 1000}k-res{CV_RES_SCALE:g}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
@@ -492,7 +508,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "rm":
         if DATA_EPOCHS <= 0:
             raise ValueError("VARIANT=rm masks the later passes of a repeated run: set DATA_EPOCHS")
-        model_cls, model_extra = RareTargetMaskQwen3Config, dict(rm_k=RM_K, rm_from_step=round(s["steps"] * (RM_FROM_PASS - 1) / DATA_EPOCHS))
+        model_cls, model_extra = RareTargetMaskQwen3Config, dict(rm_k=RM_K, rm_from_step=_rm_from_step(s), rm_drop=RM_MODE == "drop")
     elif VARIANT == "cvr":
         if CV_SIDE != "in":
             raise ValueError("VARIANT=cvr composes the input table only (CV_SIDE=in)")
@@ -532,6 +548,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     opt_cls, opt_extra = MuonHConfig, {}
     if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1))
+    if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
+        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
         learning_rate=s["lr"],
         adam_lr=s["adam_lr"],
