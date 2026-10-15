@@ -424,6 +424,16 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
      information earlier (L5 +0.08 worse, L6 same); x_{t+2} information grows only in L4-L6 (-0.07, -0.08, -0.18).
      Page Fig 16 filled, question marked Answered. pls-mtp joined pls history by a tree-unchanged merge (5fccaa9692)
      so the scrub maps its commit for the record's Code link.
+     Main model at 130m: eval loss 3.9762 / 3.9755, Paloma macro 4.1867 / 4.1880: MTP does not improve the next token.
+   MTP across the ladder (owner popup 2026-10-14; page h-mtpl, placeholders fig-mtpl and fig-mtpl-depth): 300m, 520m,
+   1_2b, NTP vs NTP + MTP 0.3, trained as the baseline (PLS_W=0, no per-layer eval) on 8 GPUs (NUM_GPUS=8), one seed;
+   pls-mtp@5aea76151c, scripts/della/pls_mtp_ladder_submit.sh, pls_h100x8_single.sbatch. Probes after training only
+   (owner: probing on the final checkpoint; in-training probes cost ~8-14x a baseline run past 130m because every probe
+   is a full-vocabulary head): PROBE_FROM loads a frozen checkpoint strictly and trains fresh next-token heads (layers
+   1..L-1) and x_{t+2} heads (layers 1..L); the last layer's next-token readout is the model's own head. 130m point and
+   calibration: the Figure 16 checkpoints, 2000 probe steps (15591508-09), against their in-training probes.
+   Limits: x_{t+2} probes have no held-out eval (train loss on batches the backbone saw; paired across arms); MTP arm
+   costs a few % more FLOPs per token (comparison at equal tokens, as DeepSeek-V3).
    Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
    4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
    so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).
