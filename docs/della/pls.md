@@ -417,6 +417,13 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    (worktree marin-pls-mtp, 2cb07e35f4): PLS_MTP_W (one DeepSeek-V3 MTP module on the last layer predicting x_{t+2})
    and PLS_FUT (detached probes on x_{t+2} at every layer), CPU tests scripts/della/pls_mtp_cpu_test.py. Pair job
    15523669: 130m, NTP vs NTP + MTP 0.3, both with x_{t+1} probes (PLS_OPT_SPLIT=1) and x_{t+2} probes.
+   MTP result (15523669 COMPLETED 2026-10-14 20:40; final = mean of last 50 steps, train, one seed each):
+     x_{t+1} probes L1-L6  NTP 5.008 4.656 4.179 3.949 3.478 3.260 | NTP+MTP 4.983 4.666 4.193 3.939 3.558 3.262
+     x_{t+2} probes L1-L6  NTP 6.582 6.321 6.119 5.945 5.659 5.575 | NTP+MTP 6.560 6.325 6.099 5.880 5.584 5.392
+     MTP module loss 3.466. NTP's x_{t+1} probes repeat Fig 3's probes (L6 3.257). MTP does not move next-token
+     information earlier (L5 +0.08 worse, L6 same); x_{t+2} information grows only in L4-L6 (-0.07, -0.08, -0.18).
+     Page Fig 16 filled, question marked Answered. pls-mtp joined pls history by a tree-unchanged merge (5fccaa9692)
+     so the scrub maps its commit for the record's Code link.
    Readout definitions per design: the residual stream h after layer k for the residual designs and MoDA; the sum of the
    4 streams for HC and mHC; for AttnRes the mix that layer k+1's attention reads, built with layer k+1's pseudo-query,
    so in the separate-heads arm readout k's loss also trains that query (audit 2026-10-11).
