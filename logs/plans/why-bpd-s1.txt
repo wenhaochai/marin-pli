@@ -1,0 +1,4 @@
+# Q10 follow-up (owner popup 2026-10-15): second seed (init only) of 128K with a new BPE-dropout 0.1 segmentation in passes 2-8 (seed 0: 1.4523 at 8 passes, 0.013 below 128K, 0.025 below 8K). 8 passes only; its full-data point is the 128K seed-1 run (300m-della4xh100-s1). Reuses the 300m-rep8-bpd0.1 cache. Smoke copy first.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=bpd0.1+DATA_EPOCHS=8+SEED=1
+par why-bpd-s1-rep8 300m-della4xh100-rep8-bpd0.1-s1 main 4 330m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m PASS_DATA=bpd0.1 DATA_EPOCHS=8 SEED=1
+wait
