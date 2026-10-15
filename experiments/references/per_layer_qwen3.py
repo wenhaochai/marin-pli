@@ -40,6 +40,8 @@ Future probes (``pls_future_probes``): every layer k (the last included) gets a 
 vocab head, ``fut_norms`` / ``fut_lm_heads``) trained on x_{t+2}; no gradient reaches the backbone. Targets x_{t+2} are
 masked where t+2 leaves the window or crosses a document boundary (segment ids); the weight is the baseline's loss
 weight at t+1, as for the objective-hillclimb MTP (objective_qwen3._mtp_loss).
+Post-hoc probes (``pls_heads_only`` + ``pls_probe_frozen_main``, launcher PROBE_FROM): fresh intermediate heads and
+future probes trained on a frozen checkpoint; the last layer's next-token readout is the checkpoint's own lm_head.
 """
 
 import dataclasses
@@ -128,6 +130,50 @@ class HeadsOnlyMuonHConfig(MuonHConfig):
 
 
 _AUX_PATHS = ("aux_lm_heads", "aux_norms", "fut_lm_heads", "fut_norms")  # the readouts' own parameters (separate heads, future probes)
+
+
+_PROBE_FIELDS = ("aux_norms", "aux_lm_heads", "fut_norms", "fut_lm_heads")  # the probes PROBE_FROM adds fresh
+
+
+def load_without_probes(load_checkpoint):
+    """Wrap levanter's load_checkpoint(tree, path, *, subpath, ...) for post-hoc probes: the model's probe fields are
+    set aside, everything else is loaded strictly (a missing backbone, norm or head array still raises), and the probes
+    keep their fresh init. Arrays the checkpoint holds beyond the tree (its own readout heads, an MTP module) are not
+    read."""
+
+    def load(tree, checkpoint_path, *, subpath=None, **kw):
+        if not isinstance(tree, PerLayerQwen3LMHeadModel):
+            raise TypeError(f"load_without_probes expects a PerLayerQwen3LMHeadModel, got {type(tree).__name__}")
+        probes = {f: getattr(tree, f) for f in _PROBE_FIELDS}
+        if any(v is None for v in probes.values()):
+            raise ValueError("load_without_probes: the model has no fresh probes to keep (pls_separate_heads and pls_future_probes)")
+        if getattr(tree, "mtp", None) is not None:
+            raise ValueError("load_without_probes: the probe model must not carry an MTP module")
+        bare = dataclasses.replace(tree, **{f: None for f in _PROBE_FIELDS})
+        loaded = load_checkpoint(bare, checkpoint_path, subpath=subpath, **kw)
+        return dataclasses.replace(loaded, **probes)
+
+    return load
+
+
+@OptimizerConfig.register_subclass("muonH_probes_only")
+@dataclass(frozen=True)
+class ProbesOnlyMuonHConfig(HeadsOnlyMuonHConfig):
+    """HeadsOnlyMuonHConfig for post-hoc probes (pls_probe_frozen_main): only the readouts' own parameters train
+    (aux_lm_heads, fut_lm_heads with AdamH; aux_norms, fut_norms with Adam); the model's lm_head and final norm are
+    labelled "frozen" like the backbone, so the last layer's next-token readout stays the trained model's own."""
+
+    def create_mask(self, params):
+        base = MuonHConfig.create_mask(self, params)
+        paths = leaf_key_paths(params, is_leaf=lambda x: isinstance(x, hnn.Linear))
+
+        def label(lab, path):
+            if isinstance(path, NamedArray):
+                path = path.array
+            path_str = ".".join(path) if isinstance(path, (list, tuple)) else str(path)
+            return lab if path_str.startswith(_AUX_PATHS) else "frozen"
+
+        return jax.tree_util.tree_map(label, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
 
 
 @OptimizerConfig.register_subclass("muonH_pls_split")
@@ -249,6 +295,9 @@ class PerLayerQwen3Config(Qwen3Config):
     pls_mtp_weight: float = 0.0
     # Future probes: a detached readout per layer (the last included) trained on x_{t+2}; the backbone never sees them.
     pls_future_probes: bool = False
+    # Post-hoc probes (with pls_heads_only): the last layer's next-token readout is the model's own lm_head and final
+    # norm, frozen (no gradient; ProbesOnlyMuonHConfig), so only the intermediate heads and the future probes train.
+    pls_probe_frozen_main: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -290,8 +339,12 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("a late start needs pls_separate_heads, without pls_detach_backbone, pls_local_heads, pls_heads_only, pls_off_*, pls_pcgrad or pls_probe")
         if self.pls_mtp_weight < 0:
             raise ValueError(f"pls_mtp_weight must be >= 0, got {self.pls_mtp_weight}")
-        if (self.pls_mtp_weight > 0 or self.pls_future_probes) and (self.depth_arch != "baseline" or self.pls_local_heads or self.pls_heads_only or self.pls_probe or self.pls_off_end or self.pls_on_end or self.pls_pcgrad):
-            raise ValueError("pls_mtp_weight and pls_future_probes run on the baseline transformer, without pls_local_heads, pls_heads_only, pls_probe, a weight schedule, a late start or pls_pcgrad")
+        if (self.pls_mtp_weight > 0 or self.pls_future_probes) and (self.depth_arch != "baseline" or self.pls_local_heads or self.pls_probe or self.pls_off_end or self.pls_on_end or self.pls_pcgrad):
+            raise ValueError("pls_mtp_weight and pls_future_probes run on the baseline transformer, without pls_local_heads, pls_probe, a weight schedule, a late start or pls_pcgrad")
+        if self.pls_mtp_weight > 0 and self.pls_heads_only:
+            raise ValueError("pls_heads_only refits readouts on a frozen model; the MTP module would not train")
+        if self.pls_probe_frozen_main and not self.pls_heads_only:
+            raise ValueError("pls_probe_frozen_main needs pls_heads_only")
         half = self.max_seq_len // 2
         a, b = self.pls_probe_early
         if self.pls_probe and (half % self.pls_monitor_stride or not 0 <= a < b <= half):
@@ -675,7 +728,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         outs = self.layer_outputs(example.tokens, example.attn_mask, key=key)
         if cfg.pls_heads_only:  # the heads alone: no readout sends a gradient into the backbone
             outs = jax.lax.stop_gradient(outs)
-        final = self._readout_ce(outs, L - 1, example, **kw)
+        final = self._readout_ce(outs, L - 1, example, detach_head=cfg.pls_probe_frozen_main, **kw)
         aux_outs = self._local_outputs(example, outs, key=key) if cfg.pls_local_heads else outs
         bb_gain = None
         if cfg.pls_on_end:  # late start: the readouts' gradient into the backbone scaled by bb_gain, the values unchanged

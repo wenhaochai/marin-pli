@@ -27,6 +27,7 @@ the baseline's training with per-layer monitoring. Run ids end in ``-pls<w>``.
 
 import dataclasses
 import os
+import re
 from datetime import timedelta
 
 import jmp
@@ -77,7 +78,9 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
 
 VERSION = "2026.09.13"
-NUM_GPUS = 4
+# NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the
+# microbatch, stay the size's. Run ids carry della{NUM_GPUS}x.
+NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | ov | ovss | pls | twin | sr | twinsr | ...
@@ -254,6 +257,27 @@ HEADS_FROM = os.environ.get("HEADS_FROM") or None
 HEADS_WARMUP = int(os.environ.get("HEADS_WARMUP", "100"))
 if HEADS_FROM and (VARIANT != "pls" or not PLS_SEP or not TOTAL_STEPS or INIT_FROM or ARCH):
     raise ValueError("HEADS_FROM needs VARIANT=pls, PLS_SEP=1 and TOTAL_STEPS, without INIT_FROM or ARCH")
+# PROBE_FROM=<a run's step-N checkpoint dir> (VARIANT=pls; set the source run's own knobs, which then only name the run):
+# post-hoc probes of that checkpoint. The model loads the checkpoint's backbone, embeddings, final norm and lm_head
+# (strict; the checkpoint's own readout heads and MTP module are not read) and adds fresh probes: a next-token head per
+# intermediate layer (separate heads) and an x_{t+2} head per layer (future probes). Everything but the probes is
+# frozen (pls_heads_only, pls_probe_frozen_main, ProbesOnlyMuonHConfig): the last layer's next-token readout is the
+# model's own. The probes train for TOTAL_STEPS steps from step 0 of the data with HEADS_WARMUP warmup steps at the
+# size's peak learning rates; per-layer eval reads the next-token heads. Tag -probes{TOTAL_STEPS}at{N}.
+PROBE_FROM = (os.environ.get("PROBE_FROM") or "").rstrip("/") or None
+PROBE_STEP = None
+if PROBE_FROM:
+    _m = re.fullmatch(r"step-(\d+)", os.path.basename(PROBE_FROM))
+    if not _m:
+        raise ValueError(f"PROBE_FROM must be a step-<N> checkpoint dir, got {PROBE_FROM!r}")
+    PROBE_STEP = int(_m.group(1))
+    if VARIANT != "pls" or not TOTAL_STEPS or INIT_FROM or ARCH or HEADS_FROM or LAYERS:
+        raise ValueError("PROBE_FROM needs VARIANT=pls and TOTAL_STEPS, without INIT_FROM, ARCH, HEADS_FROM or LAYERS")
+    # levanter's weights-only init loads strictly; the fresh probes are not in the checkpoint.
+    import levanter.main.train_lm as _train_lm
+    from experiments.references.per_layer_qwen3 import load_without_probes
+
+    _train_lm.load_checkpoint = load_without_probes(_train_lm.load_checkpoint)
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
     "130m": dict(hidden=512, inter=1792, layers=6, heads=8, kv=8, batch=128, steps=4959, lr=0.02, adam_lr=0.008, eps=1e-20, momentum=0.95, schedule="linear", decay=0.8, warmup=0, max_grad_norm=1.0, ref_c4_en_bpb=1.16354),
@@ -328,7 +352,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-wu{WARMUP}"
     if HEADS_FROM:
         variant_tags += f"-headft{TOTAL_STEPS}"
-    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    if PROBE_FROM:
+        variant_tags += f"-probes{TOTAL_STEPS}at{PROBE_STEP}"
+    run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     if VARIANT == "fbt":
@@ -392,6 +418,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
+    elif VARIANT == "pls" and PROBE_FROM:  # the source run's knobs only named the run; the probe model is fixed
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=1.0, pls_monitor_stride=PLS_MON, pls_eval=True, pls_separate_heads=True, pls_heads_only=True, pls_probe_frozen_main=True, pls_future_probes=True)
     elif VARIANT == "pls":
         model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, pls_mtp_weight=PLS_MTP_W, pls_future_probes=PLS_FUT, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
     else:
@@ -412,7 +440,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
     # every other run, the baseline included, keeps MuonHConfig exactly.
-    if ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
+    if PROBE_FROM:
+        from experiments.references.per_layer_qwen3 import ProbesOnlyMuonHConfig as _Opt
+    elif ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
         from experiments.references.depth_arch_qwen3 import DepthArchSplitAuxMuonHConfig as _Opt
     elif ARCH in ("hc", "mhc", "attnres", "attnres_block"):
         from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig as _Opt
@@ -438,7 +468,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         weight_decay=0.1,
         lr_schedule=s["schedule"],
         decay=s["decay"],
-        warmup=HEADS_WARMUP if HEADS_FROM else (s["warmup"] if WARMUP is None else WARMUP),
+        warmup=HEADS_WARMUP if (HEADS_FROM or PROBE_FROM) else (s["warmup"] if WARMUP is None else WARMUP),
         min_lr_ratio=0.0,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
@@ -482,7 +512,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 allow_nondivisible_batch_size=True,
             ),
             train_seq_len=SEQ_LEN,
-            initialize_model_from_checkpoint_path=HEADS_FROM,
+            initialize_model_from_checkpoint_path=HEADS_FROM or PROBE_FROM,
             model=model,
             optimizer=optimizer,
             z_loss_weight=0.0,
