@@ -1,0 +1,7 @@
+# Q10 rescue C seed 1 (owner popup 2026-10-15): the 128K baseline whose rare input rows are, in training, replaced with
+# probability 0.5 by the mean of their 8K pieces' rows (VARIANT=cvd), seed 1 (init and replacement draws: cvd_seed=SEED).
+# Seed 0 (why-cvd 15523933): full 1.3934, 8 passes 1.4504, leads 128K by 0.015 and 8K by 0.027 at 8 passes. Smoke copy first.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+DATA_EPOCHS=8+SEED=1
+par cvd-s1-full 300m-della4xh100-cvd8k-p0.5-s1 main 4 420m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvd SEED=1
+par cvd-s1-rep8 300m-della4xh100-cvd8k-p0.5-rep8-s1 main 4 420m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VARIANT=cvd DATA_EPOCHS=8 SEED=1
+wait
