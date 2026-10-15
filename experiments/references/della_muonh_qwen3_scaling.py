@@ -66,7 +66,7 @@ from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
-from experiments.references.table_variants_qwen3 import (ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
+from experiments.references.table_variants_qwen3 import (ComposedBothResidualQwen3Config, ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
                                                          LowRankQwen3Config, RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
 from experiments.references.over_vocab_qwen3 import ROWS as OV_ROWS
@@ -269,6 +269,12 @@ FOP_IN = os.environ.get("FOP_IN", "0") == "1"
 # round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too (freeze_rows_muonh.py, freeze_table="res"); the shared
 # piece rows keep learning. Run tag suffix -resfp<pass>.
 CVR_RES_FREEZE = os.environ.get("CVR_RES_FREEZE", "0") == "1"
+# CVR_OUT_SLOW > 0 (owner, 2026-10-14; follow-up L): with VARIANT=cvr (CV_SIDE=in), the rare OUTPUT rows (ids FO_K ..
+# V-257) learn at CVR_OUT_SLOW times the learning rate from update round(steps / 8) * (FOP_FROM_PASS - 1) on, in the
+# full-data run too, as VARIANT=fop with FOP_BLOCK_NORM=1 and FOP_SLOW (freeze_rows_muonh.py, freeze_rare_scale). Run tag
+# suffix -oslow<CVR_OUT_SLOW>. VARIANT=cvr with CV_SIDE=both (follow-up K) composes the output head too, with its own
+# residual rows at CV_RES_SCALE (table_variants_qwen3.ComposedBothResidualQwen3Config); tag -cvboth<K/1000>k-res<scale>.
+CVR_OUT_SLOW = float(os.environ.get("CVR_OUT_SLOW", "0"))
 # VARIANT=fip (owner, 2026-10-13; Q4c): as fop, with the rare tokens' INPUT rows (the embedding, MuonH's plain-Adam group)
 # frozen instead of their output rows, from update round(steps / 8) * (FOP_FROM_PASS - 1), in the full-data run too; the
 # same FO_K and FOP_FROM_PASS knobs. Run tag -fip<FO_K/1000>kp<pass>.
@@ -425,7 +431,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "rm":
         variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}" + {"loss": "", "freeze": "f", "drop": "d"}[RM_MODE]
     if VARIANT == "cvr":
-        variant_tags += f"-cvin{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "")
+        variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "") + (f"-oslow{CVR_OUT_SLOW:g}" if CVR_OUT_SLOW else "")
     if VARIANT == "cvd":
         variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
@@ -535,10 +541,13 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError("VARIANT=rm masks the later passes of a repeated run: set DATA_EPOCHS")
         model_cls, model_extra = RareTargetMaskQwen3Config, dict(rm_k=RM_K, rm_from_step=_rm_from_step(s), rm_drop=RM_MODE == "drop")
     elif VARIANT == "cvr":
-        if CV_SIDE != "in":
-            raise ValueError("VARIANT=cvr composes the input table only (CV_SIDE=in)")
+        if CV_SIDE not in ("in", "both"):
+            raise ValueError("VARIANT=cvr composes the input table (CV_SIDE=in) or both tables (CV_SIDE=both, follow-up K)")
         cv_map = f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz"
-        model_cls, model_extra = ComposedResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=False, cv_res_scale=CV_RES_SCALE)
+        if CV_SIDE == "both":
+            model_cls, model_extra = ComposedBothResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=True, cv_res_scale=CV_RES_SCALE)
+        else:
+            model_cls, model_extra = ComposedResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=False, cv_res_scale=CV_RES_SCALE)
     elif VARIANT == "cvd":
         if TIE:
             raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
@@ -586,7 +595,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         raise ValueError("CVR_RES_FREEZE=1: only with VARIANT=cvr")
     if (FOP_IN or CVR_RES_FREEZE) and (PASS_DATA.startswith("bpd") or DATA_EPOCHS not in (0, 1, 8)):
         raise ValueError("FOP_IN / CVR_RES_FREEZE freeze at round(steps / 8): only with 8 equal passes or the full-data run")
-    if (VARIANT in ("fop", "fip") or CVR_RES_FREEZE) and FOP_FROM_PASS < 2:
+    if CVR_OUT_SLOW and not (VARIANT == "cvr" and CV_SIDE == "in" and 0 < CVR_OUT_SLOW < 1 and not CVR_RES_FREEZE):
+        raise ValueError(f"CVR_OUT_SLOW={CVR_OUT_SLOW}: in (0, 1), only with VARIANT=cvr, CV_SIDE=in and CVR_RES_FREEZE=0")
+    if CVR_OUT_SLOW and FO_K != CV_K:
+        raise ValueError(f"CVR_OUT_SLOW slows the output rows from FO_K={FO_K}: set it to CV_K={CV_K}, the composed table's K")
+    if CVR_RES_FREEZE and CV_SIDE != "in":
+        raise ValueError("CVR_RES_FREEZE=1 stops the input residuals only: CV_SIDE=in")
+    if CVR_OUT_SLOW and (PASS_DATA.startswith("bpd") or DATA_EPOCHS not in (0, 1, 8)):
+        raise ValueError("CVR_OUT_SLOW slows from round(steps / 8): only with 8 equal passes or the full-data run")
+    if (VARIANT in ("fop", "fip") or CVR_RES_FREEZE or CVR_OUT_SLOW) and FOP_FROM_PASS < 2:
         raise ValueError(f"FOP_FROM_PASS={FOP_FROM_PASS}: the rows learn during pass 1, so 2 or later")
     opt_cls, opt_extra = MuonHConfig, {}
     if VARIANT == "fop":   # the pass length of the 8-pass run (max_train_batches), in the full-data run as well
@@ -598,6 +615,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if CVR_RES_FREEZE:   # the residual rows, from the same update as fop
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
                                                          freeze_table="res")
+    if CVR_OUT_SLOW:   # the rare output rows of the cvr model, slowed as in G
+        opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
+                                                         freeze_block_norm=True, freeze_rare_scale=CVR_OUT_SLOW)
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(

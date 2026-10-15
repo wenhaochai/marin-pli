@@ -1,0 +1,9 @@
+# Follow-up K (owner delegated, 2026-10-14 "你自己看着办"): the cvr input table plus the output head composed the same way,
+# each rare token's output row the mean of its 8K pieces' output rows plus its own 0.1 output residual (out_res, MuonH
+# plain-Adam group, init zero; table_variants_qwen3.ComposedBothResidualQwen3Config; VARIANT=cvr CV_SIDE=both). Tests whether
+# the output-side counterpart of cvr removes the cost the rare output rows carry while the residual keeps the fit on new
+# text (the composed output head alone ended at 1.767 on all data). Smoke copy first; gate: train loss near the cvr runs.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvr+CV_SIDE=both+DATA_EPOCHS=8
+par cvboth-full 300m-della4xh100-cvboth8k-res0.1 main 4 400m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvr CV_SIDE=both
+par cvboth-rep8 300m-della4xh100-cvboth8k-res0.1-rep8 main 4 400m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VARIANT=cvr CV_SIDE=both DATA_EPOCHS=8
+wait
