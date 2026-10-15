@@ -391,3 +391,63 @@ class ComposedDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
             return super().activations(input_ids, attn_mask, key=key, pos_ids=pos_ids)
         x = self._embed_train(input_ids, step)
         return self.transformer(x, attn_mask=attn_mask, key=key, pos_ids=pos_ids)
+
+
+@LmConfig.register_subclass("qwen3_composed_residual_both")
+@dataclass(frozen=True)
+class ComposedBothResidualQwen3Config(ComposedResidualQwen3Config):
+    """Q10 follow-up K (owner, 2026-10-14): ``ComposedResidualQwen3Config`` on both tables. The input table is the cvr
+    one; the output head is composed the same way (rows of tokens below K and the specials are their own, a rare token's
+    output row is the mean of its K-token pieces' output rows) plus, for each rare token, its own output residual row
+    scaled by ``cv_res_scale``: row_t = mean(pieces) + 0.1 * q_t. The output residuals start at zero (step 0 is the
+    composed-output model) and sit in ``out_res``, a name without "lm_head", so MuonH puts them in its plain-Adam group as
+    the input residuals (no weight decay); under AdamH a zero table would never move, since its step scales with norm(p).
+    The small output table stays in AdamH, as the head of the composed-output model.
+
+    Review notes (2026-10-14): unlike the input residual (a tenth of its own table's Adam rate), the output residual moves
+    at about 0.1 * adam_lr per element per step against AdamH's lr * RMS(head) for a head row, so at 300m about 0.6x a
+    head row's rate, with no norm held. Its gradient is dense (every rare row at every step) and joins the plain-Adam
+    group's global clip. Step 0 is the composed-mean head, far worse on all data, so this variant is judged by its own
+    cost of repetition (8 passes minus all data)."""
+
+    def __post_init__(self):
+        ComposedVocabQwen3Config.__post_init__(self)
+        if not (self.cv_input and self.cv_output) or self.cv_output_reduce != "mean":
+            raise ValueError("the two-sided residual variant composes both tables with the mean (cv_input, cv_output, mean)")
+        if not self.cv_res_scale > 0:
+            raise ValueError(f"cv_res_scale={self.cv_res_scale}: must be positive")
+
+    @property  # type: ignore[override]
+    def model_type(self):  # noqa: D401
+        return ComposedBothResidualQwen3LMHeadModel
+
+
+RES_OUT = "cvr_rare_out"   # axis of the composed-output residual rows
+
+
+class ComposedBothResidualQwen3LMHeadModel(ComposedResidualQwen3LMHeadModel):
+    out_res: NamedArray   # [cvr_rare_out, Embed]: the output residual rows of tokens K .. V-257
+
+    @classmethod
+    def init(cls, Vocab: Axis, config: ComposedBothResidualQwen3Config, *, key):  # type: ignore[override]
+        base = ComposedVocabQwen3LMHeadModel.init(Vocab, config, key=key)   # the composed model on both sides, bit for bit
+        k = load_map(config.cv_map)[3] - N_SPECIAL
+        n = Vocab.size - N_SPECIAL - k
+        dt = base.embeddings.token_embeddings.weight.dtype
+        res = hax.zeros((Axis(RES, n), config.Embed), dtype=dt)
+        out = hax.zeros((Axis(RES_OUT, n), config.Embed), dtype=base.lm_head.weight.dtype)
+        return cls(transformer=base.transformer, embeddings=base.embeddings, lm_head=base.lm_head, full_vocab=Vocab, embeddings_res=res, out_res=out)
+
+    def _full(self) -> Qwen3LMHeadModel:
+        plain = super()._full()   # both tables composed, the input residual added
+        cfg: ComposedBothResidualQwen3Config = self.config  # type: ignore[assignment]
+        k = load_map(cfg.cv_map)[3] - N_SPECIAL
+        head = plain.lm_head
+        axes = head.weight.axes
+        w = head.weight.rearrange((self.full_vocab.name, cfg.Embed.name)).array
+        q = self.out_res.rearrange((RES_OUT, cfg.Embed.name)).array
+        if q.shape[0] != self.full_vocab.size - N_SPECIAL - k:
+            raise ValueError(f"{q.shape[0]} output residual rows for ids {k} .. {self.full_vocab.size - N_SPECIAL - 1}")
+        w = w.at[k:self.full_vocab.size - N_SPECIAL].add((cfg.cv_res_scale * q.astype(jnp.float32)).astype(w.dtype))
+        head = dataclasses.replace(head, weight=hax.named(w, (self.full_vocab, cfg.Embed)).rearrange(axes))
+        return Qwen3LMHeadModel(plain.transformer, plain.embeddings, head)

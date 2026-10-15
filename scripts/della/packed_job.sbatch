@@ -29,7 +29,7 @@ JOB_TMP_TAG=job source scripts/della/job_tmpdir.sh   # TMPDIR under scratch (nev
 # subdirectories in $JOBTMP; the whole job directory goes when the job ends, leftovers of killed tasks included
 trap 'case "$JOBTMP" in /scratch/gpfs/GROUP/USER/tmp/job/[0-9]*) rm -rf "$JOBTMP" ;; esac' EXIT
 # experiment knobs never come from the submitting shell (--export=ALL): each task sets its own
-unset SIZE SIZES VARIANT VARIANTS VOCAB_K TPP DATA_EPOCHS SEED BATCH SEQ_LEN RUN_TAG CV_SIDE CV_K CV_OUT_REDUCE FO_K LR_RANK RM_K RM_FROM_PASS RM_MODE FOP_BLOCK_NORM FOP_SLOW FOP_IN CVR_RES_FREEZE CVD_P CV_RES_SCALE PASS_DATA FOP_FROM_PASS NUM_GPUS TOTAL_STEPS INIT_FROM \
+unset SIZE SIZES VARIANT VARIANTS VOCAB_K TPP DATA_EPOCHS SEED BATCH SEQ_LEN RUN_TAG CV_SIDE CV_K CV_OUT_REDUCE FO_K LR_RANK RM_K RM_FROM_PASS RM_MODE FOP_BLOCK_NORM FOP_SLOW FOP_IN CVR_RES_FREEZE CVR_OUT_SLOW CVD_P CV_RES_SCALE PASS_DATA FOP_FROM_PASS NUM_GPUS TOTAL_STEPS INIT_FROM \
       SMOKE_STEPS SMOKE_ENVS PRECISION TIE EMA_BETA DEVICE_TAG PAIR_A PAIR_B PDP SS_SCHEDULE OV_M OV_OD_W OD_M FOCAL_GAMMA
 [ -f "${PLAN:-}" ] || { echo "set PLAN to a plan file"; exit 2; }
 PT=/scratch/gpfs/GROUP/USER/tools/packed_task.sh
