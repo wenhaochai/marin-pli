@@ -353,6 +353,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if HEADS_FROM:
         variant_tags += f"-headft{TOTAL_STEPS}"
     if PROBE_FROM:
+        # the knobs must name the probed run: PROBE_FROM = .../speedrun/<source id>/<version>/checkpoints/step-N
+        src = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(PROBE_FROM))))
+        want = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags
+        if re.sub(r"-della\d+x", "-dellaNx", src) != re.sub(r"-della\d+x", "-dellaNx", want):
+            raise ValueError(f"PROBE_FROM is a checkpoint of {src!r}, but the knobs name {want!r}")
         variant_tags += f"-probes{TOTAL_STEPS}at{PROBE_STEP}"
     run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
@@ -483,7 +488,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-pls-della" if VARIANT == "pls" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,
@@ -496,7 +501,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
-                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
+                # a probe run's checkpoint holds every probe head with its Adam state (~100 GB at 1_2b): saved hourly
+                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=60 if PROBE_FROM else 10), keep=[dict(every=10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
                     compute_mapping={

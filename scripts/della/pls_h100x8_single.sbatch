@@ -13,7 +13,7 @@
 
 # One VARIANT=pls run on all 8 GPUs of a node (NUM_GPUS=8), with its own smoke copy (packing rules: an independent run
 # is its own job carrying its own smoke). SINGLE holds the run's knobs as space-separated VAR=value assignments, e.g.
-#   SINGLE="SIZE=300m NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PLS_MTP_W=0.3" SINGLE_JOB_MIN=<--time in minutes>;
+#   SINGLE="SIZE=300m NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PLS_MTP_W=0.3" sbatch --time=... pls_h100x8_single.sbatch;
 # every other pls knob is cleared first. Steps, each through tools/packed_task.sh (ledger logs/packed/<jobid>.tsv):
 #   0. a run whose output already says SUCCESS (an earlier job of an afterany chain finished it) exits 0 at once;
 #   1. smoke copy: SMOKE_STEPS=SINGLE_SMOKE_STEPS (30) as a throwaway run (-j<jobid>s-smoke30, kind other), with the
@@ -40,7 +40,9 @@ export VARIANT=pls
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
-JOB_MIN=${SINGLE_JOB_MIN:?set SINGLE_JOB_MIN to the --time in minutes}
+lim=$(squeue -h -j "$SLURM_JOB_ID" -o %l)   # the job's own --time: [D-]HH:MM:SS
+JOB_MIN=$(awk -F'[-:]' '{ if (NF == 4) print $1 * 1440 + $2 * 60 + $3; else if (NF == 3) print $1 * 60 + $2; else print $1 }' <<< "$lim")
+[[ $JOB_MIN =~ ^[0-9]+$ ]] && [ "$JOB_MIN" -gt 30 ] || { echo "cannot read the job's time limit from '$lim'"; exit 2; }
 FIRST_MIN=${SINGLE_FIRST_STEP_MIN:-25}
 STALL_MIN=${SINGLE_STALL_MIN:-30}
 export PACKED_LEDGER_DIR=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed
@@ -119,6 +121,8 @@ echo "run $rid [$SINGLE]: pid $pid $(date +%H:%M:%S)"
 rc=0; wait "$pid" || rc=$?
 pid=
 echo "run $rid exited rc=$rc $(date +%H:%M:%S)"
+# a crash (not the time limit: timeout's 124, or 143 after TERM) stops the later jobs of the chain
+if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 143 ]; then echo "job $SLURM_JOB_ID: training rc=$rc" > "$FAILDIR/$rid.fail"; fi
 
 # 3. a finished probe run drops its checkpoints (only this run's own dir, only for a probe run id)
 if [ $rc -eq 0 ] && [[ $rid == *-probes[0-9]*at[0-9]* ]] && [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then
