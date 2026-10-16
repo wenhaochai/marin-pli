@@ -96,11 +96,11 @@ RUNS = [
     # 8-GPU pair job (pls_auto10_pair.sbatch, fetchable); the job ids join as the pairs are submitted
     *[(S(en, zh), "130m", 6, 2.6, 4, ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
         ("Separate heads, the readouts clipped on their own", "独立头，读出头单独裁剪", 15698932, "130m-della4xh100-pls1-sep-os"),
-        ("Separate heads, normalise then mix at 0.2", "独立头，先正交化再按 0.2 混合", 15698933, "130m-della4xh100-pls1-sep-mix0.2"),
+        ("Separate heads, normalise then mix at 0.2", "独立头，先正交化再按 0.2 混合", 15700045, "130m-della4xh100-pls1-sep-mix0.2"),
         ("Separate heads learning the final layer's distribution", "独立头学最终层的分布", 15699791, "130m-della4xh100-pls1-sep-kd"),
         ("Separate heads weighted by the final layer's confidence", "独立头按最终层置信度加权", 15698936, "130m-della4xh100-pls1-sep-conf"),
         ("Separate heads with exit adapters", "独立头加出口适配器", 15699791, "130m-della4xh100-pls1-sep-ad1024"),
-        ("Separate heads training MLPs only", "独立头只更新 MLP", 15698933, "130m-della4xh100-pls1-sep-mlpo"),
+        ("Separate heads training MLPs only", "独立头只更新 MLP", 15700045, "130m-della4xh100-pls1-sep-mlpo"),
         ("Separate heads on the first 256 positions", "独立头只用前 256 个位置", 15698936, "130m-della4xh100-pls1-sep-first256"),
         ("Separate heads, one random layer per step", "独立头，每步随机一层", 15698932, "130m-della4xh100-pls1-sep-randl"),
         ("Hyper-Connections: separate heads", "Hyper-Connections：独立头", 15696861, "130m-della4xh100-pls1-sep-ahc"),
