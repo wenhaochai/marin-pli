@@ -28,6 +28,11 @@ case $NAME in
   mtpl-probe-130m-mtp) S="$B130 PLS_MTP_W=0.3 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut/2026.09.13/checkpoints/step-4958";;
   mtpl-probe-300m-ntp) S="SIZE=300m $LAD TOTAL_STEPS=2000 PROBE_FROM=$ROOT/muonh-qwen3-300m-della8xh100-pls0-noev/2026.09.13/checkpoints/step-11443";;
   mtpl-probe-300m-mtp) S="SIZE=300m $LAD PLS_MTP_W=0.3 TOTAL_STEPS=2000 PROBE_FROM=$ROOT/muonh-qwen3-300m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-11443";;
+  # 520m and 1_2b train at batch 256: 1000 probe steps are the same 1B tokens as 2000 steps at batch 128
+  mtpl-probe-520m-ntp) S="SIZE=520m $LAD TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev/2026.09.13/checkpoints/step-9917";;
+  mtpl-probe-520m-mtp) S="SIZE=520m $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-9917";;
+  mtpl-probe-1_2b-ntp) S="SIZE=1_2b $LAD TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev/2026.09.13/checkpoints/step-22887";;
+  mtpl-probe-1_2b-mtp) S="SIZE=1_2b $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-22887";;
   *) echo "unknown probe job name '$NAME'"; exit 2;;
 esac
 ck=${S##*PROBE_FROM=}; [ -d "$ck" ] || { echo "missing checkpoint $ck"; exit 2; }
