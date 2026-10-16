@@ -63,7 +63,7 @@ RUNS = [
     # larger size trains NTP and NTP + MTP 0.3 as the baseline's training, 8 GPUs per run, one afterany chain each (the
     # first 520m NTP job failed its smoke and the first 1_2b NTP job crashed in training, both out of GPU memory: other).
     *[(S(f"{a} as the baseline", f"{a}，按基线训练"), size, layers, tok, 8, ("chain", jobs, f"{size}-della8xh100-pls0-noev{tag}"), "17")
-      for a, tag, runs in [("NTP", "", [("300m", 12, 6.0, [15591470, 15591471]), ("520m", 24, 10.4, [15591472, 15591473]), ("1_2b", 16, 24.0, [15591482, 15591483, 15591484])]),
+      for a, tag, runs in [("NTP", "", [("300m", 12, 6.0, [15591470, 15591471]), ("520m", 24, 10.4, [15591472, 15591473, 15664536]), ("1_2b", 16, 24.0, [15591482, 15591483, 15591484])]),
                            ("NTP + MTP", "-mtp0.3", [("300m", 12, 6.0, [15591485, 15591486]), ("520m", 24, 10.4, [15591490, 15591491]), ("1_2b", 16, 24.0, [15591492, 15591506, 15591507])])]
       for size, layers, tok, jobs in runs],
     # post-hoc probes of the finished models (Figure 18): fresh next-token and x_{t+2} heads on the frozen final checkpoint,
