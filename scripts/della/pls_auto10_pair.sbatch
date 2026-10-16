@@ -1,0 +1,30 @@
+#!/bin/bash
+#SBATCH --job-name=auto10
+#SBATCH --account=pli
+#SBATCH --partition=pli-c
+#SBATCH --qos=pli-short
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:8
+#SBATCH --cpus-per-task=96   # 8-GPU jobs ask for all 96 CPUs: priority JobSize counts CPUs
+#SBATCH --mem-per-gpu=24G
+#SBATCH --time=03:30:00
+#SBATCH --output=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/slurm/%x_%j.out
+#FETCHABLE: self-contained (both runs' knobs below come from the job name, nothing from the submit shell)
+
+# Ten more attempts at the last-layer cost of separate heads, 130m (owner popup 2026-10-16; page Figure 15): two 130m runs
+# of one direction on one 8-GPU node through pls_h100x8_pair.sbatch (smoke copies, readout gap check, training, ledger).
+# Submit with --job-name=auto10-<direction> --comment=fetchable and a right-sized --time; the pair script reads the
+# limit from the job (fetched: FETCHED_JOB_ID's). PAIR_GRACE_MIN 25: after one half ends, the other may run 25 min
+# more on its own, under Della's 30-min idle-GPU mail (a fetched job must keep its host's GPUs busy).
+set -euo pipefail
+cd /scratch/gpfs/GROUP/USER/project/marin-pls-auto10
+if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' '); else NAME=$SLURM_JOB_NAME; fi
+SEP="SIZE=130m PLS_W=1 PLS_SEP=1"
+case $NAME in
+  auto10-hc)      A="$SEP ARCH=hc";      B="$SEP PLS_DETACH_BB=1 ARCH=hc";;        # 9: Hyper-Connections, 6 layers
+  auto10-attnres) A="$SEP ARCH=attnres"; B="$SEP PLS_DETACH_BB=1 ARCH=attnres";;   # 10: AttnRes (Full), 6 layers
+  *) echo "unknown auto10 job name '$NAME'"; exit 2;;
+esac
+export PAIR_A=$A PAIR_B=$B PAIR_GRACE_MIN=25
+exec bash scripts/della/pls_h100x8_pair.sbatch

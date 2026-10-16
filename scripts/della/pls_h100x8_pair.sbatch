@@ -29,7 +29,7 @@
 # A training task with no first step after PAIR_FIRST_STEP_MIN (25) min or a silent log for PAIR_STALL_MIN (30) min is
 # stopped (a hung half must not hold 4 GPUs at 0%). Run ids come from CPU dry runs before any GPU task starts.
 set -euo pipefail   # every command that may fail below is written as `x=0; cmd || x=$?` or `|| true`
-cd /scratch/gpfs/GROUP/USER/project/marin-pls-mtp   # the pls-mtp worktree (its code; the venv stays marin-pls's, pls_env.sh)
+cd /scratch/gpfs/GROUP/USER/project/marin-pls-auto10   # the pls-auto10 worktree (its code; the venv stays marin-pls's, pls_env.sh)
 source scripts/della/pls_env.sh
 PY=${PAIR_TEST_PY:-$PY}   # tests only: a stub in place of the launcher
 PT=/scratch/gpfs/GROUP/USER/tools/packed_task.sh
@@ -47,8 +47,12 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 GRACE=$(( ${PAIR_GRACE_MIN:-75} * 60 ))
 SMOKE=${PAIR_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${PAIR_SMOKE_MIN:-15}m   # each smoke copy's limit; 48-layer designs on 4 GPUs compile and step for 15-35 min
-JOB_MIN=${PAIR_JOB_MIN:-200}           # the job's --time in minutes (03:20:00); training stops 5 min before it, so
-                                      # timeout, not Slurm, ends it and packed_task.sh writes its ledger line
+# the job's own --time in minutes; training stops 5 min before it, so timeout, not Slurm, ends it and packed_task.sh writes
+# its ledger line. Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and its --time the
+# limit fetch_pending.sh enforces (2026-10-16).
+if [ -n "${FETCHED_JOB_ID:-}" ]; then lim=$(sacct -X -n -j "$FETCHED_JOB_ID" -o Timelimit | head -1 | tr -d ' '); else lim=$(squeue -h -j "$SLURM_JOB_ID" -o %l); fi
+JOB_MIN=${PAIR_JOB_MIN:-$(awk -F'[-:]' '{ if (NF == 4) print $1 * 1440 + $2 * 60 + $3; else if (NF == 3) print $1 * 60 + $2; else print $1 }' <<< "$lim")}
+[[ $JOB_MIN =~ ^[0-9]+$ ]] && [ "$JOB_MIN" -gt 30 ] || { echo "cannot read the job's time limit from '$lim'"; exit 2; }
 FIRST_MIN=${PAIR_FIRST_STEP_MIN:-25}   # a training task with no first step by then is stopped (hang watchdog)
 STALL_MIN=${PAIR_STALL_MIN:-30}        # ... and one whose log stops growing for this long
 export PACKED_LEDGER_DIR=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed   # never the submit dir
