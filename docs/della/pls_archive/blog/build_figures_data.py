@@ -352,6 +352,35 @@ else:
 figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step separate heads start, 130m", "zh": "按独立头开始步数的各层最终训练损失，130m"},
                         legend=legend11, quantity=CE, xlabel=XL, height=320, panels=[p11])
 
+# Figure after fig-late (placeholder; owner popup 2026-10-16): ten more attempts at the last-layer cost, 130m, branch
+# pls-auto10 (pls_auto10_pair.sbatch). Per attempt, the final training loss (mean of the last 50 logged steps, as in
+# Figure 3) of layer 1 and of layer 6 minus the ordinary model of the same depth (grey dots of Figure 3), beside separate
+# heads at weight 1. auto10.json (fetch_auto10.py, once runs finish): {key: [final loss of layers 1..6]}; a key without
+# data shows its status word under its bar.
+AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"en": "1 Own clip", "zh": "1 单独裁剪"}, QUEUED),
+          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, QUEUED), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, QUEUED),
+          ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, QUEUED), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, QUEUED),
+          ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, QUEUED), ("first", {"en": "7 First 256", "zh": "7 前 256"}, QUEUED),
+          ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, QUEUED), ("hc", {"en": "9 HC", "zh": "9 HC"}, QUEUED),
+          ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, RUNNING)]
+A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
+A10["sep"] = [float(v) for v in Z["-pls1-sep/final"]]
+gap10 = {k: [float(A10[k][j] - cy[j]) for j in range(6)] for k in A10}
+cats10 = [lab if k in gap10 else {"en": lab["en"] + " · " + st["en"], "zh": lab["zh"] + " · " + st["zh"]} for k, lab, st in AUTO10]
+
+
+def auto10_panel(j, label, lo, hi, step):
+    vals = [round(gap10[k][j], 4) if k in gap10 else None for k, _, _ in AUTO10]
+    return dict(xlim=[-1.3, len(AUTO10) - 0.4], ylim=[lo, hi], yticks=lin_ticks(lo, hi, step, "{:.2f}"), cats=cats10, label=label,
+                marks=[dict(type="bars", color=BLUE7 if k == "sep" else "#8AB4F8", vals=[v if i == n else None for n, v in enumerate(vals)]) for i, (k, _, _) in enumerate(AUTO10)])
+
+
+figs["fig-auto10"] = dict(title={"en": "Ten more attempts at the last-layer cost, 130m", "zh": "降低最后一层代价的另外十种尝试，130m"},
+                          legend=[[{"en": "Separate heads, weight 1", "zh": "独立头，权重 1"}, BLUE7, "box"], [{"en": "One attempt", "zh": "一种尝试"}, "#8AB4F8", "box"]],
+                          quantity={"en": "Final training loss minus the ordinary model of the same depth (nats)", "zh": "最终训练损失减去同深度普通模型（nats）"},
+                          height=200, cols=1, panels=[auto10_panel(0, {"en": "Layer 1", "zh": "第 1 层"}, 0, 0.5, 0.1), auto10_panel(5, {"en": "Layer 6, the output", "zh": "第 6 层，即输出"}, 0, 0.15, 0.05)])
+print("fig-auto10", {k: [round(g, 3) for g in (v[0], v[5])] for k, v in gap10.items()})
+
 # Figure 10: the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
 BLUE3, RED3 = "#8AB4F8", "#F28B82"
