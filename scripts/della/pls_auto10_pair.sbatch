@@ -24,6 +24,10 @@ SEP="SIZE=130m PLS_W=1 PLS_SEP=1"
 case $NAME in
   auto10-hc)      A="$SEP ARCH=hc";      B="$SEP PLS_DETACH_BB=1 ARCH=hc";;        # 9: Hyper-Connections, 6 layers
   auto10-attnres) A="$SEP ARCH=attnres"; B="$SEP PLS_DETACH_BB=1 ARCH=attnres";;   # 10: AttnRes (Full), 6 layers
+  auto10-os-randl)  A="$SEP PLS_OPT_SPLIT=1"; B="$SEP PLS_RANDL=1";;      # 1: own clipping; 8: one random layer per step
+  auto10-mix-mlpo)  A="$SEP PLS_MIX=0.2";     B="$SEP PLS_MLPONLY=1";;    # 2: normalise then mix; 6: MLPs only (both: a 2nd pass)
+  auto10-kd-ad)     A="$SEP PLS_KD=1";        B="$SEP PLS_ADAPT=1024";;   # 3: distillation; 5: exit adapters
+  auto10-conf-first) A="$SEP PLS_CONF=1";     B="$SEP PLS_FIRST=256";;    # 4: confidence gate; 7: first 256 positions
   *) echo "unknown auto10 job name '$NAME'"; exit 2;;
 esac
 export PAIR_A=$A PAIR_B=$B PAIR_GRACE_MIN=25

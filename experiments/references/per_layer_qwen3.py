@@ -78,7 +78,9 @@ from levanter.layers.attention import AttentionMask
 from levanter.models.llama import LlamaDecoderLayer
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.optim.config import OptimizerConfig
-from levanter.optim.muonh import MuonHConfig, scale_by_adamh, scale_with_muonh
+from levanter.optim.muonh import MuonHConfig, ScaleByMuonHState, scale_by_adamh, scale_with_muonh
+from levanter.optim.util import map_flattened_linear_layers, norm_preserving_update, zeropower_via_newtonschulz5
+from optax import tree_utils as otu
 from levanter.trainer import current_train_step
 from levanter.utils.jax_utils import leaf_key_paths
 from levanter.utils.logging import LoadingTimeTrackerIterator
@@ -232,6 +234,100 @@ def split_aux_labels(base, params):
     return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
 
 
+def _zero_linear(layer: hnn.Linear) -> hnn.Linear:
+    return dataclasses.replace(layer, weight=layer.weight * 0)
+
+
+def scale_with_muonh_mix(momentum, nesterov, steps, muon_eps, learning_rate, coefficient_type, mix_scale, max_grad_norm):
+    """MuonH (levanter.optim.muonh.scale_with_muonh) on a model with aux_ghost (pls_mix_scale): the final loss's gradient
+    (every leaf outside aux_ghost) and the readouts' gradient (aux_ghost) are clipped by their own global norms, keep
+    their own momentum and are orthogonalised apart; each block Linear then takes O(own) + mix_scale * O(ghost) as one
+    norm-preserving step, and aux_ghost takes none (it stays zero)."""
+    steps = int(steps)
+
+    def init_fn(params):
+        return ScaleByMuonHState(momentum_buffer=otu.tree_zeros_like(params))
+
+    def update_fn(updates, state, params=None):
+        if max_grad_norm:
+            n_all, n_ghost = optax.global_norm(updates), optax.global_norm(updates.aux_ghost)
+            n_main = jnp.sqrt(jnp.maximum(n_all**2 - n_ghost**2, 0.0))
+            clip = lambda n: jnp.where(n > max_grad_norm, max_grad_norm / jnp.maximum(n, 1e-30), 1.0)  # noqa: E731  (optax.clip_by_global_norm)
+            c_main, c_ghost = clip(n_main), clip(n_ghost)
+            ghost = jax.tree_util.tree_map(lambda g: g * c_ghost.astype(g.dtype), updates.aux_ghost)
+            updates = eqx.tree_at(lambda m: m.aux_ghost, jax.tree_util.tree_map(lambda g: g * c_main.astype(g.dtype), updates), ghost)
+        buf = jax.tree.map(lambda m, g: None if g is None else momentum * m + g, state.momentum_buffer, updates, is_leaf=lambda x: x is None)
+        upd = jax.tree.map(lambda m, g: None if g is None else momentum * m + g, buf, updates, is_leaf=lambda x: x is None) if nesterov else buf
+
+        def orth(layer: hnn.Linear):
+            w = zeropower_via_newtonschulz5(layer.weight.array, steps=steps, eps=muon_eps, coefficient_type=coefficient_type)
+            return dataclasses.replace(layer, weight=dataclasses.replace(layer.weight, array=w))
+
+        o = map_flattened_linear_layers(orth, upd)
+
+        def mix(a, g):
+            if isinstance(a, hnn.Linear):
+                return dataclasses.replace(a, weight=a.weight + mix_scale * g.weight)
+            return a
+
+        mixed = jax.tree_util.tree_map(mix, o.transformer.layers, o.aux_ghost, is_leaf=lambda x: isinstance(x, hnn.Linear))
+        o = eqx.tree_at(lambda m: m.transformer.layers, o, mixed)
+        out = jax.tree_util.tree_map(lambda p_, u: norm_preserving_update(p_, u, learning_rate), params, o, is_leaf=lambda x: x is None)
+        out = eqx.tree_at(lambda m: m.aux_ghost, out, jax.tree_util.tree_map(jnp.zeros_like, out.aux_ghost))
+        return out, ScaleByMuonHState(momentum_buffer=buf)
+
+    return optax.GradientTransformation(init_fn, update_fn)
+
+
+@OptimizerConfig.register_subclass("muonH_pls_adapter")
+@dataclass(frozen=True)
+class AdapterMuonHConfig(MuonHConfig):
+    """MuonHConfig for pls_adapter_dim: the exit adapters' Linears train with the Adam group (MuonH would hold their
+    norms at init, so an adapter could never shrink, and its zero-initialised down projection would divide 0 by 0);
+    every other parameter keeps MuonHConfig's group exactly."""
+
+    def create_mask(self, params):
+        base = super().create_mask(params)
+        paths = leaf_key_paths(params, is_leaf=lambda x: isinstance(x, hnn.Linear))
+
+        def relabel(label, path):
+            if isinstance(path, NamedArray):
+                path = path.array
+            path_str = ".".join(path) if isinstance(path, (list, tuple)) else str(path)
+            if not path_str.startswith("aux_adapters"):
+                return label
+            return "adam"  # one label for the whole Linear, as MuonHConfig labels lm_head (a Linear left in the muonh tree
+            # with a masked weight breaks its Newton-Schulz map)
+
+        return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
+
+
+@OptimizerConfig.register_subclass("muonH_pls_mix")
+@dataclass(frozen=True)
+class MixAuxMuonHConfig(MuonHConfig):
+    """MuonHConfig for pls_mix_scale: the same groups and transforms, except that the muonh group runs
+    scale_with_muonh_mix (its own clipping of the two gradients replaces the group's global-norm clip)."""
+
+    mix_scale: float = 0.2
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+
+        def optimizer(learning_rate, adam_lr):
+            def clip():
+                return [optax.clip_by_global_norm(self.max_grad_norm)] if self.max_grad_norm else []
+
+            transformations = {
+                "muonh": scale_with_muonh_mix(self.momentum, self.nesterov, self.backend_steps, self.muon_epsilon, learning_rate, self.coefficient_type, self.mix_scale, self.max_grad_norm),
+                "adamh": optax.chain(*clip(), scale_by_adamh(self.beta1, self.beta2, self.epsilon, learning_rate)),
+                "adam": optax.chain(*clip(), optax.scale_by_adam(self.beta1, self.beta2, self.epsilon), optax.scale(-adam_lr)),
+            }
+            return optax.multi_transform(transformations, self.create_mask)
+
+        return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
+
+
 @LmConfig.register_subclass("qwen3_pls")
 @dataclass(frozen=True)
 class PerLayerQwen3Config(Qwen3Config):
@@ -298,6 +394,41 @@ class PerLayerQwen3Config(Qwen3Config):
     # Post-hoc probes (with pls_heads_only): the last layer's next-token readout is the model's own lm_head and final
     # norm, frozen (no gradient; ProbesOnlyMuonHConfig), so only the intermediate heads and the future probes train.
     pls_probe_frozen_main: bool = False
+    # Ten more attempts at the last-layer cost of separate heads (owner popup 2026-10-16), each on its own, each with
+    # pls_separate_heads on the baseline transformer; all off by default, and then nothing below changes:
+    # - pls_mix_scale s > 0: normalise, then mix. The intermediate losses reach the blocks' Linear weights through a ghost
+    #   copy (aux_ghost, all zeros: the readouts' forward uses stop_gradient(W) + G - stop_gradient(G), the same values),
+    #   so the final loss's gradient and theirs arrive apart. MixAuxMuonHConfig orthogonalises each on its own momentum
+    #   and applies O(final) + s * O(aux) as one norm-preserving MuonH step: the final loss keeps its full direction
+    #   (the MuonH analogue of gradient equilibrium, Li et al. 2019). One extra forward and backward of the blocks.
+    # - pls_distill: every intermediate head learns the final layer's distribution (soft cross-entropy against the
+    #   stop-gradient softmax of the model's own logits; Phuong & Lampert 2019) instead of the next token.
+    # - pls_conf_gate: each token's intermediate losses are multiplied by the stop-gradient probability the final layer
+    #   gives the right token, sum over tokens divided by the number of tokens (the pressure falls where the model is unsure).
+    # - pls_adapter_dim n > 0: an exit adapter before every intermediate head, x + down(silu(up(x))) on the head's
+    #   normed input, hidden size n (Kaya et al. 2019's internal classifiers), so the readout's transform lives in the head.
+    #   down starts at zero (the readout starts as separate heads'); both train with Adam (AdapterMuonHConfig).
+    # - pls_aux_mlp_only: the intermediate losses train the MLPs and the blocks' norms outside attention, not attention
+    #   (q/k norms included): their readouts see the blocks with stop-gradient attention parameters (same values). One
+    #   extra forward and backward.
+    # - pls_aux_first n > 0: the intermediate losses use only the first n positions of every document (a mean over those),
+    #   where a short context leaves little for in-context circuits to add.
+    # - pls_random_layer: every step one intermediate layer, drawn uniformly from the step's key, carries its loss at
+    #   pls_weight; the others carry none (their heads get no gradient that step).
+    # The logged pls/L{k} stay each readout's plain next-token cross-entropy over every position (comparable across runs).
+    pls_mix_scale: float = 0.0
+    pls_distill: bool = False
+    pls_conf_gate: bool = False
+    pls_adapter_dim: int = 0
+    pls_aux_mlp_only: bool = False
+    pls_aux_first: int = 0
+    pls_random_layer: bool = False
+
+    def _auto10(self) -> list[str]:
+        on = [n for n, v in (("pls_mix_scale", self.pls_mix_scale > 0), ("pls_distill", self.pls_distill), ("pls_conf_gate", self.pls_conf_gate),
+                             ("pls_adapter_dim", self.pls_adapter_dim > 0), ("pls_aux_mlp_only", self.pls_aux_mlp_only),
+                             ("pls_aux_first", self.pls_aux_first > 0), ("pls_random_layer", self.pls_random_layer)) if v]
+        return on
 
     def __post_init__(self):
         super().__post_init__()
@@ -349,6 +480,14 @@ class PerLayerQwen3Config(Qwen3Config):
         a, b = self.pls_probe_early
         if self.pls_probe and (half % self.pls_monitor_stride or not 0 <= a < b <= half):
             raise ValueError(f"pls_probe needs pls_monitor_stride | max_seq_len/2 and 0 <= early start < end <= max_seq_len/2, got stride {self.pls_monitor_stride}, early {self.pls_probe_early}")
+        if self.pls_mix_scale < 0 or self.pls_adapter_dim < 0 or self.pls_aux_first < 0:
+            raise ValueError("pls_mix_scale, pls_adapter_dim and pls_aux_first must be >= 0")
+        on = self._auto10()
+        if len(on) > 1:
+            raise ValueError(f"one of the ten attempts at a time, got {on}")
+        if on and (not self.pls_separate_heads or self.pls_weight <= 0 or self.depth_arch != "baseline" or self.pls_detach_backbone or self.pls_local_heads
+                   or self.pls_heads_only or self.pls_pcgrad or self.pls_probe or self.pls_off_end or self.pls_on_end or self.pls_mtp_weight > 0 or self.pls_future_probes):
+            raise ValueError(f"{on[0]} needs pls_separate_heads with pls_weight > 0 on the baseline transformer, without pls_detach_backbone, pls_local_heads, pls_heads_only, pls_pcgrad, pls_probe, a weight schedule, a late start, MTP or future probes")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -461,6 +600,8 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
     mtp: Optional[MtpModule] = None  # pls_mtp_weight > 0: the MTP module
     fut_norms: Optional[tuple] = None  # pls_future_probes: one RMSNorm per layer
     fut_lm_heads: Optional[tuple] = None  # pls_future_probes: one Embed -> Vocab head per layer, predicting x_{t+2}
+    aux_ghost: Optional[Stacked] = None  # pls_mix_scale > 0: zeros shaped like the blocks; the readouts' gradient lands here
+    aux_adapters: Optional[tuple] = None  # pls_adapter_dim > 0: (up, down) per intermediate layer
 
     @classmethod
     def init(cls, Vocab, config: PerLayerQwen3Config, *, key):  # type: ignore[override]
@@ -483,16 +624,27 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             keys = jrandom.split(jrandom.fold_in(key, 0xF2), config.num_layers)
             fut_norms = tuple(config.mk_LayerNorm(config.Embed) for _ in range(config.num_layers))
             fut_lm_heads = tuple(hnn.Linear.init(In=config.Embed, Out=Vocab, key=k, use_bias=False, out_first=True) for k in keys)
-        return cls(transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads, mtp, fut_norms, fut_lm_heads)
+        aux_ghost = aux_adapters = None
+        if config.pls_mix_scale > 0:  # no key: zeros, so every parameter above stays byte-identical
+            aux_ghost = jax.tree_util.tree_map(lambda a: jnp.zeros_like(a) if eqx.is_array(a) else a, transformer.layers)
+        if config.pls_adapter_dim > 0:
+            Hid = hax.Axis("pls_adapter", config.pls_adapter_dim)
+            keys = jrandom.split(jrandom.fold_in(key, 0xAD), 2 * (config.num_layers - 1))
+            aux_adapters = tuple(
+                (hnn.Linear.init(In=config.Embed, Out=Hid, key=keys[2 * k], use_bias=False, out_first=True),
+                 _zero_linear(hnn.Linear.init(In=Hid, Out=config.Embed, key=keys[2 * k + 1], use_bias=False, out_first=True)))
+                for k in range(config.num_layers - 1))
+        return cls(transformer, base.embeddings, base.lm_head, aux_norms, aux_lm_heads, mtp, fut_norms, fut_lm_heads, aux_ghost, aux_adapters)
 
     def _shape(self, k: int) -> float:
         """Layer k's share of pls_weight (pls_weight_shape)."""
         L = self.config.num_layers
         return 1.0 if cast(PerLayerQwen3Config, self.config).pls_weight_shape == "uniform" else 2.0 * (k + 1) / L
 
-    def layer_outputs(self, input_ids: NamedArray, attn_mask, *, key=None) -> NamedArray:
+    def layer_outputs(self, input_ids: NamedArray, attn_mask, *, key=None, layers: Optional[Stacked] = None) -> NamedArray:
         """The residual stream after every layer, stacked on the layer axis; the last entry is the final pre-norm state
-        (the activations the baseline normalises and decodes). Same embedding, mask and per-layer keys as ``activations``."""
+        (the activations the baseline normalises and decodes). Same embedding, mask and per-layer keys as ``activations``.
+        ``layers`` replaces the blocks' parameters (same structure), for the readouts' own forward pass."""
         tr = self.transformer
         x = self.embeddings.embed(input_ids)
         if cast(PerLayerQwen3Config, self.config).depth_arch != "baseline":
@@ -533,8 +685,23 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             trunk, read = _junction(y.array, y.axes.index(self.config.Embed))
             return hax.named(trunk, y.axes), hax.named(read, y.axes)
 
-        _, outs = tr.layers.scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
+        _, outs = (tr.layers if layers is None else layers).scan_via(step)(x, mask=attn_mask, key=keys, pos_ids=None)
         return outs
+
+    def _aux_layers(self) -> Optional[Stacked]:
+        """The blocks as the intermediate readouts see them (pls_mix_scale, pls_aux_mlp_only), same values; None = the blocks."""
+        cfg = cast(PerLayerQwen3Config, self.config)
+        A = self.transformer.layers
+        if cfg.pls_mix_scale > 0:
+            def ghost(a, g):  # value a, gradient into g
+                if isinstance(a, hnn.Linear):
+                    return dataclasses.replace(a, weight=jax.lax.stop_gradient(a.weight) + (g.weight - jax.lax.stop_gradient(g.weight)))
+                return a
+
+            return jax.tree_util.tree_map(ghost, A, self.aux_ghost, is_leaf=lambda x: isinstance(x, hnn.Linear))
+        if cfg.pls_aux_mlp_only:
+            return eqx.tree_at(lambda s: s.stacked.self_attn, A, replace_fn=jax.lax.stop_gradient)
+        return None
 
     def _local_outputs(self, example: LmExample, outs: NamedArray, *, key) -> NamedArray:
         """pls_local_heads: layer k recomputed on the stop-gradient input it saw (the embedding for k = 0), for k < L-1,
@@ -564,7 +731,11 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         h = outs[self.transformer.layers.Block.name, k]
         if detach_input:  # no gradient from this readout into the backbone
             h = jax.lax.stop_gradient(h)
-        return norm(h)
+        x = norm(h)
+        if self.aux_adapters is not None and self._separate(k):  # pls_adapter_dim: the head's own exit block
+            up, down = cast(Any, self.aux_adapters)[k]
+            x = x + down(hnn.silu(up(x)))
+        return x
 
     def _head(self, k: int) -> NamedArray:
         """Layer k's readout head: its own with pls_separate_heads (k < L-1), else the model's lm_head."""
@@ -701,6 +872,110 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             out[f"pls_probe/icl_L{k}"] = self._icl_score(outs, k, example, logit_soft_cap=kw.get("logit_soft_cap"))
         return out
 
+    def _first_positions(self, example: LmExample, n: int) -> NamedArray:
+        """1.0 where the position lies among the first n of its document (segment ids; the window when there are none)."""
+        Pos = example.tokens.resolve_axis(self.Pos.name)
+        batch_axes = tuple(ax for ax in example.tokens.axes if ax.name != Pos.name)
+        pos = hax.arange(Pos).broadcast_axis(batch_axes)
+        seg = _segment_ids(example)
+        if seg is None:
+            rel = pos
+        else:
+            seg = seg.rearrange(pos.axes)
+            start = hax.logical_or(seg != hax.roll(seg, 1, Pos), pos == 0)
+            idx = hax.where(start, pos, 0)
+            rel = pos - hax.named(jax.lax.cummax(idx.array, axis=idx.axes.index(Pos)), idx.axes)
+        return (rel < n).astype(jnp.float32)
+
+    def _distill_all(self, outs: NamedArray, aux_outs: NamedArray, example: LmExample, *, logit_soft_cap, chunk: int = 128):
+        """pls_distill: per intermediate layer k, (soft, label) = the mean over next-token positions of the cross-entropy of
+        readout k against the stop-gradient softmax of the final readout, and (stop-gradient) against x_{t+1}. Logits are
+        made chunk positions at a time under remat, never for the whole sequence."""
+        L, K = self.config.num_layers, self.config.num_layers - 1
+        Pos = example.tokens.resolve_axis(self.Pos.name)
+        order = (*[ax for ax in example.tokens.axes if ax.name != Pos.name], Pos)
+        m = next_token_loss_weight(Pos, example.loss_weight).rearrange(order).array.astype(jnp.float32)
+        y = hax.roll(example.tokens, -1, Pos).rearrange(order).array
+        npos, E = Pos.size, self.Embed.size
+        C = chunk if npos % chunk == 0 else npos
+        n = npos // C
+        m, y = m.reshape(-1, n, C).transpose(1, 0, 2), y.reshape(-1, n, C).transpose(1, 0, 2)
+        hf = jax.lax.stop_gradient(self._layer(outs, L - 1)).rearrange((*order, self.Embed)).array.reshape(-1, n, C, E).transpose(1, 0, 2, 3)
+        hs = jnp.stack([self._layer(aux_outs, k).rearrange((*order, self.Embed)).array for k in range(K)]).reshape(K, -1, n, C, E).transpose(2, 0, 1, 3, 4)
+        Wf = jax.lax.stop_gradient(self.get_lm_head()).rearrange((self.Vocab, self.Embed)).array
+        Ws = jnp.stack([self._head(k).rearrange((self.Vocab, self.Embed)).array for k in range(K)])
+        from haliax.partitioning import _get_mesh
+
+        mesh = _get_mesh()
+        if mesh is not None and not getattr(mesh, "empty", False):  # whole heads on every device, gathered once
+            Wf = jax.lax.with_sharding_constraint(Wf, NamedSharding(mesh, P()))
+            Ws = jax.lax.with_sharding_constraint(Ws, NamedSharding(mesh, P()))
+
+        cdt = hs.dtype  # the compute dtype; the heads enter the scan in f32, so their gradient sums over chunks in f32
+        Wf, Ws = Wf.astype(jnp.float32), Ws.astype(jnp.float32)
+
+        def logits(h, W):
+            z = jnp.einsum("nce,ve->ncv", h, W.astype(cdt), preferred_element_type=jnp.float32)
+            return z if logit_soft_cap is None else logit_soft_cap * jnp.tanh(z / logit_soft_cap)
+
+        @jax.checkpoint
+        def body(carry, xs):
+            hf_c, hs_c, m_c, y_c = xs
+            pf = jax.nn.softmax(logits(hf_c, Wf), axis=-1)
+            soft, lab = [], []
+            for k in range(K):
+                z = logits(hs_c[k], Ws[k])
+                lse = jax.nn.logsumexp(z, axis=-1)
+                soft.append(jnp.sum(m_c * (lse - jnp.sum(pf * z, axis=-1))))
+                lab.append(jnp.sum(m_c * jax.lax.stop_gradient(lse - jnp.take_along_axis(z, y_c[..., None], axis=-1)[..., 0])))
+            return (carry[0] + jnp.stack(soft), carry[1] + jnp.stack(lab)), None
+
+        (soft, lab), _ = jax.lax.scan(body, (jnp.zeros((K,), jnp.float32), jnp.zeros((K,), jnp.float32)), (hf, hs, m, y))
+        msum = jnp.sum(m)
+        return soft / msum, lab / msum
+
+    def _auto10_losses(self, outs: NamedArray, aux_outs: NamedArray, example: LmExample, final, w, *, key, kw: dict):
+        """The loss and logged per-layer next-token CE under the one pls_* attempt that is on (see PerLayerQwen3Config)."""
+        cfg = cast(PerLayerQwen3Config, self.config)
+        L = cfg.num_layers
+        loss, per, extra = final, [], {}
+        if cfg.pls_distill:
+            soft, lab = self._distill_all(outs, aux_outs, example, logit_soft_cap=kw.get("logit_soft_cap"))
+            for k in range(L - 1):
+                loss = loss + soft[k] * w
+            return loss, lab, {"pls/distill_mean": jnp.mean(soft)}
+        Pos = example.tokens.resolve_axis(self.Pos.name)
+        tok_kw = dict(kw, reduction=None, reduction_axis=())
+        m = next_token_loss_weight(Pos, example.loss_weight)
+        msum = hax.sum(m).scalar().astype(jnp.float32)
+        if cfg.pls_conf_gate:  # p(right token) under the final readout, stop-gradient; 0 where m = 0
+            ce_f = jax.lax.stop_gradient(self._readout_ce(outs, L - 1, example, **tok_kw))  # m * ce
+            gate = hax.where(m > 0, hax.exp(-ce_f / hax.where(m > 0, m, 1)), 0).astype(jnp.float32)
+            extra["pls/conf_gate"] = hax.sum(m * gate).scalar() / msum
+        if cfg.pls_random_layer:
+            kstar = jrandom.randint(jrandom.fold_in(key, 0x5E), (), 0, L - 1)
+            extra["pls/layer"] = kstar.astype(jnp.float32)
+        if cfg.pls_aux_first:
+            keep = self._first_positions(example, cfg.pls_aux_first)
+            ksum = hax.sum(m * keep).scalar().astype(jnp.float32)
+            extra["pls/first_share"] = ksum / msum
+        for k in range(L - 1):
+            if cfg.pls_conf_gate:
+                ce_tok = self._readout_ce(aux_outs, k, example, **tok_kw).astype(jnp.float32)  # m * ce
+                aux = hax.sum(ce_tok * gate).scalar() / msum
+                plain = jax.lax.stop_gradient(hax.sum(ce_tok).scalar() / msum)
+            elif cfg.pls_aux_first:  # one per-token CE: the kept positions' mean trains, every position's mean is logged
+                ce_tok = self._readout_ce(aux_outs, k, example, **tok_kw).astype(jnp.float32)  # m * ce
+                aux = hax.sum(ce_tok * keep).scalar() / ksum
+                plain = jax.lax.stop_gradient(hax.sum(ce_tok).scalar() / msum)
+            else:  # pls_mix_scale, pls_aux_mlp_only, pls_adapter_dim, pls_random_layer: the plain readout loss
+                aux = self._readout_ce(aux_outs, k, example, **kw)
+                plain = aux
+            wk = w * (kstar == k).astype(jnp.float32) if cfg.pls_random_layer else w
+            loss = loss + aux * wk
+            per.append(jnp.asarray(_scalar(plain), jnp.float32))
+        return loss, jnp.stack(per), extra
+
     def compute_next_token_loss(  # type: ignore[override]
         self,
         example: LmExample,
@@ -742,7 +1017,16 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             frozen_outs = jax.lax.stop_gradient(outs)
             aux_outs = frozen_outs + (outs - frozen_outs) * gain
 
+        auto10 = bool(cfg._auto10())
+        extra: dict = {}
+        if auto10 and self._aux_layers() is not None:  # the readouts' own pass over the blocks: same values, own gradient path
+            aux_outs = self.layer_outputs(example.tokens, example.attn_mask, key=key, layers=self._aux_layers())
+
         def supervised(w):
+            if auto10:
+                loss, per, more = self._auto10_losses(outs, aux_outs, example, final, w, key=key, kw=kw)
+                extra.update(more)
+                return loss, per
             loss, per = final, []
             for k in range(L - 1):
                 ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
@@ -780,6 +1064,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             values["pls/weight"] = weight
         if bb_gain is not None:
             values["pls/bb_gain"] = bb_gain
+        values.update(extra)
         if cfg.pls_probe:
             values.update(self._probe_stats(outs, example, key=key, kw=kw))
         stats = {k: Metric.from_value(jnp.asarray(v, jnp.float32), ReductionType.MEAN) for k, v in sorted(values.items())}
