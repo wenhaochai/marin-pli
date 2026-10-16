@@ -50,15 +50,35 @@ RUNS = [
       for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # AttnRes (Full), second init seed (Figure 8; owner popup 2026-10-13)
     *[(S(f"AttnRes (Full), seed 1: {n['en'].lower()}", f"AttnRes (Full)，种子 1：{n['zh']}"), "130m", 48, 2.6, 4,
-       ("chain", [15520124, 15520125, 15520126], f"130m-della4xh100-pls1-sep{bb}-aattnres-vs-d48-s1-g4"), "8") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
+       ("chain", [15520124, 15520125, 15520126, 15538869], f"130m-della4xh100-pls1-sep{bb}-aattnres-vs-d48-s1-g4"), "8") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # HC with positive writes (Figure 11; owner popup 2026-10-14): the causal test of HC's half last-layer cost
     *[(S(f"HC with positive writes: {n['en'].lower()}", f"写入为正的 HC：{n['zh']}"), "130m", 48, 2.6, 4,
        ("chain", [15536266, 15536267], f"130m-della4xh100-pls1-sep{bb}-ahc_pos-vs-d48-g4"), "11") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # ordinary models of 12, 24 and 36 layers, the same-depth references for Figure 6 (owner popup 2026-10-11)
     *[(DEPTH, "130m", d, 2.6, 4, ("slurm", f"15519767_{d}", f"130m-della4xh100-d{d}"), "6") for d in (12, 24, 36)],
     # multi-token prediction (Figure 16; owner popup 2026-10-13): one pair job, both runs with probes for x_{t+1} and x_{t+2}
-    (S("NTP, probes for the next two tokens", "NTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-fut"), "16"),
-    (S("NTP + MTP, probes for the next two tokens", "NTP + MTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut"), "16"),
+    (S("NTP, probes for the next two tokens", "NTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-fut"), "16, 17"),
+    (S("NTP + MTP, probes for the next two tokens", "NTP + MTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut"), "16, 17"),
+    # MTP across model sizes (Figures 17 and 18; owner popup 2026-10-14). The 130m point is the Figure 16 pair above. Each
+    # larger size trains NTP and NTP + MTP 0.3 as the baseline's training, 8 GPUs per run, one afterany chain each (the
+    # first 520m NTP job failed its smoke and the first 1_2b NTP job crashed in training, both out of GPU memory: other).
+    *[(S(f"{a} as the baseline", f"{a}，按基线训练"), size, layers, tok, 8, ("chain", jobs, f"{size}-della8xh100-pls0-noev{tag}"), "17")
+      for a, tag, runs in [("NTP", "", [("300m", 12, 6.0, [15591470, 15591471]), ("520m", 24, 10.4, [15591472, 15591473]), ("1_2b", 16, 24.0, [15591482, 15591483, 15591484])]),
+                           ("NTP + MTP", "-mtp0.3", [("300m", 12, 6.0, [15591485, 15591486]), ("520m", 24, 10.4, [15591490, 15591491]), ("1_2b", 16, 24.0, [15591492, 15591506, 15591507])])]
+      for size, layers, tok, jobs in runs],
+    # post-hoc probes of the finished models (Figure 18): fresh next-token and x_{t+2} heads on the frozen final checkpoint,
+    # 1B tokens each. The 520m and 1_2b probes are submitted when their training runs finish.
+    *[(S(f"Probes on the finished {a} model", f"在训练完的 {a} 模型上加探针"), size, layers, 1.0, 8,
+       ("slurm", jid, rid) if jid else ("planned", None, rid), "18")
+      for a, size, layers, jid, rid in [
+          ("NTP", "130m", 6, 15591508, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958"),
+          ("NTP + MTP", "130m", 6, 15591509, "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958"),
+          ("NTP", "300m", 12, 15659452, "300m-della8xh100-pls0-noev-probes2000at11443"),
+          ("NTP + MTP", "300m", 12, 15661760, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
+          ("NTP", "520m", 24, None, "520m-della8xh100-pls0-noev-probes1000at9917"),
+          ("NTP + MTP", "520m", 24, None, "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
+          ("NTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-probes1000at22887"),
+          ("NTP + MTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "12"),
@@ -125,7 +145,13 @@ def ledger(jid: str):
     return out
 
 
-TASKS = [dict(t, jid=f.stem) for f in sorted(PACKED.glob("*.tsv")) for t in (ledger(f.stem) or [])]
+# fetched.tsv (tools/fetch_pending.sh: fetched_id host_id start end exit) is not a task ledger. A fetched run's hours sit
+# in its host job's ledger (task fetched-ID, kind other); no run of this page has been fetched, and the first one must be
+# counted by hand-written code here, not guessed: fail until then.
+FETCHED = [l for l in (PACKED / "fetched.tsv").read_text().splitlines() if l.strip()] if (PACKED / "fetched.tsv").exists() else []
+if FETCHED:
+    raise RuntimeError(f"{PACKED / 'fetched.tsv'} lists fetched jobs; build_record.py does not count them yet: {FETCHED[:3]}")
+TASKS = [dict(t, jid=f.stem) for f in sorted(PACKED.glob("*.tsv")) if f.name != "fetched.tsv" for t in (ledger(f.stem) or [])]
 
 
 import time
