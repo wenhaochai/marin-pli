@@ -289,6 +289,10 @@ SIZES = {
 # 35.5 GiB one at step ~115 (H100 13852139, after a 40-step smoke had passed); two microbatches per step keep the batch
 # math and fit. 130m/300m run one microbatch as the originals did.
 PER_DEVICE_PARALLELISM = {"520m": 32, "1_2b": 32}
+# VARIANT=pls keeps every layer's output for its readouts: at 32 sequences per microbatch the 520m train step asks one
+# 90.80 GiB allocation on an 80 GB H100 (8-GPU smoke 15591472, PLS_W=0). Smaller microbatches, same batch per step.
+if VARIANT == "pls":
+    PER_DEVICE_PARALLELISM = {"520m": 16, "1_2b": 8}
 
 
 def _run_size(config: TrainLmOnPodConfig) -> None:

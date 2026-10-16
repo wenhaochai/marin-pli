@@ -40,7 +40,15 @@ export VARIANT=pls
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
-lim=$(squeue -h -j "$SLURM_JOB_ID" -o %l)   # the job's own --time: [D-]HH:MM:SS
+# Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
+# and the time limit come from this job's own id and --time (fetch_pending.sh stops it at that --time).
+JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
+if [ -n "${FETCHED_JOB_ID:-}" ]; then
+  lim=$(sacct -X -n -j "$FETCHED_JOB_ID" -o Timelimit | head -1 | tr -d ' ')
+  JNAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' ')
+else
+  lim=$(squeue -h -j "$SLURM_JOB_ID" -o %l); JNAME=$SLURM_JOB_NAME   # the job's own --time: [D-]HH:MM:SS
+fi
 JOB_MIN=$(awk -F'[-:]' '{ if (NF == 4) print $1 * 1440 + $2 * 60 + $3; else if (NF == 3) print $1 * 60 + $2; else print $1 }' <<< "$lim")
 [[ $JOB_MIN =~ ^[0-9]+$ ]] && [ "$JOB_MIN" -gt 30 ] || { echo "cannot read the job's time limit from '$lim'"; exit 2; }
 FIRST_MIN=${SINGLE_FIRST_STEP_MIN:-25}
