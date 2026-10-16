@@ -1,0 +1,3 @@
+# fetch emulation test (2026-10-16): smoke copies of the next batch, run the way tools/fetch_pending.sh runs a fetched job
+smoke smoke-p08 - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+CVD_P=0.8+DATA_EPOCHS=8
+smoke smoke-bpd - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+DATA_EPOCHS=8+PASS_DATA=bpd0.1

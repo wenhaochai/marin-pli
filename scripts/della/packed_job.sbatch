@@ -23,6 +23,10 @@
 # the retry), lanes side by side, so a failed run frees its GPUs for the lane's next task; "wait" also starts the lanes.
 # A task with a run (not "-") trains only if the dry run under its own VAR=value gives that run id (run_checked.sh).
 # Exit code: 0 only if every task passed. No set -e: a failed task is handled here.
+# Fetchable (owner via the controller, 2026-10-16): scripts/della/submit_packed.sh writes a self-contained batch script
+# per job (#FETCHABLE, PLAN and PACKED_NAME set inside) that runs this file, so tools/fetch_pending.sh can run the job
+# inside another job's GPUs. Then SLURM_JOB_ID is the host's: logs and TMPDIR take FETCHED_JOB_ID, and the task ledger
+# lines go to the host's ledger (packed_task.sh), where the record finds them.
 set -uo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
 JOB_TMP_TAG=job source scripts/della/job_tmpdir.sh   # TMPDIR under scratch (never the shared /tmp); its tasks make their own
@@ -72,7 +76,7 @@ while read -r mode task run kind gpus limit script vars; do
   [ "$mode" = wait ] && { waitall; continue; }
   args=(); for v in $vars; do args+=("${v//+/ }"); done
   echo "TASK $task ($mode, $run, $kind, $gpus GPUs, limit $limit) START $(date +%H:%M:%S): $script [${args[*]}]"
-  log=logs/slurm/${SLURM_JOB_NAME:-packed}_${SLURM_JOB_ID:-nojob}-$task.log
+  log=logs/slurm/${PACKED_NAME:-${SLURM_JOB_NAME:-packed}}_${FETCHED_JOB_ID:-${SLURM_JOB_ID:-nojob}}-$task.log   # a fetched job logs under its own name and id
   if [ "$run" != "-" ]; then inner=(scripts/della/run_checked.sh "$run" "$script" PAIR_LOG_TAG="-$task" "${args[@]}")
   else inner=(env PAIR_LOG_TAG="-$task" "${args[@]}" bash "$script"); fi
   cmd=("$PT" "$task" "$run" "$kind" "$gpus" "$limit" -- scripts/della/pgroup.sh bash -c 'exec "$@" >> "$0" 2>&1' "$log" "${inner[@]}")

@@ -1,11 +1,11 @@
 # Sourced by every job script (rule 2026-10-08: compute-node /tmp is small and shared; a full /tmp once failed every
-# compile of a scoring gate). Gives this script its own TMPDIR under /scratch/gpfs/GROUP/USER/tmp/job/$SLURM_JOB_ID
+# compile of a scoring gate). Gives this script its own TMPDIR under /scratch/gpfs/GROUP/USER/tmp/job/<job id>
 # and deletes it when the script exits. A packed job runs several tasks at once in one Slurm job, so each sourcing script
 # gets its own subdirectory (a shared one would vanish when the first task ends); packed_job.sbatch removes the job
 # directory at the end, and a task script also removes it when it is the last one out. Compiler caches (Triton, CUDA)
 # go there too; apptainer gets the same directory. Outside Slurm (a vis node) it changes nothing.
 if [ -n "${SLURM_JOB_ID:-}" ]; then
-  JOBTMP=/scratch/gpfs/GROUP/USER/tmp/job/$SLURM_JOB_ID
+  JOBTMP=/scratch/gpfs/GROUP/USER/tmp/job/${FETCHED_JOB_ID:-$SLURM_JOB_ID}   # a job tools/fetch_pending.sh runs in a host keeps its own directory (SLURM_JOB_ID is the host's)
   mkdir -p "$JOBTMP"
   TMPDIR=$(mktemp -d -p "$JOBTMP" "${JOB_TMP_TAG:-task}.XXXXXX")
   export JOBTMP TMPDIR TMP=$TMPDIR TEMP=$TMPDIR
