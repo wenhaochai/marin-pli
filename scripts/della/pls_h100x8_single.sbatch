@@ -41,7 +41,8 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
-# and the time limit come from this job's own id and --time (fetch_pending.sh stops it at that --time).
+# (logs, smoke run tags, fail markers) and the time limit come from this job's own id, name and --time (fetch_pending.sh
+# stops it at that --time); the ledger stays the host's.
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 if [ -n "${FETCHED_JOB_ID:-}" ]; then
   lim=$(sacct -X -n -j "$FETCHED_JOB_ID" -o Timelimit | head -1 | tr -d ' ')
@@ -73,7 +74,7 @@ stop() {   # TERM the task's timeout (it passes it on; packed_task.sh writes its
 trap 'if [ -n "$dog" ]; then kill "$dog" 2>/dev/null || true; fi; if [ -n "$pid" ]; then stop "$pid"; fi; pls_tmp_cleanup' EXIT
 run_id() {   # the launcher's run id for $SINGLE plus extra assignments; a CPU dry run
   # shellcheck disable=SC2086
-  basename "$(dirname "$(env $SINGLE ${1:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>>"logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_dryrun.log" | sed -n 's/^output: //p' || true)")"
+  basename "$(dirname "$(env $SINGLE ${1:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>>"logs/slurm/${JNAME}_${JID}_dryrun.log" | sed -n 's/^output: //p' || true)")"
 }
 watchdog() {
   local t0=$SECONDS
@@ -88,8 +89,8 @@ watchdog() {
   done
 }
 
-smoke_id=$(run_id "PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}s")
-[[ $smoke_id == *-j${SLURM_JOB_ID}s-smoke$SMOKE ]] || { echo "bad smoke run id '$smoke_id'"; exit 2; }
+smoke_id=$(run_id "PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s")
+[[ $smoke_id == *-j${JID}s-smoke$SMOKE ]] || { echo "bad smoke run id '$smoke_id'"; exit 2; }
 rid=$(run_id)
 [[ $rid == muonh-qwen3-*-della8xh100-* ]] || { echo "bad run id '$rid'"; exit 2; }
 out=$MARIN_PREFIX/speedrun/$rid/2026.09.13
@@ -100,27 +101,27 @@ FAILDIR=logs/pair_failed; mkdir -p "$FAILDIR"
 if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then echo "run $rid already finished: nothing to do"; exit 0; fi
 
 # 1. smoke copy
-slog=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_smoke.log
+slog=logs/slurm/${JNAME}_${JID}_smoke.log
 r=0
 # shellcheck disable=SC2086
-env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}s bash $PT smoke - other 8 $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s bash $PT smoke - other 8 $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
 echo "smoke $smoke_id exited rc=$r $(date +%H:%M:%S)"
-if [[ $smoke_id == *-j${SLURM_JOB_ID}s-smoke$SMOKE ]]; then
+if [[ $smoke_id == *-j${JID}s-smoke$SMOKE ]]; then
   rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
 fi
-[ $r -eq 0 ] || { echo "job $SLURM_JOB_ID: smoke failed rc=$r" > "$FAILDIR/$rid.fail"; echo "smoke failed: no training"; exit 4; }
+[ $r -eq 0 ] || { echo "job $JID: smoke failed rc=$r" > "$FAILDIR/$rid.fail"; echo "smoke failed: no training"; exit 4; }
 main=$(sed -n 's/.*levanter.eval eval loss: \([0-9.]*\).*/\1/p' "$slog" | tail -1)
 last=$(sed -n 's/.*per_layer_qwen3 eval\/L\([0-9]*\) loss \([0-9.]*\).*/\1 \2/p' "$slog" | sort -n | tail -1 | cut -d' ' -f2)
 gap=$(awk -v a="${main:-nan}" -v b="${last:-nan}" 'BEGIN { d = a - b; if (d < 0) d = -d; print (a == "nan" || b == "nan") ? "nan" : d }')
 echo "smoke: eval loss ${main:-?}, last readout ${last:-?}, gap $gap"
 if ! awk -v g="$gap" 'BEGIN { exit !(g != "nan" && g <= 0.005) }'; then
-  echo "job $SLURM_JOB_ID: smoke gap $gap" > "$FAILDIR/$rid.fail"; echo "last readout differs from the main eval (or is missing): no training"; exit 5
+  echo "job $JID: smoke gap $gap" > "$FAILDIR/$rid.fail"; echo "last readout differs from the main eval (or is missing): no training"; exit 5
 fi
 
 # 2. training
 TRAIN_LIMIT=$(( JOB_MIN * 60 - SECONDS - 300 ))s
 echo "training limit $TRAIN_LIMIT"
-log=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_train.log
+log=logs/slurm/${JNAME}_${JID}_train.log
 # shellcheck disable=SC2086
 setsid env $SINGLE bash $PT train "${rid#muonh-qwen3-}" main 8 "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
 pid=$!
@@ -130,7 +131,7 @@ rc=0; wait "$pid" || rc=$?
 pid=
 echo "run $rid exited rc=$rc $(date +%H:%M:%S)"
 # a crash (not the time limit: timeout's 124, or 143 after TERM) stops the later jobs of the chain
-if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 143 ]; then echo "job $SLURM_JOB_ID: training rc=$rc" > "$FAILDIR/$rid.fail"; fi
+if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 143 ]; then echo "job $JID: training rc=$rc" > "$FAILDIR/$rid.fail"; fi
 
 # 3. a finished probe run drops its checkpoints (only this run's own dir, only for a probe run id)
 if [ $rc -eq 0 ] && [[ $rid == *-probes[0-9]*at[0-9]* ]] && [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then
