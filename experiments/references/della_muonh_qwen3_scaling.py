@@ -360,7 +360,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         # the knobs must name the probed run: PROBE_FROM = .../speedrun/<source id>/<version>/checkpoints/step-N
         src = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(PROBE_FROM))))
         want = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags
-        if re.sub(r"-della\d+x", "-dellaNx", src) != re.sub(r"-della\d+x", "-dellaNx", want):
+        # GPU count and -noev do not name the checkpoint's model: the probe model always runs the per-layer eval, and the
+        # job's smoke copy sets PLS_EVAL=1 (a -noev source failed that check, 2026-10-16)
+        same = lambda r: re.sub(r"-della\d+x", "-dellaNx", r).replace("-noev", "")  # noqa: E731
+        if same(src) != same(want):
             raise ValueError(f"PROBE_FROM is a checkpoint of {src!r}, but the knobs name {want!r}")
         variant_tags += f"-probes{TOTAL_STEPS}at{PROBE_STEP}"
     run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
