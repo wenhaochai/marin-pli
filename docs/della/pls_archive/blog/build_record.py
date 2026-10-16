@@ -73,8 +73,8 @@ RUNS = [
       for a, size, layers, jid, rid in [
           ("NTP", "130m", 6, 15591508, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958"),
           ("NTP + MTP", "130m", 6, 15591509, "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958"),
-          ("NTP", "300m", 12, 15689064, "300m-della8xh100-pls0-noev-probes2000at11443"),
-          ("NTP + MTP", "300m", 12, 15689065, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
+          ("NTP", "300m", 12, 15690438, "300m-della8xh100-pls0-noev-probes2000at11443"),
+          ("NTP + MTP", "300m", 12, 15690439, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
           ("NTP", "520m", 24, None, "520m-della8xh100-pls0-noev-probes1000at9917"),
           ("NTP + MTP", "520m", 24, None, "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
           ("NTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-probes1000at22887"),
