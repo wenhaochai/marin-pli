@@ -145,12 +145,28 @@ def ledger(jid: str):
     return out
 
 
-# fetched.tsv (tools/fetch_pending.sh: fetched_id host_id start end exit) is not a task ledger. A fetched run's hours sit
-# in its host job's ledger (task fetched-ID, kind other); no run of this page has been fetched, and the first one must be
-# counted by hand-written code here, not guessed: fail until then.
-FETCHED = [l for l in (PACKED / "fetched.tsv").read_text().splitlines() if l.strip()] if (PACKED / "fetched.tsv").exists() else []
-if FETCHED:
-    raise RuntimeError(f"{PACKED / 'fetched.tsv'} lists fetched jobs; build_record.py does not count them yet: {FETCHED[:3]}")
+# fetched.tsv (tools/fetch_pending.sh, 2026-10-16): one line per job of this project that a host job ran in its leftover
+# time: fetched_id host_id start end exit. The fetched job itself ends CANCELLED in sacct with no elapsed time; it ran
+# inside the host, from start to end, on the host's GPUs. Its own tasks (smoke, train) write their ledger lines to
+# logs/packed/<host>.tsv here, since pls_h100x8_single.sbatch keeps PACKED_LEDGER_DIR and SLURM_JOB_ID is the host's.
+# A row whose job was fetched takes its state from the exit code and its hours from those task lines. H100-hours: a host
+# of this project already counts the fetched run through its own ledger; a host outside it (another project's job) adds
+# GPUs x (end - start) to the closing lines, split by the task lines in that window, and the job counts once.
+def fetched():
+    f = PACKED / "fetched.tsv"
+    out = {}
+    for n, line in enumerate(f.read_text().splitlines() if f.exists() else [], 1):
+        cols = line.split("\t")
+        if not line.strip():
+            continue
+        if len(cols) != 5 or not all(c.lstrip("-").isdigit() for c in cols):
+            raise RuntimeError(f"{f} line {n} is not a fetched line: {line!r}")
+        fid, host, start, end, ex = cols
+        out[fid] = dict(host=host, start=int(start), end=int(end), exit=ex)
+    return out
+
+
+FETCH = fetched()
 TASKS = [dict(t, jid=f.stem) for f in sorted(PACKED.glob("*.tsv")) if f.name != "fetched.tsv" for t in (ledger(f.stem) or [])]
 
 
@@ -212,6 +228,12 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
         # Running: a chain job trains now, or the run is past 10% of its steps and its next job waits (between 24 h jobs)
         under_way = run is not None and int(run.summary.get("_step", 0)) >= 0.1 * int(run.config["trainer"]["num_train_steps"])
         state = "COMPLETED" if done else ("RUNNING" if "RUNNING" in live or under_way else "PENDING") if live else "failed"
+    elif kind == "slurm" and str(ref) in FETCH:   # run by a host job (fetch_pending.sh)
+        F = FETCH[str(ref)]
+        state = "COMPLETED" if F["exit"] == "0" else "planned"
+        hours = sum(int(t["end"]) - int(t["start"]) for t in TASKS if t["run"] == rid and t["kind"] == "main" and t["exit"] in OK_EXIT) / 3600 if state == "COMPLETED" else 0.0
+        if state == "planned":
+            run = None
     elif kind == "slurm":
         try:
             state, hours = sacct(ref)
@@ -272,7 +294,7 @@ missing = [rid for (_, _, _, _, _, src, _), row in zip(RUNS, rows) if row["state
 if missing:
     raise RuntimeError(f"finished rows without their Slurm jobs in JOBS: {missing}")
 jobs = project_jobs()
-absent = sorted(set(MAIN) - {j for j, *_ in jobs})
+absent = sorted(set(MAIN) - {j for j, *_ in jobs} - set(FETCH))
 if [j for j in absent if sacct(j.split("_")[0])[0] != "PENDING"]:
     raise RuntimeError(f"jobs listed for rows are not among the project's GPU jobs: {absent}")
 # H100-hours by line (template dcfd5a1, owner 2026-10-07). A plain job goes whole to main (it belongs to a row) or other.
@@ -297,8 +319,25 @@ for jid, name, state, g, h in jobs:
     print(f"packed job {jid} {name}: sacct {gh:.2f} GPU-h -> main {main_gh:.2f}, other {gh - main_gh:.2f}")
 if abs(hours["main"] + hours["other"] - total) > 1e-6:
     raise RuntimeError(f"main + other {hours['main'] + hours['other']:.6f} != sacct total {total:.6f}")
+# fetched runs whose host is another project's job: their GPU-hours are not in this project's sacct total
+own = {j for j, *_ in jobs}; ext = 0.0
+for fid, F in sorted(FETCH.items()):
+    if F["host"] in own:
+        continue
+    req = subprocess.run(["sacct", "-n", "-X", "-P", "-j", fid, "-o", "ReqTRES"], capture_output=True, text=True, timeout=120).stdout
+    if "gres/gpu=" not in req:
+        raise RuntimeError(f"fetched job {fid}: no GPU count in sacct ReqTRES {req!r}")
+    g = int(req.split("gres/gpu=")[1].split(",")[0].split()[0])
+    gh = g * (F["end"] - F["start"]) / 3600
+    main_gh = sum(int(t["gpus"]) * (int(t["end"]) - int(t["start"])) / 3600 for t in TASKS if t["jid"] == F["host"] and t["kind"] == "main" and t["exit"] in OK_EXIT
+                  and t["run"] in ROWRUNS and F["start"] <= int(t["start"]) and int(t["end"]) <= F["end"] + 60)
+    main_gh = min(main_gh, gh)
+    hours["main"] += main_gh; hours["other"] += gh - main_gh; ext += gh
+    njobs["main" if main_gh > 0 else "other"] += 1
+    print(f"fetched job {fid} in host {F['host']} (another project), exit {F['exit']}: {gh:.3f} GPU-h -> main {main_gh:.3f}, other {gh - main_gh:.3f}")
+total += ext
 tot = {k: dict(h100_hours=round(hours[k]), jobs=njobs[k]) for k in ("main", "other")}
-print(f"check: main {hours['main']:.3f} + other {hours['other']:.3f} = {hours['main'] + hours['other']:.3f} GPU-h = sacct total {total:.3f}")
+print(f"check: main {hours['main']:.3f} + other {hours['other']:.3f} = {hours["main"] + hours["other"]:.3f} GPU-h = sacct total plus fetched runs in other projects' hosts {total:.3f}")
 for jid, name, state, g, h in sorted(jobs, key=lambda x: x[0]):
     print(f"  {'packed' if ledger(jid) is not None else 'main' if jid in MAIN else 'other':10s} {jid:12s} {name:28s} {state:14s} {g} x {h:6.2f} h = {g * h:7.1f} H100-h")
 # a row whose job is packed takes its own task's state and wall time, not the whole job's (audit 2026-10-07: a pair job
@@ -315,7 +354,7 @@ for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
             row.update(state=STATE["COMPLETED"], url=WB + src[2] if run is not None else "", code=code_url(run))
         else:                         # stopped or failed: the row waits for its rerun; its time went to other
             row.update(state=STATE["planned"], url="", code="", hours=0.0)
-    elif sacct(src[1])[0] not in ("PENDING", "RUNNING"):   # the job ended before this task did: rerun
+    elif str(src[1]) not in FETCH and sacct(src[1])[0] not in ("PENDING", "RUNNING"):   # the job ended before this task did: rerun
         row.update(state=STATE["planned"], url="", code="", hours=0.0)
 rec = dict(rows=rows, total=tot)
 OUT.write_text("/* Generated by build_record.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_RECORD = " + json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + ";\n")
