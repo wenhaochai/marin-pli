@@ -197,7 +197,7 @@ def x48(arch):
 ARCH = [("preln", "Pre-LN"), ("lns", "LayerNorm Scaling"), ("deepnorm", "DeepNorm"), ("keel", "KEEL"), ("hc", "Hyper-Connections"),
         ("mhc", "mHC"), ("attnres", "AttnRes (Full)"), ("attnres_block", "AttnRes (Block)"), ("moda", "MoDA")]
 # status words while a design trains (update with the queue): runs started 2026-10-09
-STATUS48 = {"moda": RUNNING}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN (2026-10-13)
+STATUS48 = {}   # training under way (a chain job running or the next one queued); "" = Sandwich-LN (all ten finished 2026-10-15)
 done48 = {a: g4(a) for a in [""] + [k for k, _ in ARCH] if g4(a) is not None}
 for a, ys in done48.items():
     print("d48", a or "sandwich", "separate heads L1 L24 L48", np.round(ys[0][[0, 23, 47]], 3), "probes", np.round(ys[1][[0, 23, 47]], 3))
@@ -240,7 +240,7 @@ figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and archi
 # layer index (not compute), one colour per design (writing:plot categories). Figure 8: separate heads minus probes,
 # final training loss by layer. Figure 9: the two setups' absolute losses in two panels. Designs join as they finish.
 DES = [("", "Sandwich-LN")] + ARCH
-DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6", "attnres_block": "#3C4043", "hc": "#007B83", "mhc": "#C2185B"}   # GM2 600 (yellow 900), then grey 800, cyan 900, pink 700
+DCOL = {"": "#1A73E8", "preln": "#D93025", "lns": "#E37400", "deepnorm": "#1E8E3E", "keel": "#9334E6", "attnres_block": "#3C4043", "hc": "#007B83", "mhc": "#C2185B", "moda": "#B06000"}   # GM2 600 (yellow 900), then grey 800, cyan 900, pink 700, orange 900
 drawn = [(a, n) for a, n in DES if a in done48 and a in DCOL]   # no colour for AttnRes (Full): its probe readouts below layer 48 are not comparable (OWN_RANGE)
 LX = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
 def lin_ticks(lo, hi, step, fmt="{:.1f}"):
@@ -264,7 +264,7 @@ figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design
 # its pair finishes (its category label says Queued / Running until then).
 HCPOS_STATUS = QUEUED
 CYAN3 = "#78D9EC"   # GM2 cyan 300: HC with positive writes, beside HC's cyan 900
-WSET = [("", "Sandwich-LN", GREY), ("preln", "Pre-LN", GREY), ("lns", "LNS", GREY), ("deepnorm", "DeepNorm", GREY), ("keel", "KEEL", GREY),
+WSET = [("", "Sandwich-LN", GREY), ("preln", "Pre-LN", GREY), ("lns", "LNS", GREY), ("deepnorm", "DeepNorm", GREY), ("keel", "KEEL", GREY), ("moda", "MoDA", GREY),
         ("hc", "HC", DCOL["hc"]), ("mhc", "mHC", DCOL["mhc"]), ("hc_pos", None, CYAN3)]
 wval = [round(float(done48[a][0][-1] - done48[a][1][-1]), 4) if a in done48 else None for a, _, _ in WSET]
 wcats = [{"en": n, "zh": n} if n else ({"en": "HC, w > 0", "zh": "HC，w > 0"} if a in done48 else HCPOS_STATUS) for a, n, _ in WSET]   # the legend names the colour
@@ -373,6 +373,49 @@ figs["fig-mtp"] = dict(title={"en": "Final probe loss by layer, NTP and MTP, 130
                        quantity=CE, xlabel=XL, height=220, cols=1,
                        panels=[dict(**empty_view(x6, 2.9, 10, MTP_STATUS, ys=(3, 4, 5, 6, 8)), label=lab)
                                for lab in ({"en": "Probes for the next token", "zh": "预测下一个词的探针"}, {"en": "Probes for the token after next", "zh": "预测下下个词的探针"})])
+MT = json.loads((HERE / "mtp.json").read_text()) if (HERE / "mtp.json").exists() else {}
+if "ntp" in MT and "mtp" in MT:   # both runs finished (fetch_mtp.py): fill the panels; each panel its own y range
+    for j, (key, lab) in enumerate((("next", {"en": "Probes for the next token", "zh": "预测下一个词的探针"}), ("after", {"en": "Probes for the token after next", "zh": "预测下下个词的探针"}))):
+        ys = [np.array(MT[r][key]) for r in ("ntp", "mtp")] + ([cy] if key == "next" else [])
+        v = view(np.tile(x6, len(ys)), np.concatenate(ys), endpoints_only=True)
+        v["yticks"] = [[a, f"{a:g}"] for a in (3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 8) if v["ylim"][0] <= a <= v["ylim"][1] - 0.04 * (v["ylim"][1] - v["ylim"][0])]
+        mk = sum(([line(pchip(x6, y), c), dots(pts(x6, y), c)] for y, c in zip(ys[:2], (RED, MTPC))), []) + ([dots(pts(x6, cy), GREY)] if key == "next" else [])
+        figs["fig-mtp"]["panels"][j] = dict(**v, marks=mk, label=lab)
+        print("fig-mtp", key, "NTP", np.round(ys[0], 3).tolist(), "NTP + MTP", np.round(ys[1], 3).tolist())
+
+# Figure after fig-mtp (placeholder; owner popup 2026-10-14): MTP across the ladder. NTP and NTP + MTP (weight 0.3) at
+# 130m (the fig-mtp runs), 300m, 520m and 1_2b (branch pls-mtp, pls_mtp_ladder_submit.sh); post-hoc probes on each final
+# checkpoint (launcher PROBE_FROM). Panels: the main model's held-out next-token loss by size; the change MTP - NTP of
+# every layer's next-token probe and of its probe for the token after next, by relative depth, one line per size.
+MTPL_STATUS = QUEUED
+LADDER = (("130m", {"en": "130m", "zh": "130m"}), ("300m", {"en": "300m", "zh": "300m"}), ("520m", {"en": "520m", "zh": "520m"}), ("1_2b", {"en": "1.2b", "zh": "1.2b"}))
+LADC = ("#8AB4F8", "#4285F4", "#1967D2", "#174EA6")   # GM2 blue 300, 500, 700, 900: smaller to larger
+DEPTH_X = {"en": "Relative depth (layer / number of layers)", "zh": "相对深度（层号 / 层数）"}
+DELTA = {"en": "Probe loss, NTP + MTP minus NTP (nats)", "zh": "探针损失，NTP + MTP 减 NTP（nats）"}
+dview = dict(xlim=[0.0, 1.04], ylim=[-0.3, 0.15], xticks=lin_ticks(0, 1, 0.25, "{:g}"), yticks=[[t, "0" if t == 0 else f"{t:+.1f}".replace("-", "\u2212")] for t, _ in lin_ticks(-0.3, 0.1, 0.1)], marks=[], empty=MTPL_STATUS)
+def mtpl_marks():
+    """fig-mtpl from mtpl.json (fetch_mtpl.py): the main model's held-out next-token loss by parameter count, a line and
+    dots per objective over the sizes that have both arms finished; the status word while none has."""
+    M = json.load(open(HERE / "mtpl.json")) if (HERE / "mtpl.json").exists() else {}
+    done = sorted((d for d in M.values() if "ntp" in d and "mtp" in d), key=lambda d: d["params"])
+    if not done:
+        return dict(marks=[], empty=MTPL_STATUS)
+    marks = []
+    for arm, c in (("ntp", RED), ("mtp", MTPC)):
+        p = pts([d["params"] for d in done], [d[arm] for d in done])
+        marks += [line(p, c), dots(p, c)]
+    print("fig-mtpl", {f"{d['params']:.3g}": (d["ntp"], d["mtp"]) for d in done})
+    return dict(marks=marks)
+figs["fig-mtpl"] = dict(title={"en": "Next-token loss by model size, NTP and MTP", "zh": "按模型尺度的下一个词损失，NTP 与 MTP"},
+                        legend=[[{"en": "NTP", "zh": "NTP"}, RED, "line"], [{"en": "NTP + MTP", "zh": "NTP + MTP"}, MTPC, "line"]],
+                        quantity=CE_EVAL, xlabel={"en": "Parameters", "zh": "参数量"}, height=220,
+                        panels=[dict(xlog=True, ylog=True, yoff=YOFF, xlim=[8e7, 2e9], ylim=[3.3, 4.1], xticks=[[1e8, "100M"], [3e8, "300M"], [1e9, "1B"]],
+                                     yticks=[[a, f"{a:g}"] for a in (3.4, 3.6, 3.8, 4.0)], **mtpl_marks())])
+figs["fig-mtpl-depth"] = dict(title={"en": "Change in probe loss by relative depth, MTP minus NTP", "zh": "按相对深度的探针损失变化，MTP 减 NTP"},
+                              legend=[[lab, c, "line"] for (_, lab), c in zip(LADDER, LADC)],
+                              quantity=DELTA, xlabel=DEPTH_X, height=200, cols=1,
+                              panels=[dict(**dview, label={"en": "Probes for the next token", "zh": "预测下一个词的探针"}),
+                                      dict(**dview, label={"en": "Probes for the token after next", "zh": "预测下下个词的探针"})])
 
 figs["fig-headft"] = dict(title={"en": "Per-layer loss before and after retraining the heads, 300m", "zh": "重训读出头前后的逐层损失，300m"},
                           legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE3, "line"], [{"en": "Separate heads, heads retrained", "zh": "独立头，重训读出头"}, BLUE7, "line"],
