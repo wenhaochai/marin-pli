@@ -57,19 +57,19 @@ RUNS = [
     # ordinary models of 12, 24 and 36 layers, the same-depth references for Figure 6 (owner popup 2026-10-11)
     *[(DEPTH, "130m", d, 2.6, 4, ("slurm", f"15519767_{d}", f"130m-della4xh100-d{d}"), "6") for d in (12, 24, 36)],
     # multi-token prediction (Figure 16; owner popup 2026-10-13): one pair job, both runs with probes for x_{t+1} and x_{t+2}
-    (S("NTP, probes for the next two tokens", "NTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-fut"), "16, 17"),
-    (S("NTP + MTP, probes for the next two tokens", "NTP + MTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut"), "16, 17"),
+    (S("NTP, probes for the next two tokens", "NTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-fut"), "17, 18"),
+    (S("NTP + MTP, probes for the next two tokens", "NTP + MTP，预测后两个词的探针"), "130m", 6, 2.6, 4, ("chain", [15523669], "130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut"), "17, 18"),
     # MTP across model sizes (Figures 17 and 18; owner popup 2026-10-14). The 130m point is the Figure 16 pair above. Each
     # larger size trains NTP and NTP + MTP 0.3 as the baseline's training, 8 GPUs per run, one afterany chain each (the
     # first 520m NTP job failed its smoke and the first 1_2b NTP job crashed in training, both out of GPU memory: other).
-    *[(S(f"{a} as the baseline", f"{a}，按基线训练"), size, layers, tok, 8, ("chain", jobs, f"{size}-della8xh100-pls0-noev{tag}"), "17")
+    *[(S(f"{a} as the baseline", f"{a}，按基线训练"), size, layers, tok, 8, ("chain", jobs, f"{size}-della8xh100-pls0-noev{tag}"), "18")
       for a, tag, runs in [("NTP", "", [("300m", 12, 6.0, [15591470, 15591471]), ("520m", 24, 10.4, [15591472, 15591473, 15664536]), ("1_2b", 16, 24.0, [15591482, 15591483, 15591484])]),
                            ("NTP + MTP", "-mtp0.3", [("300m", 12, 6.0, [15591485, 15591486]), ("520m", 24, 10.4, [15591490, 15591491]), ("1_2b", 16, 24.0, [15591492, 15591506, 15591507])])]
       for size, layers, tok, jobs in runs],
     # post-hoc probes of the finished models (Figure 18): fresh next-token and x_{t+2} heads on the frozen final checkpoint,
     # 1B tokens each. The 520m and 1_2b probes are submitted when their training runs finish.
     *[(S(f"Probes on the finished {a} model", f"在训练完的 {a} 模型上加探针"), size, layers, 1.0, 8,
-       ("slurm", jid, rid) if jid else ("planned", None, rid), "18")
+       ("slurm", jid, rid) if jid else ("planned", None, rid), "19")
       for a, size, layers, jid, rid in [
           ("NTP", "130m", 6, 15591508, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958"),
           ("NTP + MTP", "130m", 6, 15591509, "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958"),
@@ -90,8 +90,23 @@ RUNS = [
     (S("Separate heads, weight 1, gradient surgery", "独立头，权重 1，处理梯度冲突"), "130m", 6, 2.6, 4, ("slurm", 15083130, "130m-della4xh100-pls1-sep-pcg"), "13"),
     (S("Separate heads from step 300 (probes before)", "第 300 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15168919, "130m-della4xh100-pls1-sep-on300-400"), "14"),
     (S("Separate heads from step 1,500 (probes before)", "第 1,500 步起用独立头（之前为探针）"), "130m", 6, 2.6, 4, ("slurm", 15168919, "130m-della4xh100-pls1-sep-on1500-1600"), "14"),
-    (S("Separate heads, heads retrained (frozen backbone)", "独立头，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011512, "300m-della4xh100-pls1-sep-headft2000"), "15"),
-    (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011513, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "15"),
+    (S("Separate heads, heads retrained (frozen backbone)", "独立头，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011512, "300m-della4xh100-pls1-sep-headft2000"), "16"),
+    (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011513, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "16"),
+    # ten more attempts at the last-layer cost (Figure 15; owner popup 2026-10-16), branch pls-auto10: two 130m runs per
+    # 8-GPU pair job (pls_auto10_pair.sbatch, fetchable); the job ids join as the pairs are submitted
+    *[(S(en, zh), "130m", 6, 2.6, 4, ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
+        ("Separate heads, the readouts clipped on their own", "独立头，读出头单独裁剪", 15698932, "130m-della4xh100-pls1-sep-os"),
+        ("Separate heads, normalise then mix at 0.2", "独立头，先正交化再按 0.2 混合", 15698933, "130m-della4xh100-pls1-sep-mix0.2"),
+        ("Separate heads learning the final layer's distribution", "独立头学最终层的分布", 15698934, "130m-della4xh100-pls1-sep-kd"),
+        ("Separate heads weighted by the final layer's confidence", "独立头按最终层置信度加权", 15698936, "130m-della4xh100-pls1-sep-conf"),
+        ("Separate heads with exit adapters", "独立头加出口适配器", 15698934, "130m-della4xh100-pls1-sep-ad1024"),
+        ("Separate heads training MLPs only", "独立头只更新 MLP", 15698933, "130m-della4xh100-pls1-sep-mlpo"),
+        ("Separate heads on the first 256 positions", "独立头只用前 256 个位置", 15698936, "130m-della4xh100-pls1-sep-first256"),
+        ("Separate heads, one random layer per step", "独立头，每步随机一层", 15698932, "130m-della4xh100-pls1-sep-randl"),
+        ("Hyper-Connections: separate heads", "Hyper-Connections：独立头", 15696861, "130m-della4xh100-pls1-sep-ahc"),
+        ("Hyper-Connections: probes only", "Hyper-Connections：只加探针", 15696861, "130m-della4xh100-pls1-sep-bbfrozen-ahc"),
+        ("AttnRes (Full): separate heads", "AttnRes (Full)：独立头", 15696862, "130m-della4xh100-pls1-sep-aattnres"),
+        ("AttnRes (Full): probes only", "AttnRes (Full)：只加探针", 15696862, "130m-della4xh100-pls1-sep-bbfrozen-aattnres")]],
 ]
 # Completed jobs whose run is replaced by a corrected one: the 48-layer Sandwich-LN pair stalled near 6.3 nats on the 130m
 # learning rate (2026-10-05; rerun after the depth_lr_diag sweep).
