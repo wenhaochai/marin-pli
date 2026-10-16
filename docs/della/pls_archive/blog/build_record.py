@@ -103,8 +103,8 @@ RUNS = [
         ("Separate heads training MLPs only", "独立头只更新 MLP", 15700045, "130m-della4xh100-pls1-sep-mlpo"),
         ("Separate heads on the first 256 positions", "独立头只用前 256 个位置", 15698936, "130m-della4xh100-pls1-sep-first256"),
         ("Separate heads, one random layer per step", "独立头，每步随机一层", 15698932, "130m-della4xh100-pls1-sep-randl"),
-        ("Hyper-Connections: separate heads", "Hyper-Connections：独立头", 15696861, "130m-della4xh100-pls1-sep-ahc"),
-        ("Hyper-Connections: probes only", "Hyper-Connections：只加探针", 15696861, "130m-della4xh100-pls1-sep-bbfrozen-ahc"),
+        ("Hyper-Connections: separate heads", "Hyper-Connections：独立头", 15700214, "130m-della4xh100-pls1-sep-ahc"),
+        ("Hyper-Connections: probes only", "Hyper-Connections：只加探针", 15700214, "130m-della4xh100-pls1-sep-bbfrozen-ahc"),
         ("AttnRes (Full): separate heads", "AttnRes (Full)：独立头", 15699797, "130m-della4xh100-pls1-sep-aattnres"),
         ("AttnRes (Full): probes only", "AttnRes (Full)：只加探针", 15699797, "130m-della4xh100-pls1-sep-bbfrozen-aattnres")]],
 ]
