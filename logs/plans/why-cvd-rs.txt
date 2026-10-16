@@ -1,0 +1,4 @@
+# Q10e (owner popup 2026-10-15): cvd with the repeated part reshuffled in every pass (PASS_DATA=rs), 8 passes only; its full-data point is why-cvd's (15523933). No new code.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+DATA_EPOCHS=8+PASS_DATA=rs
+par cvd-rs-rep8 300m-della4xh100-cvd8k-p0.5-rep8-rs main 4 420m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvd DATA_EPOCHS=8 PASS_DATA=rs
+wait
