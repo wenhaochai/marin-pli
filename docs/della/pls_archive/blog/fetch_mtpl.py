@@ -6,7 +6,12 @@ model's own head; the MTP loss is a training loss only, so eval/loss of an MTP r
 heads or MTP module: W&B parameter_count of the ladder NTP runs (PLS_W=0 adds no parameters), and for 130m the same count
 computed (embeddings and lm_head 2 * 128256 * 512, six layers 4h^2 + 3h*inter + 4h + 2*64, final norm 512 = 154154240;
 the 300m formula gives 299669760, W&B's count). A run counts only when W&B says finished and its last step is
-num_train_steps - 1. W&B reself/marin-della -> mtpl.json {size: {params, ntp, mtp}} (a missing arm is absent).
+num_train_steps - 1. W&B reself/marin-della -> mtpl.json {size: {params, ntp, mtp, probes}} (a missing arm is absent).
+Figure 18 (fig-mtpl-depth): the post-hoc probes of each finished model (PROBE_FROM runs, -probes<steps>at<step>): per arm
+next (train/pls/L{k}, the next-token probe of layer k+1; the last layer is the model's own frozen head) and after
+(train/pls2/L{k}, the probe for the token after next), each the mean of the last 50 logged steps, as everywhere on the
+page. At 130m these reproduce the in-training probes of Figure 16 (MTP - NTP: layer 5 next +0.085 vs +0.080, layer 6
+after -0.185 vs -0.183; checked 2026-10-16), so the probe budget (2000 steps at batch 128, 1B tokens) holds.
 Usage: python fetch_mtpl.py. Exits 2 on a W&B error."""
 import json, sys, wandb
 from pathlib import Path
@@ -35,6 +40,26 @@ for size, (ntp, mtp) in RUNS.items():
         if arm == "ntp":
             d["params"] = P130 if size == "130m" else int(r.summary["parameter_count"])
         print(size, arm, d[arm], "params", d.get("params"))
+PROBES = {"130m": ("130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958", "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958", 6),
+          "300m": ("300m-della8xh100-pls0-noev-probes2000at11443", "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443", 12)}
+for size, (ntp, mtp, L) in PROBES.items():
+    got = {}
+    for arm, rid in (("ntp", ntp), ("mtp", mtp)):
+        try:
+            r = api.run(P + rid)
+        except Exception as e:
+            print(size, arm, "probes: no run yet" if "Could not find run" in str(e) or "404" in str(e) else f"probes: W&B ERROR {e}"[:200]); continue
+        n, last = int(r.config["trainer"]["num_train_steps"]), int(r.summary.get("_step", -1))
+        if r.state != "finished" or last != n - 1:
+            print(size, arm, "probes", r.state, "step", last, "of", n, "skipped"); continue
+        keys = [f"train/pls/L{k}" for k in range(L)] + [f"train/pls2/L{k}" for k in range(L)]
+        h = list(r.scan_history(keys=["_step", *keys], min_step=max(0, n - 200), max_step=n, page_size=1000))
+        m = {k: sum(v := [x[k] for x in h if x.get(k) is not None][-50:]) / len(v) for k in keys}
+        got[arm] = {"next": [round(m[f"train/pls/L{k}"], 4) for k in range(L)], "after": [round(m[f"train/pls2/L{k}"], 4) for k in range(L)]}
+    if len(got) == 2 and size in out:
+        out[size]["probes"] = got
+        print(size, "probes MTP - NTP next", [round(a - b, 3) for a, b in zip(got["mtp"]["next"], got["ntp"]["next"])],
+              "after", [round(a - b, 3) for a, b in zip(got["mtp"]["after"], got["ntp"]["after"])])
 if errors:
     sys.exit(2)
 out = {s: d for s, d in out.items() if "params" in d}

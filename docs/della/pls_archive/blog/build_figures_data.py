@@ -411,11 +411,29 @@ figs["fig-mtpl"] = dict(title={"en": "Next-token loss by model size, NTP and MTP
                         quantity=CE_EVAL, xlabel={"en": "Parameters", "zh": "参数量"}, height=220,
                         panels=[dict(xlog=True, ylog=True, yoff=YOFF, xlim=[8e7, 2e9], ylim=[3.3, 4.1], xticks=[[1e8, "100M"], [3e8, "300M"], [1e9, "1B"]],
                                      yticks=[[a, f"{a:g}"] for a in (3.4, 3.6, 3.8, 4.0)], **mtpl_marks())])
+def depth_panel(target):
+    """fig-mtpl-depth from mtpl.json (fetch_mtpl.py): MTP minus NTP of each layer's post-hoc probe loss (target "next" or
+    "after") at relative depth k / L, a line and dots per size whose two probe runs have finished; the status word while
+    none has."""
+    M = json.load(open(HERE / "mtpl.json")) if (HERE / "mtpl.json").exists() else {}
+    marks = []
+    for (key, _), c in zip(LADDER, LADC):
+        pr = M.get(key, {}).get("probes")
+        if not pr:
+            continue
+        L = len(pr["ntp"][target])
+        p = [[round((k + 1) / L, 4), round(a - b, 4)] for k, (a, b) in enumerate(zip(pr["mtp"][target], pr["ntp"][target]))]
+        marks += [line(p, c), dots(p, c)]
+        print("fig-mtpl-depth", target, key, [d for _, d in p])
+    d = dict(dview, marks=marks)
+    if marks:
+        d.pop("empty")
+    return d
 figs["fig-mtpl-depth"] = dict(title={"en": "Change in probe loss by relative depth, MTP minus NTP", "zh": "按相对深度的探针损失变化，MTP 减 NTP"},
                               legend=[[lab, c, "line"] for (_, lab), c in zip(LADDER, LADC)],
                               quantity=DELTA, xlabel=DEPTH_X, height=200, cols=1,
-                              panels=[dict(**dview, label={"en": "Probes for the next token", "zh": "预测下一个词的探针"}),
-                                      dict(**dview, label={"en": "Probes for the token after next", "zh": "预测下下个词的探针"})])
+                              panels=[dict(**depth_panel("next"), label={"en": "Probes for the next token", "zh": "预测下一个词的探针"}),
+                                      dict(**depth_panel("after"), label={"en": "Probes for the token after next", "zh": "预测下下个词的探针"})])
 
 figs["fig-headft"] = dict(title={"en": "Per-layer loss before and after retraining the heads, 300m", "zh": "重训读出头前后的逐层损失，300m"},
                           legend=[[{"en": "Separate heads", "zh": "独立头"}, BLUE3, "line"], [{"en": "Separate heads, heads retrained", "zh": "独立头，重训读出头"}, BLUE7, "line"],
