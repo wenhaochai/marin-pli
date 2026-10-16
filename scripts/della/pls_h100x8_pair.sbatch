@@ -51,6 +51,10 @@ SMOKE_LIMIT=${PAIR_SMOKE_MIN:-15}m   # each smoke copy's limit; 48-layer designs
 # its ledger line. Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and its --time the
 # limit fetch_pending.sh enforces (2026-10-16).
 if [ -n "${FETCHED_JOB_ID:-}" ]; then lim=$(sacct -X -n -j "$FETCHED_JOB_ID" -o Timelimit | head -1 | tr -d ' '); else lim=$(squeue -h -j "$SLURM_JOB_ID" -o %l); fi
+# names (logs, smoke run tags, fail markers) use this job's own id and name, so two jobs a host runs one after another
+# never share a log (2026-10-16); the ledger stays the host's (SLURM_JOB_ID), which is how the record finds its hours
+JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
+if [ -n "${FETCHED_JOB_ID:-}" ]; then JNAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' '); else JNAME=$SLURM_JOB_NAME; fi
 JOB_MIN=${PAIR_JOB_MIN:-$(awk -F'[-:]' '{ if (NF == 4) print $1 * 1440 + $2 * 60 + $3; else if (NF == 3) print $1 * 60 + $2; else print $1 }' <<< "$lim")}
 [[ $JOB_MIN =~ ^[0-9]+$ ]] && [ "$JOB_MIN" -gt 30 ] || { echo "cannot read the job's time limit from '$lim'"; exit 2; }
 FIRST_MIN=${PAIR_FIRST_STEP_MIN:-25}   # a training task with no first step by then is stopped (hang watchdog)
@@ -81,7 +85,7 @@ stop() {   # $1 = a task's packed_task.sh pid. TERM its timeout (which passes it
 trap 'for d in ${dogs[*]:-}; do kill "$d" 2>/dev/null || true; done; for p in ${pids[*]:-}; do stop "$p"; done; pls_tmp_cleanup' EXIT
 run_id() {   # the run id the launcher builds for spec $1 plus extra assignments; a dry run on the CPU, no GPU touched
   # shellcheck disable=SC2086
-  basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>>"logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_dryrun.log" | sed -n 's/^output: //p' || true)")"
+  basename "$(dirname "$(env $1 ${2:-} DRY_RUN=1 CUDA_VISIBLE_DEVICES= JAX_PLATFORMS=cpu "$PY" -m $LAUNCH 2>>"logs/slurm/${JNAME}_${JID}_dryrun.log" | sed -n 's/^output: //p' || true)")"
 }
 watchdog() {   # $1 pid, $2 log: stop a training task that hangs (no first step after FIRST_MIN, or a silent log for STALL_MIN),
   # so a hung half cannot hold 4 GPUs at 0% until Della cancels the whole job
@@ -99,8 +103,8 @@ watchdog() {   # $1 pid, $2 log: stop a training task that hangs (no first step 
 
 # every run id first (dry runs on the CPU), before any task holds a GPU
 for i in 0 1; do
-  smoke_ids[$i]=$(run_id "${specs[$i]}" "SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}${names[$i]}")
-  [[ ${smoke_ids[$i]} == *-j${SLURM_JOB_ID}${names[$i]}-smoke$SMOKE ]] || { echo "bad smoke run id '${smoke_ids[$i]}' for ${specs[$i]}"; exit 2; }
+  smoke_ids[$i]=$(run_id "${specs[$i]}" "SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}${names[$i]}")
+  [[ ${smoke_ids[$i]} == *-j${JID}${names[$i]}-smoke$SMOKE ]] || { echo "bad smoke run id '${smoke_ids[$i]}' for ${specs[$i]}"; exit 2; }
   run_ids[$i]=$(run_id "${specs[$i]}")
   [[ ${run_ids[$i]} == muonh-qwen3-* ]] || { echo "bad run id '${run_ids[$i]}' for ${specs[$i]}"; exit 2; }
 done
@@ -113,8 +117,8 @@ FAILDIR=logs/pair_failed; mkdir -p "$FAILDIR"
 # 1. smoke copies, both halves at once
 for i in 0 1; do
   # shellcheck disable=SC2086
-  setsid env ${specs[$i]} SMOKE_STEPS=$SMOKE RUN_TAG=-j${SLURM_JOB_ID}${names[$i]} CUDA_VISIBLE_DEVICES=${gpus[$i]} \
-    bash $PT smoke-${names[$i]} - other 4 $SMOKE_LIMIT -- "$PY" -m $LAUNCH > logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}-smoke.log 2>&1 &
+  setsid env ${specs[$i]} SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}${names[$i]} CUDA_VISIBLE_DEVICES=${gpus[$i]} \
+    bash $PT smoke-${names[$i]} - other 4 $SMOKE_LIMIT -- "$PY" -m $LAUNCH > logs/slurm/${JNAME}_${JID}_${names[$i]}-smoke.log 2>&1 &
   pids[$i]=$!
   echo "smoke ${names[$i]} ${smoke_ids[$i]} on GPUs ${gpus[$i]}: pid ${pids[$i]} $(date +%H:%M:%S)"
 done
@@ -123,26 +127,26 @@ for i in 0 1; do
   r=0; wait "${pids[$i]}" || r=$?
   echo "smoke ${names[$i]} exited rc=$r $(date +%H:%M:%S)"; [ $r -eq 0 ] || smoke_ok=0
   # throwaway checkpoints, final and temporary: only this job's tagged smoke directory (never an empty or foreign id)
-  if [[ ${smoke_ids[$i]} == *-j${SLURM_JOB_ID}${names[$i]}-smoke$SMOKE ]]; then
+  if [[ ${smoke_ids[$i]} == *-j${JID}${names[$i]}-smoke$SMOKE ]]; then
     rm -rf -- "$MARIN_PREFIX/speedrun/${smoke_ids[$i]}" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/${smoke_ids[$i]}"
   fi
 done
 pids=()
-[ $smoke_ok = 1 ] || { echo "job $SLURM_JOB_ID: a smoke copy failed" > "$FAILDIR/${run_ids[0]}.fail"; echo "a smoke copy failed: no training"; exit 4; }
+[ $smoke_ok = 1 ] || { echo "job $JID: a smoke copy failed" > "$FAILDIR/${run_ids[0]}.fail"; echo "a smoke copy failed: no training"; exit 4; }
 # The smoke's last-layer readout must equal the main eval (both decode the final state with lm_head): at 48 layers under
 # FSDP the readout path computed a different function on GPU (2026-10-09, 15255032/15257881) and training followed it.
 # Enforced for every design: the DepthBench designs decode outputs(...)[-1] in both paths too (depth_arch_qwen3.py), and
 # their FSDP smokes showed gaps of 0.015-0.146 (14969857, 15024096). A failure leaves a marker so that the later jobs
 # of an afterany chain stop at once instead of repeating the smoke.
 for i in 0 1; do
-  slog=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}-smoke.log
+  slog=logs/slurm/${JNAME}_${JID}_${names[$i]}-smoke.log
   main=$(sed -n 's/.*levanter.eval eval loss: \([0-9.]*\).*/\1/p' "$slog" | tail -1)
   last=$(sed -n 's/.*per_layer_qwen3 eval\/L\([0-9]*\) loss \([0-9.]*\).*/\1 \2/p' "$slog" | sort -n | tail -1 | cut -d' ' -f2)
   gap=$(awk -v a="${main:-nan}" -v b="${last:-nan}" 'BEGIN { d = a - b; if (d < 0) d = -d; print (a == "nan" || b == "nan") ? "nan" : d }')
   echo "smoke ${names[$i]}: eval loss ${main:-?}, last readout ${last:-?}, gap $gap"
   if ! awk -v g="$gap" 'BEGIN { exit !(g != "nan" && g <= 0.005) }'; then
     echo "smoke ${names[$i]}: last readout differs from the main eval (or is missing): no training"
-    echo "job $SLURM_JOB_ID: smoke ${names[$i]} gap $gap" > "$FAILDIR/${run_ids[0]}.fail"; exit 5
+    echo "job $JID: smoke ${names[$i]} gap $gap" > "$FAILDIR/${run_ids[0]}.fail"; exit 5
   fi
 done
 
@@ -150,7 +154,7 @@ done
 TRAIN_LIMIT=${PAIR_TRAIN_LIMIT:-$(( JOB_MIN * 60 - SECONDS - 300 ))s}
 echo "training limit $TRAIN_LIMIT"
 for i in 0 1; do
-  log=logs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${names[$i]}.log
+  log=logs/slurm/${JNAME}_${JID}_${names[$i]}.log
   # shellcheck disable=SC2086  # word-split the VAR=value assignments on purpose
   setsid env ${specs[$i]} CUDA_VISIBLE_DEVICES=${gpus[$i]} \
     bash $PT train-${names[$i]} "${run_ids[$i]#muonh-qwen3-}" main 4 "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
