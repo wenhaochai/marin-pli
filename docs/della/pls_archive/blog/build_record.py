@@ -76,7 +76,7 @@ RUNS = [
           ("NTP", "300m", 12, 15690438, "300m-della8xh100-pls0-noev-probes2000at11443"),
           ("NTP + MTP", "300m", 12, 15690439, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
           ("NTP", "520m", 24, 15694961, "520m-della8xh100-pls0-noev-probes1000at9917"),
-          ("NTP + MTP", "520m", 24, None, "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
+          ("NTP + MTP", "520m", 24, 15699612, "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
           ("NTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-probes1000at22887"),
           ("NTP + MTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
@@ -97,16 +97,16 @@ RUNS = [
     *[(S(en, zh), "130m", 6, 2.6, 4, ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
         ("Separate heads, the readouts clipped on their own", "独立头，读出头单独裁剪", 15698932, "130m-della4xh100-pls1-sep-os"),
         ("Separate heads, normalise then mix at 0.2", "独立头，先正交化再按 0.2 混合", 15698933, "130m-della4xh100-pls1-sep-mix0.2"),
-        ("Separate heads learning the final layer's distribution", "独立头学最终层的分布", 15698934, "130m-della4xh100-pls1-sep-kd"),
+        ("Separate heads learning the final layer's distribution", "独立头学最终层的分布", 15699791, "130m-della4xh100-pls1-sep-kd"),
         ("Separate heads weighted by the final layer's confidence", "独立头按最终层置信度加权", 15698936, "130m-della4xh100-pls1-sep-conf"),
-        ("Separate heads with exit adapters", "独立头加出口适配器", 15698934, "130m-della4xh100-pls1-sep-ad1024"),
+        ("Separate heads with exit adapters", "独立头加出口适配器", 15699791, "130m-della4xh100-pls1-sep-ad1024"),
         ("Separate heads training MLPs only", "独立头只更新 MLP", 15698933, "130m-della4xh100-pls1-sep-mlpo"),
         ("Separate heads on the first 256 positions", "独立头只用前 256 个位置", 15698936, "130m-della4xh100-pls1-sep-first256"),
         ("Separate heads, one random layer per step", "独立头，每步随机一层", 15698932, "130m-della4xh100-pls1-sep-randl"),
         ("Hyper-Connections: separate heads", "Hyper-Connections：独立头", 15696861, "130m-della4xh100-pls1-sep-ahc"),
         ("Hyper-Connections: probes only", "Hyper-Connections：只加探针", 15696861, "130m-della4xh100-pls1-sep-bbfrozen-ahc"),
-        ("AttnRes (Full): separate heads", "AttnRes (Full)：独立头", 15696862, "130m-della4xh100-pls1-sep-aattnres"),
-        ("AttnRes (Full): probes only", "AttnRes (Full)：只加探针", 15696862, "130m-della4xh100-pls1-sep-bbfrozen-aattnres")]],
+        ("AttnRes (Full): separate heads", "AttnRes (Full)：独立头", 15699797, "130m-della4xh100-pls1-sep-aattnres"),
+        ("AttnRes (Full): probes only", "AttnRes (Full)：只加探针", 15699797, "130m-della4xh100-pls1-sep-bbfrozen-aattnres")]],
 ]
 # Completed jobs whose run is replaced by a corrected one: the 48-layer Sandwich-LN pair stalled near 6.3 nats on the 130m
 # learning rate (2026-10-05; rerun after the depth_lr_diag sweep).
