@@ -339,6 +339,11 @@ class ComposedDropoutQwen3Config(Qwen3Config):
     cvd_p: float = 0.5     # replacement probability at a rare-token position
     cvd_seed: int = 0
     cvd_from_step: int = 0   # first train step that replaces (0: from the start)
+    # Q10i ablations (owner popup 2026-10-17), each at the same drawn positions as cvd: "pieces" (cvd itself); "grad": the
+    # forward keeps the own row and only its gradient is blocked there; "unk": the row of the last special token (never in
+    # the data, so it learns only here) stands in for every replaced rare token; "detach": the pieces' mean without a
+    # gradient into the pieces' rows.
+    cvd_mode: str = "pieces"
 
     def __post_init__(self):
         super().__post_init__()
@@ -349,6 +354,8 @@ class ComposedDropoutQwen3Config(Qwen3Config):
             raise ValueError(f"cvd_p={self.cvd_p}: must lie in (0, 1]")
         if self.cvd_from_step < 0:
             raise ValueError(f"cvd_from_step={self.cvd_from_step}: must be 0 or more")
+        if self.cvd_mode not in ("pieces", "grad", "unk", "detach"):
+            raise ValueError(f"cvd_mode={self.cvd_mode!r}: pieces, grad, unk or detach")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -387,6 +394,12 @@ class ComposedDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
         if cfg.cvd_from_step:
             draw = draw & (jnp.asarray(step) >= cfg.cvd_from_step)
         swap = hax.named(rare & draw, input_ids.axes)
+        if cfg.cvd_mode == "grad":
+            x_comp = jax.lax.stop_gradient(x_own)
+        elif cfg.cvd_mode == "unk":
+            x_comp = te(hax.full_like(input_ids, V - 1))   # the last special token: zero count in the training data
+        elif cfg.cvd_mode == "detach":
+            x_comp = jax.lax.stop_gradient(x_comp)
         x = hax.where(swap, x_comp, x_own)
         if self.embeddings.norm is not None:
             x = self.embeddings.norm(x)

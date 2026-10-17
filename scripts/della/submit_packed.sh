@@ -6,8 +6,9 @@
 # run it in a clean environment inside another job's GPUs (it checks --comment=fetchable and the #FETCHABLE line).
 # TIME is the whole job's limit (about 1.25x the expected wall time); the plan's own task limits must fit inside it.
 # GPUS: 8 (default, -c 96) or 4 (-c 48); a fetch takes only a job with exactly the host's GPU count.
-# host: a long job (TIME 24:00:00) that no host can fetch; after its plan it runs tools/fetch_pending.sh, which runs
-# pending fetchable jobs in the time left (CLAUDE.md, 2026-10-15). No #FETCHABLE line and no fetchable comment.
+# host: a long job (TIME 24:00:00); after its plan it runs tools/fetch_pending.sh, which runs pending fetchable jobs in
+# the time left (CLAUDE.md, 2026-10-15). It keeps the fetchable mark too (every job is fetchable by default, owner
+# 2026-10-17); a 24 h job just never fits a host's leftover.
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
 [ $# -ge 3 ] || { sed -n 2,3p "$0"; exit 2; }
@@ -32,9 +33,9 @@ cat > "$out.tmp" <<EOT
 #SBATCH --mem-per-gpu=24G
 #SBATCH --time=$time
 #SBATCH --exclude=della-k14g3,della-k17g3
-$( [ $mode = fetchable ] && echo '#SBATCH --comment=fetchable' )
+#SBATCH --comment=fetchable
 #SBATCH --output=logs/slurm/%x_%j.out
-$( [ $mode = fetchable ] && echo '#FETCHABLE self-contained: written by scripts/della/submit_packed.sh; needs nothing from the submitting shell' )
+#FETCHABLE self-contained: written by scripts/della/submit_packed.sh; needs nothing from the submitting shell
 export PLAN=$plan PACKED_NAME=$name
 $( [ $mode = fetchable ] && echo 'exec bash /scratch/gpfs/GROUP/USER/project/marin/scripts/della/packed_job.sbatch' || printf '%s\n' 'bash /scratch/gpfs/GROUP/USER/project/marin/scripts/della/packed_job.sbatch; rc=$?' 'bash /scratch/gpfs/GROUP/USER/tools/fetch_pending.sh   # the time left runs pending fetchable jobs' 'exit $rc' )
 EOT

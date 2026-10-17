@@ -1,0 +1,5 @@
+# Q10i ablation (owner popup 2026-10-17): cvd with CVD_MODE=grad at the same drawn positions, full + rep8, seed 0 (compare cvd 1.3934/1.4504); fetchable
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+CVD_MODE=grad+DATA_EPOCHS=8
+par cvd-mgrad-full 300m-della4xh100-cvd8k-p0.5-mgrad main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvd CVD_MODE=grad
+par cvd-mgrad-rep8 300m-della4xh100-cvd8k-p0.5-mgrad-rep8 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VARIANT=cvd CVD_MODE=grad DATA_EPOCHS=8
+wait

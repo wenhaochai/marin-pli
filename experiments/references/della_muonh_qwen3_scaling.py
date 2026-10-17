@@ -292,6 +292,10 @@ CVD_P = float(os.environ.get("CVD_P", "0.5"))
 # from update round(steps / 8) * (p - 1); 8-pass runs only, whose full-data point is the baseline itself (a run without
 # repetition never replaces). Tag -fp<p> after -p<CVD_P>.
 CVD_FROM_PASS = int(os.environ.get("CVD_FROM_PASS", "0"))
+# CVD_MODE (Q10i ablations, owner popup 2026-10-17): pieces (cvd), grad (own row, gradient blocked at the drawn positions),
+# unk (one shared learned row for every replaced rare token) or detach (pieces' mean without a gradient into the pieces).
+# Tag -m<mode> after -p<CVD_P> for every mode but pieces.
+CVD_MODE = os.environ.get("CVD_MODE", "pieces")
 PASS_DATA = os.environ.get("PASS_DATA", "")
 if PASS_DATA and not (PASS_DATA == "rs" or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
@@ -437,7 +441,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "cvr":
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "") + (f"-oslow{CVR_OUT_SLOW:g}" if CVR_OUT_SLOW else "")
     if VARIANT == "cvd":
-        variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
+        variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -555,7 +559,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "cvd":
         if TIE:
             raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
-        model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", cvd_p=CVD_P, cvd_seed=SEED,
+        model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", cvd_p=CVD_P, cvd_seed=SEED, cvd_mode=CVD_MODE,
                                                        cvd_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (CVD_FROM_PASS - 1) if CVD_FROM_PASS else 0)
     elif VARIANT in OV_VARIANTS:
         num_steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
@@ -598,6 +602,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         raise ValueError("FOP_IN=1 freezes input rows apart from output rows: untied tables (TIE=0)")
     if CVR_RES_FREEZE and VARIANT != "cvr":
         raise ValueError("CVR_RES_FREEZE=1: only with VARIANT=cvr")
+    if CVD_MODE != "pieces" and VARIANT != "cvd":
+        raise ValueError(f"CVD_MODE={CVD_MODE}: only with VARIANT=cvd")
     if CVD_FROM_PASS and not (VARIANT == "cvd" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= CVD_FROM_PASS <= 7):
         raise ValueError(f"CVD_FROM_PASS={CVD_FROM_PASS}: 2..7 (-fp8 would read as the fp8 precision tag), only with VARIANT=cvd, DATA_EPOCHS=8 and equal passes (not bpd); the full-data point is the baseline")
     if (FOP_IN or CVR_RES_FREEZE) and (PASS_DATA.startswith("bpd") or DATA_EPOCHS not in (0, 1, 8)):
