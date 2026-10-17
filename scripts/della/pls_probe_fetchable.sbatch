@@ -33,8 +33,10 @@ case $NAME in
   mtpl-probe-520m-mtp) S="SIZE=520m $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-9917";;
   mtpl-probe-1_2b-ntp) S="SIZE=1_2b $LAD TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev/2026.09.13/checkpoints/step-22887";;
   mtpl-probe-1_2b-mtp) S="SIZE=1_2b $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-22887";;
+  # the 130m separate heads at weight 1 again, for its final checkpoint (the logit lens needs one; owner popup 2026-10-17)
+  pls-130m-sep-ckpt) S="SIZE=130m NUM_GPUS=8 PLS_W=1 PLS_SEP=1";;
   *) echo "unknown probe job name '$NAME'"; exit 2;;
 esac
-ck=${S##*PROBE_FROM=}; [ -d "$ck" ] || { echo "missing checkpoint $ck"; exit 2; }
+if [[ $S == *PROBE_FROM=* ]]; then ck=${S##*PROBE_FROM=}; [ -d "$ck" ] || { echo "missing checkpoint $ck"; exit 2; }; fi
 export SINGLE=$S SINGLE_SMOKE_MIN=40
 exec bash scripts/della/pls_h100x8_single.sbatch
