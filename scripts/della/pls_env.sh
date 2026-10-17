@@ -32,3 +32,15 @@ if [ -n "${SLURM_JOB_ID:-}" ] && [ "${PLS_JOB_TMPDIR:-}" != "/scratch/gpfs/GROUP
   unset _pls_prev
   unset -f _pls_prev_exit_trap
 fi
+
+# W&B through the compute-node proxy: offline when it does not answer within 20 s (2026-10-16 evening the proxy dropped
+# W&B for hours; wandb.init timed out after 90 s and the process hung). Here, so that chain jobs submitted with an older
+# script snapshot get it too. Offline runs are listed in logs/wandb_offline.txt and synced later with `wandb sync`.
+if [ -n "${SLURM_JOB_ID:-}" ] && [ "${WANDB_MODE:-}" != offline ] && [ -z "${PLS_WANDB_CHECKED:-}" ]; then
+  export PLS_WANDB_CHECKED=1
+  if ! ( module load proxy/default >/dev/null 2>&1 || true; curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz ); then
+    export WANDB_MODE=offline
+    echo "W&B not reachable through the proxy: running offline (sync later)"
+    echo "$(date +%F_%T) job ${FETCHED_JOB_ID:-$SLURM_JOB_ID} ($PWD) offline" >> /scratch/gpfs/GROUP/USER/project/marin-pls/logs/wandb_offline.txt
+  fi
+fi
