@@ -1,4 +1,4 @@
-"""Data for the candidate figures of wenhaochai.com/blogs/per-layer-contribution.html, redrawn on the page in the
+"""Data for the candidate figures of wenhaochai.com/exps/per-layer-contribution.html, redrawn on the page in the
 writing:plot (Epoch AI) style -> assets/data/plc-candidates.js (generated; regenerate, never hand-edit).
 Each candidate repeats the logic of the matplotlib script that drew it first:
   1 layer_probe.py         2 layer_backbone.py (130m, separate heads)   3 heads_compare.py

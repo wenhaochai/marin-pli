@@ -1,4 +1,4 @@
-"""Chart data for wenhaochai.com/blogs/per-layer-contribution.html -> assets/data/per-layer-contribution.js (generated;
+"""Chart data for wenhaochai.com/exps/per-layer-contribution.html -> assets/data/per-layer-contribution.js (generated;
 regenerate, never hand-edit). Final training loss (mean of the last 50 logged steps) after layers 2..6 of the 130m model,
 numbered from 1, for each setup; the ordinary models have 2..6 layers (the 6-layer one is the baseline). The page draws
 differences between these numbers, computed in the page script.

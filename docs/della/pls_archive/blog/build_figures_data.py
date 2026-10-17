@@ -1,4 +1,4 @@
-"""Figures of wenhaochai.com/blogs/per-layer-contribution.html -> assets/data/plc-figures.js (generated; regenerate,
+"""Figures of wenhaochai.com/exps/per-layer-contribution.html -> assets/data/plc-figures.js (generated; regenerate,
 never hand-edit). Drawn on the page in the writing:plot (Epoch AI) style.
 
 x axis: the layer number on every by-layer figure (owner, 2026-10-17; to_layers at the end); backbone compute 6ND on

@@ -1,4 +1,4 @@
-"""Schematics of the ten DepthBench designs (arXiv 2609.32534) for wenhaochai.com/blogs/per-layer-contribution.html,
+"""Schematics of the ten DepthBench designs (arXiv 2609.32534) for wenhaochai.com/exps/per-layer-contribution.html,
 in the cover style (Anthropic illustration: ivory ground, slate outlines, wobble filter, offset fills, no text). Writes
 the figure between <!-- archs --> and <!-- /archs --> in the page given as argv[1]. One layer per panel:
   stream = thick horizontal line; norm = small kraft pill; branch F = manilla box; add = ringed plus on the stream;

@@ -1,4 +1,4 @@
-"""Experiment record of wenhaochai.com/blogs/per-layer-contribution.html -> assets/data/plc-record.js (generated; never
+"""Experiment record of wenhaochai.com/exps/per-layer-contribution.html -> assets/data/plc-record.js (generated; never
 hand-edit). One row per training run behind the page: the setup in words, size, layers, tokens, GPUs, hours, state and
 the figure that uses it, the W&B link once the run exists, the public code commit it ran (W&B's commit mapped through the scrub's commit map). Finished runs: state and wall time (_runtime) from W&B reself/marin-della;
 queued or running jobs: state and elapsed time from sacct (job ids below; run on a node with the Slurm client, it fails rather than guess); runs not yet submitted: "Planned".

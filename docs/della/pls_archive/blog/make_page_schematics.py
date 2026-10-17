@@ -1,4 +1,4 @@
-"""Schematics for the subsections of wenhaochai.com/blogs/per-layer-contribution.html, in the cover style (Anthropic
+"""Schematics for the subsections of wenhaochai.com/exps/per-layer-contribution.html, in the cover style (Anthropic
 illustration: ivory ground, slate outlines, wobble filter, offset fills, no text). Writes two figures into the page given
 as argv[1], each between its markers:
   <!-- deep --> ... <!-- /deep -->    a 48-layer narrow network with separate heads, and with probes (stop marks on the head
