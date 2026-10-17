@@ -267,8 +267,11 @@ HCPOS_STATUS = QUEUED
 CYAN3 = "#78D9EC"   # GM2 cyan 300: HC with positive writes, beside HC's cyan 900
 WSET = [("", "Sandwich-LN", GREY), ("preln", "Pre-LN", GREY), ("lns", "LNS", GREY), ("deepnorm", "DeepNorm", GREY), ("keel", "KEEL", GREY), ("moda", "MoDA", GREY),
         ("hc", "HC", DCOL["hc"]), ("mhc", "mHC", DCOL["mhc"]), ("hc_pos", None, CYAN3)]
-wval = [round(float(done48[a][0][-1] - done48[a][1][-1]), 4) if a in done48 else None for a, _, _ in WSET]
-wcats = [{"en": n, "zh": n} if n else ({"en": "HC, w > 0", "zh": "HC，w > 0"} if a in done48 else HCPOS_STATUS) for a, n, _ in WSET]   # the legend names the colour
+w48 = dict(done48)   # Figure 11 alone also reads HC with positive writes (the other figures keep their ten designs)
+if g4("hc_pos") is not None:
+    w48["hc_pos"] = g4("hc_pos")
+wval = [round(float(w48[a][0][-1] - w48[a][1][-1]), 4) if a in w48 else None for a, _, _ in WSET]
+wcats = [{"en": n, "zh": n} if n else ({"en": "HC, w > 0", "zh": "HC，w > 0"} if a in w48 else HCPOS_STATUS) for a, n, _ in WSET]   # the legend names the colour
 figs["fig-hc-write"] = dict(title={"en": "Last-layer cost of separate heads by design, 48 layers", "zh": "各设计下独立头在最后一层的代价，48 层"},
                             legend=[[{"en": "One residual stream", "zh": "单个残差流"}, GREY, "box"], [{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, DCOL["hc"], "box"],
                                     [{"en": "mHC", "zh": "mHC"}, DCOL["mhc"], "box"], [{"en": "HC with positive writes", "zh": "写入为正的 HC"}, CYAN3, "box"]],
@@ -280,8 +283,9 @@ print("fig-hc-write", dict(zip([n or a for a, n, _ in WSET], wval)))
 # and probes, one panel per init seed. With seed 0 the probes run's last readout jumped from 3.41 to 8.32 at step 2106
 # (the head's depth softmax collapsed: grad/norm/transformer.final_query 0.12 -> 3.8e-07) and came back over ~1000 steps;
 # seed 1 (SEED=1, data order unchanged; jobs 15520124-26) tests whether the design's missing last-layer cost comes from it.
-# Mean of 20 steps, from step 100. Seed 1 is drawn once fetch_d48g4.py has its complete runs in d48g4.npz.
-SEED1_STATUS = QUEUED
+# Mean of 20 steps, from step 100. Seed 1 finished 2026-10-17 (15538869): final layer 48, separate heads 3.016, probes
+# 2.955 (+0.061); seed 0: 3.023, 3.045 (-0.021). The seed-1 probes run also spikes (626, 818, 1024, 2578), earlier.
+SEED1_STATUS = None
 def seed_panel(sfx, word, label):
     tags = [f"-sep{b}-aattnres-vs-d48{sfx}-g4" for b in ("", "-bbfrozen")]
     if not all(t + "/ce" in G4 for t in tags):

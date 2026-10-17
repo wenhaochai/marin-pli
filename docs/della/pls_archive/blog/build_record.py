@@ -69,14 +69,14 @@ RUNS = [
     # post-hoc probes of the finished models (Figure 18): fresh next-token and x_{t+2} heads on the frozen final checkpoint,
     # 1B tokens each. The 520m and 1_2b probes are submitted when their training runs finish.
     *[(S(f"Probes on the finished {a} model", f"在训练完的 {a} 模型上加探针"), size, layers, 1.0, 8,
-       ("slurm", jid, rid) if jid else ("planned", None, rid), "20")
+       ("chain", jid, rid) if isinstance(jid, list) else ("slurm", jid, rid) if jid else ("planned", None, rid), "20")
       for a, size, layers, jid, rid in [
           ("NTP", "130m", 6, 15591508, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958"),
           ("NTP + MTP", "130m", 6, 15591509, "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958"),
           ("NTP", "300m", 12, 15714847, "300m-della8xh100-pls0-noev-probes2000at11443"),
           ("NTP + MTP", "300m", 12, 15690439, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
-          ("NTP", "520m", 24, 15716064, "520m-della8xh100-pls0-noev-probes1000at9917"),
-          ("NTP + MTP", "520m", 24, 15699612, "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
+          ("NTP", "520m", 24, [15716064, 15738658], "520m-della8xh100-pls0-noev-probes1000at9917"),
+          ("NTP + MTP", "520m", 24, [15699612, 15738657], "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
           ("NTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-probes1000at22887"),
           ("NTP + MTP", "1_2b", 16, None, "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
