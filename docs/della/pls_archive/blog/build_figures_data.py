@@ -362,12 +362,12 @@ figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step 
 # Figure 3) of layer 1 and of layer 6 minus the ordinary model of the same depth (grey dots of Figure 3), beside separate
 # heads at weight 1. auto10.json (fetch_auto10.py, once runs finish): {key: [final loss of layers 1..6]}; a key without
 # data shows its status word under its bar.
-AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"en": "1 Own clip", "zh": "1 单独裁剪"}, QUEUED),
+AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"en": "1 Own clip", "zh": "1 单独裁剪"}, None),
           ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, QUEUED), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, QUEUED),
-          ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, QUEUED), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, QUEUED),
-          ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, QUEUED), ("first", {"en": "7 First 256", "zh": "7 前 256"}, QUEUED),
-          ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, QUEUED), ("hc", {"en": "9 HC", "zh": "9 HC"}, QUEUED),
-          ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, RUNNING)]
+          ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, QUEUED),
+          ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, QUEUED), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
+          ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, QUEUED),
+          ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, None)]
 A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
 A10["sep"] = [float(v) for v in Z["-pls1-sep/final"]]
 gap10 = {k: [float(A10[k][j] - cy[j]) for j in range(6)] for k in A10}
