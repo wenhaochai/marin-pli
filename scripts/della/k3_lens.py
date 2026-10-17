@@ -26,7 +26,9 @@ from safetensors import safe_open
 
 MODEL, TOK, OUT, RANK, WORLD = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
 MAX_LAYERS = int(sys.argv[6]) if len(sys.argv) > 6 else None
-dev = torch.device("cuda", 0)   # one visible GPU per process
+# K3_LOADTEST=<comma-separated layers>: build those layers on the CPU (load and shape checks, no forward) and exit
+LOADTEST = os.environ.get("K3_LOADTEST")
+dev = torch.device("cpu") if LOADTEST else torch.device("cuda", 0)   # one visible GPU per process
 torch.set_grad_enabled(False)
 
 from transformers import AutoConfig  # noqa: E402
@@ -114,6 +116,19 @@ def build_layer(i):
     return layer
 
 
+if LOADTEST:
+    for i in (int(x) for x in LOADTEST.split(",")):
+        t1 = time.time()
+        lay = build_layer(i)
+        kinds = (type(lay.self_attn).__name__, "moe" if hasattr(lay, "block_sparse_moe") else "mlp")
+        n = sum(p.numel() for p in lay.parameters())
+        print(f"layer {i}: built in {time.time() - t1:.0f}s, {kinds}, {n / 1e9:.2f}B bf16 params outside the packed experts", flush=True)
+        if hasattr(lay, "block_sparse_moe"):
+            e = lay.block_sparse_moe.experts[0]
+            w1 = deq(*e.p["w1"])
+            print(f"  expert 0 w1 {tuple(w1.shape)}, |w| mean {w1.float().abs().mean():.4g}, finite {bool(torch.isfinite(w1).all())}", flush=True)
+        del lay
+    sys.exit(0)
 tokens = np.load(TOK)[RANK::WORLD]
 ids = torch.as_tensor(tokens, dtype=torch.long, device=dev)
 nseq, T = ids.shape
