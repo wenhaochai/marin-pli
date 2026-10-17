@@ -483,6 +483,21 @@ figs["fig-headft"] = dict(title={"en": "Per-layer loss before and after retraini
                                   [{"en": "Probes only", "zh": "只加探针"}, RED3, "line"], [{"en": "Probes only, heads retrained", "zh": "只加探针，重训读出头"}, RED, "line"]],
                           quantity=CE_EVAL, xlabel=XL, height=320, panels=[dict(**v10, marks=marks10)])
 
+# Last figure (placeholder; owner popups 2026-10-17): the logit lens of Kimi K3 (93 layers, Block AttnRes in blocks of 12),
+# k3_lens.py on 64 wikitext-103 test sequences of 1,024 tokens: per layer, next-token loss through the final norm and lm_head
+# of three readings (the next layer's input mix, the output mix had the model stopped there, the plain sum of the blocks);
+# lower panel the output mix's weights on the embedding and each block. k3lens.json fills it.
+K3_STATUS = QUEUED
+K3T = [[k, str(k)] for k in (1, 12, 24, 36, 48, 60, 72, 84, 93)]
+figs["fig-k3lens"] = dict(title={"en": "Logit lens of Kimi K3 by layer", "zh": "Kimi K3 按层的 logit lens"},
+                          legend=[[{"en": "Next layer's input", "zh": "下一层的输入"}, BLUE7, "line"], [{"en": "Output mix, stopped here", "zh": "在此停下的输出混合"}, RED, "line"],
+                                  [{"en": "Plain sum of the blocks", "zh": "各块直接相加"}, GREY, "line"]],
+                          quantity=CE, xlabel={"en": "Layer", "zh": "层"}, height=220, cols=1,
+                          panels=[dict(xlog=False, ylog=True, yoff=0.0, xlim=[0.5, 93.5], ylim=[1.0, 14.0], xticks=K3T, yticks=[[a, f"{a:g}"] for a in (1, 2, 4, 8)],
+                                       marks=[], empty=K3_STATUS, label={"en": "Next-token loss", "zh": "下一个词的损失"}),
+                                  dict(xlog=False, ylog=False, xlim=[0.5, 93.5], ylim=[0, 1.05], xticks=K3T, yticks=[[a, f"{a:g}"] for a in (0, 0.25, 0.5, 0.75, 1)],
+                                       marks=[], empty=K3_STATUS, label={"en": "Output-mix weight on each source", "zh": "输出混合在各来源上的权重"})])
+
 # Layer index on the x axis of every by-layer figure (owner, 2026-10-17: "所有横轴应该改成层数"). Within one model the backbone
 # compute of a readout is proportional to its layer (x = 6 N_layer k D), so dividing by one layer's compute gives k and the
 # fitted curves keep their shape; each panel divides by its own model's layer (Figure 7: the design's own per-layer size).
