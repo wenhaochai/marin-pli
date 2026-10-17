@@ -1,4 +1,4 @@
-# How Vocabulary Size Shapes Overfitting (page blogs/vocab-overfitting.html)
+# How Vocabulary Size Shapes Overfitting (page exps/vocab-overfitting.html)
 
 **Status (2026-10-08):** at 300m and 8 passes, each halving of the vocabulary lowers the cost of repetition (128K +0.083 to
 8K +0.026 bits per byte, one seed). The rare tokens' own input rows carry more than half of that gap: with every input
@@ -42,7 +42,7 @@ parameter-count control (low-rank tables).
 
 ## Spec checklist (audit 2026-10-07): decision -> implementation -> check
 
-1. New page, title "How Vocabulary Size Shapes Overfitting", slug vocab-overfitting -> website blogs/vocab-overfitting.html
+1. New page, title "How Vocabulary Size Shapes Overfitting", slug vocab-overfitting -> website exps/vocab-overfitting.html
    (tmp_plots/vocab/gen_vocab_page.py) -> vo_shot.py (renders, 11 charts, no overflow at 1280/420/375/360, EN and ZH).
 2. Move the softmax page's Q5 here; delete it there -> website 7980b15; ssov builders without fig-vocab -> ssov record
    rebuilt byte-identical; page has 8 charts.
