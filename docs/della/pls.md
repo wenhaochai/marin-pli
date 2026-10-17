@@ -385,6 +385,15 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    separate heads HC confines that use to layers 4-16, where its static zero-sum writes sit. mHC barely uses it. So the
    narrower claim survives: the design that both offers and uses readout-invisible storage pays half; the causal training
    test (HC with writes forced positive, mHC with signed writes) is the next step and needs the owner's approval.
+   Causal run result (hc_pos, jobs 15536266-67, finished 2026-10-17 06:26): HC with every write kept positive (2 sigmoid,
+   read and mixing as HC), layer-48 final train loss separate heads 2.989, probes 2.954: cost 0.035 (HC 0.048, others
+   0.089-0.110). It does not rise. But the change did not remove the readout-invisible storage: all 96 static writes are
+   positive (min +0.006), yet the zero-sum share of the stream energy stays high (separate heads L1 0.32, L12 0.62, L24
+   0.35; probes 0.25-0.75), because unequal positive writes and HC's signed mixing still put a zero-sum part in the
+   streams; and the ablation rise of the L48 CE after removing it is as large as HC's or larger (sep +0.64/+4.19/+1.56/
+   +0.45/+0.18/+0.08/+0.02/0 at c = 4/8/12/16/20/28/36/44; HC +0.65/+1.12/+1.07/+0.45/+0.24/+0.07/+0.02/0). So the
+   test leaves the cause open; the remaining HC/mHC difference is the mixing (HC signed, mHC Sinkhorn non-negative). The
+   design note "a zero-sum write is then impossible" was wrong. Page Figure 11 and caption updated (site 7e26204).
    Same-depth reference (2026-10-14): 24 layers done: train 3.057 / eval 3.753, layer 24 of the separate-heads model
    +0.07 / +0.10 above it, and it ends below that model's layer 48 (3.093 / 3.827). The ordinary 12-layer model (15519767_12) ends at train 3.141 / eval 3.852; layer 12
    of the 48-layer Sandwich-LN separate-heads model at 3.239 / 3.964, 0.10 / 0.11 higher. So the 48-layer model's layer 12
