@@ -296,6 +296,22 @@ if PROBE_FROM:
     from experiments.references.per_layer_qwen3 import load_without_probes
 
     _train_lm.load_checkpoint = load_without_probes(_train_lm.load_checkpoint)
+# LENS_FROM=<a run's step-N checkpoint dir> (VARIANT=pls; set the source run's own knobs, which then only name the run):
+# the logit lens of a finished model (owner popups 2026-10-17). The model is the source's backbone (ARCH and LAYERS as the
+# source), embeddings, final norm and lm_head, with no readout heads of its own (pls_weight 0, per-layer eval on), so
+# eval/L{k} reads every layer through the final norm and lm_head; the checkpoint's own heads, ghost, adapters or MTP module
+# are not read. Every parameter is frozen (FrozenMuonHConfig): one step of zero updates, then the final eval on the full
+# held-out sets. Tag -lensat{N}.
+LENS_FROM = (os.environ.get("LENS_FROM") or "").rstrip("/") or None
+LENS_STEP = None
+if LENS_FROM:
+    _m = re.fullmatch(r"step-(\d+)", os.path.basename(LENS_FROM))
+    if not _m:
+        raise ValueError(f"LENS_FROM must be a step-<N> checkpoint dir, got {LENS_FROM!r}")
+    LENS_STEP = int(_m.group(1))
+    if VARIANT != "pls" or INIT_FROM or HEADS_FROM or PROBE_FROM or SMOKE_STEPS:
+        raise ValueError("LENS_FROM needs VARIANT=pls, without INIT_FROM, HEADS_FROM, PROBE_FROM or SMOKE_STEPS")
+    TOTAL_STEPS = 1
 # Transcribed from the original runs' W&B configs; ref_c4_en_bpb is their final eval/paloma/c4_en/bpb.
 SIZES = {
     "130m": dict(hidden=512, inter=1792, layers=6, heads=8, kv=8, batch=128, steps=4959, lr=0.02, adam_lr=0.008, eps=1e-20, momentum=0.95, schedule="linear", decay=0.8, warmup=0, max_grad_norm=1.0, ref_c4_en_bpb=1.16354),
@@ -384,6 +400,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if same(src) != same(want):
             raise ValueError(f"PROBE_FROM is a checkpoint of {src!r}, but the knobs name {want!r}")
         variant_tags += f"-probes{TOTAL_STEPS}at{PROBE_STEP}"
+    if LENS_FROM:
+        # the knobs must name the source run: LENS_FROM = .../speedrun/<source id>/<version>/checkpoints/step-N
+        src = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(LENS_FROM))))
+        want = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG
+        # -pls0 too: an ordinary model trained as the baseline (the depth controls -d{L}) is named by PLS_W=0 and LAYERS
+        same = lambda r: re.sub(r"-pls0(?=-|$)", "", re.sub(r"-della\d+x", "-dellaNx", r).replace("-noev", ""))  # noqa: E731
+        if same(src) != same(want):
+            raise ValueError(f"LENS_FROM is a checkpoint of {src!r}, but the knobs name {want!r}")
+        variant_tags += f"-lensat{LENS_STEP}"
     run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
@@ -448,6 +473,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_candidates=tuple(p for _, p in SS_SCHEDULE) if VARIANT == "ovss" else (),
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
+    elif VARIANT == "pls" and LENS_FROM:  # the source's backbone and final head alone: every readout is the logit lens
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=0.0, pls_monitor_stride=PLS_MON, pls_eval=True, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
     elif VARIANT == "pls" and PROBE_FROM:  # the source run's knobs only named the run; the probe model is fixed
         model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=1.0, pls_monitor_stride=PLS_MON, pls_eval=True, pls_separate_heads=True, pls_heads_only=True, pls_probe_frozen_main=True, pls_future_probes=True)
     elif VARIANT == "pls":
@@ -470,7 +497,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
     # every other run, the baseline included, keeps MuonHConfig exactly.
-    if PROBE_FROM:
+    if LENS_FROM:
+        from experiments.references.per_layer_qwen3 import FrozenMuonHConfig as _Opt
+    elif PROBE_FROM:
         from experiments.references.per_layer_qwen3 import ProbesOnlyMuonHConfig as _Opt
     elif ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
         from experiments.references.depth_arch_qwen3 import DepthArchSplitAuxMuonHConfig as _Opt
@@ -551,7 +580,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 allow_nondivisible_batch_size=True,
             ),
             train_seq_len=SEQ_LEN,
-            initialize_model_from_checkpoint_path=HEADS_FROM or PROBE_FROM,
+            initialize_model_from_checkpoint_path=HEADS_FROM or PROBE_FROM or LENS_FROM,
             model=model,
             optimizer=optimizer,
             z_loss_weight=0.0,

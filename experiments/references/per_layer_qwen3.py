@@ -302,6 +302,18 @@ class AdapterMuonHConfig(MuonHConfig):
         return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
 
 
+@OptimizerConfig.register_subclass("muonH_pls_frozen")
+@dataclass(frozen=True)
+class FrozenMuonHConfig(MuonHConfig):
+    """Every parameter frozen: the launcher's LENS_FROM, an evaluation of a finished checkpoint (one step, zero updates,
+    then the final eval). The schedules stay injected so the trainer logs its learning rates as usual."""
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+        return optax.inject_hyperparams(lambda learning_rate, adam_lr: optax.set_to_zero())(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
+
+
 @OptimizerConfig.register_subclass("muonH_pls_mix")
 @dataclass(frozen=True)
 class MixAuxMuonHConfig(MuonHConfig):
