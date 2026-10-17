@@ -80,7 +80,7 @@ def final_ce(m, cut):
     return ce.array if isinstance(ce, hax.NamedArray) else ce
 
 
-for arch in ("hc", "mhc"):
+for arch in os.environ.get("HC_ARCHS", "hc,mhc").split(","):   # HC_ARCHS=hc_pos for HC with positive writes
     for probes in (False, True):
         name = f"{arch} {'probes' if probes else 'separate heads'}"
         template = eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, config(arch, probes), key=jrandom.PRNGKey(0))

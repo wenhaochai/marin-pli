@@ -93,6 +93,8 @@ def static_writes(m, arch):
         p = hyp[j]
         if arch == "hc":
             w = 1.0 + np.asarray(p.write.array, np.float32)  # (layer, stream_out)
+        elif arch == "hc_pos":   # 2 sigmoid of the write logit (its dynamic term aside), positive like mHC
+            w = 2.0 / (1.0 + np.exp(-np.asarray(p.write.array, np.float32)))
         else:
             mm = 4
             bias = np.asarray(p.bias.array, np.float32)  # (layer, mhc): offsets; write constant 0
@@ -102,7 +104,7 @@ def static_writes(m, arch):
 
 
 res = {}
-for arch in ("hc", "mhc"):
+for arch in os.environ.get("HC_ARCHS", "hc,mhc").split(","):   # HC_ARCHS=hc_pos for HC with positive writes
     for probes in (False, True):
         name = f"{arch} {'probes' if probes else 'separate heads'}"
         path = ROOT.format(bb="-bbfrozen" if probes else "", arch=arch)
