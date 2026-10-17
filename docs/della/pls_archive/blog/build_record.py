@@ -96,10 +96,10 @@ RUNS = [
     (S("Separate heads, rerun for its checkpoint", "独立头，为保留 checkpoint 重跑"), "130m", 6, 2.6, 8, ("slurm", 15720165, "130m-della8xh100-pls1-sep"), "16"),
     # ten more attempts at the last-layer cost (Figure 15; owner popup 2026-10-16), branch pls-auto10: two 130m runs per
     # 8-GPU pair job (pls_auto10_pair.sbatch, fetchable); the job ids join as the pairs are submitted
-    *[(S(en, zh), "130m", 6, 2.6, 4, ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
+    *[(S(en, zh), "130m", 6, 2.6, 4, ("chain", jid, rid) if isinstance(jid, list) else ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
         ("Separate heads, the readouts clipped on their own", "独立头，读出头单独裁剪", 15698932, "130m-della4xh100-pls1-sep-os"),
         ("Separate heads, normalise then mix at 0.2", "独立头，先正交化再按 0.2 混合", 15700045, "130m-della4xh100-pls1-sep-mix0.2"),
-        ("Separate heads learning the final layer's distribution", "独立头学最终层的分布", 15699791, "130m-della4xh100-pls1-sep-kd"),
+        ("Separate heads learning the final layer's distribution", "独立头学最终层的分布", [15699791, 15755719], "130m-della4xh100-pls1-sep-kd"),
         ("Separate heads weighted by the final layer's confidence", "独立头按最终层置信度加权", 15698936, "130m-della4xh100-pls1-sep-conf"),
         ("Separate heads with exit adapters", "独立头加出口适配器", 15699791, "130m-della4xh100-pls1-sep-ad1024"),
         ("Separate heads training MLPs only", "独立头只更新 MLP", 15700045, "130m-della4xh100-pls1-sep-mlpo"),

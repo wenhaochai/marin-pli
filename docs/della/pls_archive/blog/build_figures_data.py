@@ -363,9 +363,9 @@ figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step 
 # heads at weight 1. auto10.json (fetch_auto10.py, once runs finish): {key: [final loss of layers 1..6]}; a key without
 # data shows its status word under its bar.
 AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"en": "1 Own clip", "zh": "1 单独裁剪"}, None),
-          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, QUEUED), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, QUEUED),
-          ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, QUEUED),
-          ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, QUEUED), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
+          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, None), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, RUNNING),
+          ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, None),
+          ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, None), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
           ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, QUEUED),
           ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, None)]
 A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
@@ -376,6 +376,7 @@ cats10 = [lab if k in gap10 else {"en": lab["en"] + " · " + st["en"], "zh": lab
 
 def auto10_panel(j, label, lo, hi, step):
     vals = [round(gap10[k][j], 4) if k in gap10 else None for k, _, _ in AUTO10]
+    assert all(v is None or lo <= v <= hi for v in vals), f"fig-auto10 layer {j + 1}: a bar outside [{lo}, {hi}]: {vals}"
     return dict(xlim=[-1.3, len(AUTO10) - 0.4], ylim=[lo, hi], yticks=lin_ticks(lo, hi, step, "{:.2f}"), cats=cats10, label=label,
                 marks=[dict(type="bars", color=BLUE7 if k == "sep" else "#8AB4F8", vals=[v if i == n else None for n, v in enumerate(vals)]) for i, (k, _, _) in enumerate(AUTO10)])
 
@@ -383,7 +384,7 @@ def auto10_panel(j, label, lo, hi, step):
 figs["fig-auto10"] = dict(title={"en": "Ten more attempts at the last-layer cost, 130m", "zh": "降低最后一层代价的另外十种尝试，130m"},
                           legend=[[{"en": "Separate heads, weight 1", "zh": "独立头，权重 1"}, BLUE7, "box"], [{"en": "One attempt", "zh": "一种尝试"}, "#8AB4F8", "box"]],
                           quantity={"en": "Final training loss minus the ordinary model of the same depth (nats)", "zh": "最终训练损失减去同深度普通模型（nats）"},
-                          height=200, cols=1, panels=[auto10_panel(0, {"en": "Layer 1", "zh": "第 1 层"}, 0, 0.5, 0.1), auto10_panel(5, {"en": "Layer 6, the output", "zh": "第 6 层，即输出"}, 0, 0.15, 0.05)])
+                          height=200, cols=1, panels=[auto10_panel(0, {"en": "Layer 1", "zh": "第 1 层"}, 0, 1.2, 0.2), auto10_panel(5, {"en": "Layer 6, the output", "zh": "第 6 层，即输出"}, 0, 0.3, 0.05)])
 print("fig-auto10", {k: [round(g, 3) for g in (v[0], v[5])] for k, v in gap10.items()})
 
 # Figure after fig-auto10 (placeholder; owner popups 2026-10-17): the logit lens of every finished model. Per checkpoint,
