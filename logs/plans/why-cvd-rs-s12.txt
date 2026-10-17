@@ -1,0 +1,5 @@
+# Q10h (owner popup 2026-10-16): cvd + a new order of the repeated part in every pass (PASS_DATA=rs), seeds 1 and 2, 8 passes only; full-data points are cvd seeds 1 and 2; fetchable
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+DATA_EPOCHS=8+PASS_DATA=rs+SEED=1
+par cvd-rs-rep8-s1 300m-della4xh100-cvd8k-p0.5-rep8-rs-s1 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvd DATA_EPOCHS=8 PASS_DATA=rs SEED=1
+par cvd-rs-rep8-s2 300m-della4xh100-cvd8k-p0.5-rep8-rs-s2 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VARIANT=cvd DATA_EPOCHS=8 PASS_DATA=rs SEED=2
+wait
