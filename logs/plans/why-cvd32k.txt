@@ -1,0 +1,5 @@
+# Q10h (owner popup 2026-10-16): cvd on the tokens outside the 32K truncation only, pieces from the 32K truncation (CV_K=32000), full + rep8; fetchable
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+CV_K=32000+DATA_EPOCHS=8
+par cvd32k-full 300m-della4xh100-cvd32k-p0.5 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvd CV_K=32000
+par cvd32k-rep8 300m-della4xh100-cvd32k-p0.5-rep8 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VARIANT=cvd CV_K=32000 DATA_EPOCHS=8
+wait

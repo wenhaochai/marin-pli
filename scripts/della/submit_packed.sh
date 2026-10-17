@@ -1,15 +1,18 @@
 #!/bin/bash
 # Submit a packed job (packed_job.sbatch) that a host job can fetch (owner via the controller, 2026-10-16).
-#   scripts/della/submit_packed.sh NAME PLAN TIME [GPUS]     # prints the job id
+#   scripts/della/submit_packed.sh NAME PLAN TIME [GPUS] [host]     # prints the job id
 # Writes logs/plans/NAME.sbatch, a self-contained batch script: the Slurm resources, the #FETCHABLE line, PLAN and
 # PACKED_NAME set inside, then packed_job.sbatch. Nothing comes from the submitting shell, so tools/fetch_pending.sh can
 # run it in a clean environment inside another job's GPUs (it checks --comment=fetchable and the #FETCHABLE line).
 # TIME is the whole job's limit (about 1.25x the expected wall time); the plan's own task limits must fit inside it.
 # GPUS: 8 (default, -c 96) or 4 (-c 48); a fetch takes only a job with exactly the host's GPU count.
+# host: a long job (TIME 24:00:00) that no host can fetch; after its plan it runs tools/fetch_pending.sh, which runs
+# pending fetchable jobs in the time left (CLAUDE.md, 2026-10-15). No #FETCHABLE line and no fetchable comment.
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin
 [ $# -ge 3 ] || { sed -n 2,3p "$0"; exit 2; }
-name=$1; plan=$(realpath "$2"); time=$3; gpus=${4:-8}
+name=$1; plan=$(realpath "$2"); time=$3; gpus=${4:-8}; mode=${5:-fetchable}
+[[ $mode == fetchable || $mode == host ]] || { echo "mode must be fetchable or host"; exit 2; }
 [[ $name =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "bad job name '$name'"; exit 2; }
 [ -f "$plan" ] || { echo "no plan $plan"; exit 2; }
 case $gpus in 8) cpus=96 ;; 4) cpus=48 ;; *) echo "GPUS must be 8 or 4"; exit 2 ;; esac
@@ -29,11 +32,11 @@ cat > "$out.tmp" <<EOT
 #SBATCH --mem-per-gpu=24G
 #SBATCH --time=$time
 #SBATCH --exclude=della-k14g3,della-k17g3
-#SBATCH --comment=fetchable
+$( [ $mode = fetchable ] && echo '#SBATCH --comment=fetchable' )
 #SBATCH --output=logs/slurm/%x_%j.out
-#FETCHABLE self-contained: written by scripts/della/submit_packed.sh; needs nothing from the submitting shell
+$( [ $mode = fetchable ] && echo '#FETCHABLE self-contained: written by scripts/della/submit_packed.sh; needs nothing from the submitting shell' )
 export PLAN=$plan PACKED_NAME=$name
-exec bash /scratch/gpfs/GROUP/USER/project/marin/scripts/della/packed_job.sbatch
+$( [ $mode = fetchable ] && echo 'exec bash /scratch/gpfs/GROUP/USER/project/marin/scripts/della/packed_job.sbatch' || printf '%s\n' 'bash /scratch/gpfs/GROUP/USER/project/marin/scripts/della/packed_job.sbatch; rc=$?' 'bash /scratch/gpfs/GROUP/USER/tools/fetch_pending.sh   # the time left runs pending fetchable jobs' 'exit $rc' )
 EOT
 mv "$out.tmp" "$out"
 sbatch --parsable "$out"

@@ -1,0 +1,5 @@
+# Q10h (owner popup 2026-10-16): cvd at 520m, full + rep8 (cvr at 520m led 128K by 0.003); 24 h host job: after the lanes, fetch_pending.sh runs pending fetchable jobs in the time left
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=520m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+DATA_EPOCHS=8
+par cvd520-full 520m-della4xh100-cvd8k-p0.5 main 4 1380m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=520m VARIANT=cvd
+par cvd520-rep8 520m-della4xh100-cvd8k-p0.5-rep8 main 4 1380m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=520m VARIANT=cvd DATA_EPOCHS=8
+wait
