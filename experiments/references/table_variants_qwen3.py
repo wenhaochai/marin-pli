@@ -331,11 +331,14 @@ class ComposedDropoutQwen3Config(Qwen3Config):
     whose input token is rare (ids K .. V-257), with probability ``cvd_p`` the token's input row is replaced by the mean
     of its K-token pieces' rows (``compose`` on the same table, so the gradient reaches the shared piece rows). Evaluation
     (no train step) uses the own rows only, so the model at step 0 and at evaluation is the plain baseline shape. The draw
-    is a fixed function of (cvd_seed, train step), the same in the full-data and the repeated run."""
+    is a fixed function of (cvd_seed, train step), the same in the full-data and the repeated run. ``cvd_from_step`` > 0
+    (Q10h, owner popup 2026-10-16): no replacement before that train step, so the rare rows train as the baseline's
+    during the first pass and are replaced only in the repeated passes."""
 
     cvd_map: str = ""      # expand_full.npz of the K-token truncation
     cvd_p: float = 0.5     # replacement probability at a rare-token position
     cvd_seed: int = 0
+    cvd_from_step: int = 0   # first train step that replaces (0: from the start)
 
     def __post_init__(self):
         super().__post_init__()
@@ -344,6 +347,8 @@ class ComposedDropoutQwen3Config(Qwen3Config):
             raise ValueError("cvd_map: the expand_full.npz path is required")
         if not 0 < self.cvd_p <= 1:
             raise ValueError(f"cvd_p={self.cvd_p}: must lie in (0, 1]")
+        if self.cvd_from_step < 0:
+            raise ValueError(f"cvd_from_step={self.cvd_from_step}: must be 0 or more")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -379,6 +384,8 @@ class ComposedDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
         ids = input_ids.array
         rare = (ids >= k0) & (ids < V - N_SPECIAL)
         draw = jax.random.bernoulli(jax.random.fold_in(jax.random.PRNGKey(cfg.cvd_seed), jnp.asarray(step)), cfg.cvd_p, ids.shape)
+        if cfg.cvd_from_step:
+            draw = draw & (jnp.asarray(step) >= cfg.cvd_from_step)
         swap = hax.named(rare & draw, input_ids.axes)
         x = hax.where(swap, x_comp, x_own)
         if self.embeddings.norm is not None:
