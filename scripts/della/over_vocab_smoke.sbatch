@@ -18,6 +18,7 @@ set -uo pipefail
 cd /scratch/gpfs/KARTHIKN/wc9403/project/marin
 source scripts/della/job_tmpdir.sh   # TMPDIR under scratch, per task, removed at exit (never the shared /tmp)
 module load proxy/default  # wandb only
+source scripts/della/wandb_guard.sh   # offline W&B when the proxy cannot reach api.wandb.ai (2026-10-16)
 export MARIN_PREFIX=/scratch/gpfs/KARTHIKN/wc9403/marin_store_big
 export HF_HOME=/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
