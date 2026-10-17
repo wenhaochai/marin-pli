@@ -19,6 +19,7 @@ cd /scratch/gpfs/GROUP/USER/project/marin
 source scripts/della/job_tmpdir.sh   # TMPDIR under scratch, per task, removed at exit (never the shared /tmp)
 
 module load proxy/default  # wandb only
+source scripts/della/wandb_guard.sh   # offline W&B when the proxy cannot reach api.wandb.ai (2026-10-16)
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}
 export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
