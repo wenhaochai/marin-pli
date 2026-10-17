@@ -1,0 +1,5 @@
+# owner popup 2026-10-16: the byte vocabulary (K=256) at 300m repeated 2.4 times, the missing point of fig-vocab-final's
+# 2.4-pass panel; ~54K steps (as bytes-300m, which finished both runs inside one 24 h job). 4-GPU host job.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VOCAB_K=256+DATA_EPOCHS=2.4
+par bytes-rep2.4 300m-della4xh100-bytes-rep2.4 main 4 1400m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VOCAB_K=256 DATA_EPOCHS=2.4
+wait
