@@ -36,6 +36,15 @@ export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}
 export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
+
+# W&B through the proxy: offline when it does not answer within 20 s (2026-10-16 evening: the compute-node proxy dropped
+# W&B for hours; wandb.init timed out after 90 s and the process hung until the smoke limit). An offline run is synced
+# later from a vis node with `wandb sync`; logs/wandb_offline.txt lists the jobs that ran offline.
+if [ "${WANDB_MODE:-}" != offline ] && ! curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz; then
+  export WANDB_MODE=offline
+  echo "W&B not reachable through the proxy: running offline (sync later)"
+  echo "$(date +%F_%T) job ${FETCHED_JOB_ID:-$SLURM_JOB_ID} ($PWD) offline" >> /scratch/gpfs/GROUP/USER/project/marin-pls/logs/wandb_offline.txt
+fi
 export VARIANT=pls
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
