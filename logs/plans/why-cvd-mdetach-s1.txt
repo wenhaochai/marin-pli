@@ -1,0 +1,5 @@
+# Q10i follow-up (owner popup 2026-10-17): the detach ablation (rep8 1.4421 vs cvd 1.4504, one seed), seed 1, full + rep8; fetchable
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+CVD_MODE=detach+DATA_EPOCHS=8+SEED=1
+par cvd-mdetach-full-s1 300m-della4xh100-cvd8k-p0.5-mdetach-s1 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VARIANT=cvd CVD_MODE=detach SEED=1
+par cvd-mdetach-rep8-s1 300m-della4xh100-cvd8k-p0.5-mdetach-rep8-s1 main 4 340m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VARIANT=cvd CVD_MODE=detach DATA_EPOCHS=8 SEED=1
+wait
