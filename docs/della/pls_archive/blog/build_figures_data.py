@@ -381,6 +381,19 @@ figs["fig-auto10"] = dict(title={"en": "Ten more attempts at the last-layer cost
                           height=200, cols=1, panels=[auto10_panel(0, {"en": "Layer 1", "zh": "第 1 层"}, 0, 0.5, 0.1), auto10_panel(5, {"en": "Layer 6, the output", "zh": "第 6 层，即输出"}, 0, 0.15, 0.05)])
 print("fig-auto10", {k: [round(g, 3) for g in (v[0], v[5])] for k, v in gap10.items()})
 
+# Figure after fig-auto10 (placeholder; owner popups 2026-10-17): the logit lens of every finished model. Per checkpoint,
+# held-out (Paloma) loss by layer through the layer's own readout (its separate head or probe: eval/L{k}/loss of the source
+# run) and through the model's final norm and lm_head (the logit lens: launcher LENS_FROM, an eval of the frozen
+# checkpoint). Panels: 130m (6 layers) and 48 layers of width 512 (Sandwich-LN); own readouts in the dark tone, the
+# lens in the light tone of the same colour. lens.json (fetch_lens.py) fills it.
+LENS_STATUS = QUEUED
+figs["fig-lens"] = dict(title={"en": "Held-out loss by layer through each layer's own readout and through the final head", "zh": "按层的留出损失：经各层自己的读出头与经最终输出头"},
+                        legend=[[{"en": "Ordinary model, probes", "zh": "普通模型，探针"}, RED, "line"], [{"en": "Ordinary model, logit lens", "zh": "普通模型，logit lens"}, "#F28B82", "line"],
+                                [{"en": "Separate heads, own heads", "zh": "独立头，自己的头"}, BLUE7, "line"], [{"en": "Separate heads, logit lens", "zh": "独立头，logit lens"}, "#8AB4F8", "line"]],
+                        quantity={"en": "Held-out cross-entropy (nats, log scale)", "zh": "留出数据上的交叉熵（nats，对数坐标）"}, xlabel=XL, height=220, cols=1,
+                        panels=[dict(**empty_view(list(x6), 3.6, 9, LENS_STATUS, ys=(4, 5, 6, 7, 8)), label={"en": "6 layers, 130m", "zh": "6 层，130m"}),
+                                dict(**empty_view(list(x48("")), 3.6, 9, LENS_STATUS, ys=(4, 5, 6, 7, 8)), label={"en": "48 layers, Sandwich-LN", "zh": "48 层，Sandwich-LN"})])
+
 # Figure 10: the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
 BLUE3, RED3 = "#8AB4F8", "#F28B82"
