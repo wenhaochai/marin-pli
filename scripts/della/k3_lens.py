@@ -87,15 +87,27 @@ def build_layer(i):
         experts = torch.nn.ModuleList([PackedExpert(act, f"{pre}.block_sparse_moe.experts.{e}") for e in range(cfg.num_experts)])
         moe.experts = torch.nn.ModuleList()
     layer = layer.to_empty(device=dev).to(torch.bfloat16)   # as from_pretrained(dtype=bfloat16): no module is kept in fp32
-    sd = {}
-    for name, _ in list(layer.named_parameters()) + list(layer.named_buffers()):
+    sd, keep32 = {}, {}
+    for name, param in list(layer.named_parameters()) + list(layer.named_buffers()):
         full = f"{pre}.{name}"
         if full not in index:
             raise KeyError(f"layer {i}: {full} not in the checkpoint")
-        sd[name] = get(full).to(dev, dtype=torch.bfloat16)
+        t = get(full)
+        if name.endswith("A_log") and t.shape[0] > param.shape[0]:
+            # K3 ships every KDA A_log zero-padded to 128 entries for its 96 heads; vLLM and Unsloth read the first 96
+            # (unsloth PR 12132). The padding must be zeros.
+            if float(t[param.shape[0]:].abs().max()) != 0.0:
+                raise ValueError(f"layer {i}: A_log padding is not zero")
+            t = t[: param.shape[0]]
+        if name.endswith(("A_log", "dt_bias")):   # the decay parameters stay in the checkpoint's float32, as vLLM keeps them
+            keep32[name] = t.to(dev, dtype=torch.float32)
+        sd[name] = t.to(dev, dtype=torch.bfloat16)
     missing, unexpected = layer.load_state_dict(sd, strict=False)
     if missing or unexpected:
         raise RuntimeError(f"layer {i}: missing {missing[:5]} unexpected {unexpected[:5]}")
+    for name, t in keep32.items():
+        mod, attr = name.rsplit(".", 1)
+        setattr(layer.get_submodule(mod), attr, torch.nn.Parameter(t, requires_grad=False))
     if moe is not None:
         layer.block_sparse_moe.experts = experts
     layer.eval()
