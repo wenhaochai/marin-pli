@@ -212,6 +212,9 @@ PLS_DETACH = os.environ.get("PLS_DETACH", "0") == "1"
 PLS_SEP = os.environ.get("PLS_SEP", "0") == "1"
 # PLS_DETACH_BB=1 (with PLS_SEP=1): the per-layer losses train their own heads only, the backbone trains as the baseline. Tag -bbfrozen.
 PLS_DETACH_BB = os.environ.get("PLS_DETACH_BB", "0") == "1"
+# PLS_SEP_UPTO=n (with PLS_SEP=1, owner popup 2026-10-18): only the readouts of layers 1..n reach the backbone; the deeper
+# ones are probes. Tag -upto{n}.
+PLS_SEP_UPTO = int(os.environ.get("PLS_SEP_UPTO", "0"))
 # PLS_LOCAL=1 (with PLS_SEP=1): each layer loss trains its own head and its own layer only. Tag -local.
 PLS_LOCAL = os.environ.get("PLS_LOCAL", "0") == "1"
 # PLS_SHAPE=depth: intermediate weights rise with depth, PLS_W * 2(k+1)/L, same sum as PLS_W uniform. Tag -shdepth.
@@ -363,7 +366,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-os" if PLS_OPT_SPLIT else "") + (f"-mtp{PLS_MTP_W:g}" if PLS_MTP_W > 0 else "") + ("-fut" if PLS_FUT else "") + (f"-mix{PLS_MIX:g}" if PLS_MIX > 0 else "") + ("-kd" if PLS_KD else "") + ("-conf" if PLS_CONF else "") + (f"-ad{PLS_ADAPT}" if PLS_ADAPT else "") + ("-mlpo" if PLS_MLPONLY else "") + (f"-first{PLS_FIRST}" if PLS_FIRST else "") + ("-randl" if PLS_RANDL else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + (f"-upto{PLS_SEP_UPTO}" if PLS_SEP_UPTO else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-os" if PLS_OPT_SPLIT else "") + (f"-mtp{PLS_MTP_W:g}" if PLS_MTP_W > 0 else "") + ("-fut" if PLS_FUT else "") + (f"-mix{PLS_MIX:g}" if PLS_MIX > 0 else "") + ("-kd" if PLS_KD else "") + ("-conf" if PLS_CONF else "") + (f"-ad{PLS_ADAPT}" if PLS_ADAPT else "") + ("-mlpo" if PLS_MLPONLY else "") + (f"-first{PLS_FIRST}" if PLS_FIRST else "") + ("-randl" if PLS_RANDL else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -478,7 +481,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "pls" and PROBE_FROM:  # the source run's knobs only named the run; the probe model is fixed
         model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=1.0, pls_monitor_stride=PLS_MON, pls_eval=True, pls_separate_heads=True, pls_heads_only=True, pls_probe_frozen_main=True, pls_future_probes=True)
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, pls_mtp_weight=PLS_MTP_W, pls_future_probes=PLS_FUT, pls_mix_scale=PLS_MIX, pls_distill=PLS_KD, pls_conf_gate=PLS_CONF, pls_adapter_dim=PLS_ADAPT, pls_aux_mlp_only=PLS_MLPONLY, pls_aux_first=PLS_FIRST, pls_random_layer=PLS_RANDL, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_sep_upto=PLS_SEP_UPTO, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, pls_mtp_weight=PLS_MTP_W, pls_future_probes=PLS_FUT, pls_mix_scale=PLS_MIX, pls_distill=PLS_KD, pls_conf_gate=PLS_CONF, pls_adapter_dim=PLS_ADAPT, pls_aux_mlp_only=PLS_MLPONLY, pls_aux_first=PLS_FIRST, pls_random_layer=PLS_RANDL, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:

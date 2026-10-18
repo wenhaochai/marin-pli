@@ -22,7 +22,7 @@ source scripts/della/pls_env.sh
 PT=/scratch/gpfs/GROUP/USER/tools/packed_task.sh
 LAUNCH=experiments.references.della_muonh_qwen3_scaling
 unset SMOKE_STEPS TOTAL_STEPS INIT_FROM CPT_TAG TIE PRECISION EMA_BETA DEVICE_TAG DRY_RUN
-unset SIZE LAYERS ARCH PDP PLS_W PLS_DETACH PLS_SEP PLS_DETACH_BB PLS_LOCAL PLS_SHAPE PLS_PCGRAD PLS_OFF PLS_ON PLS_PROBE PLS_MON PLS_EVAL SEED RUN_TAG LR_MUL WARMUP HEADS_FROM PARAM_MAP PLS_SCAN_FIX PLS_OPT_SPLIT HEADS_WARMUP PLS_MIX PLS_KD PLS_CONF PLS_ADAPT PLS_MLPONLY PLS_FIRST PLS_RANDL PROBE_FROM LENS_FROM
+unset SIZE LAYERS ARCH PDP PLS_W PLS_DETACH PLS_SEP PLS_DETACH_BB PLS_LOCAL PLS_SHAPE PLS_PCGRAD PLS_OFF PLS_ON PLS_PROBE PLS_MON PLS_EVAL SEED RUN_TAG LR_MUL WARMUP HEADS_FROM PARAM_MAP PLS_SCAN_FIX PLS_OPT_SPLIT HEADS_WARMUP PLS_MIX PLS_KD PLS_CONF PLS_ADAPT PLS_MLPONLY PLS_FIRST PLS_RANDL PLS_SEP_UPTO PROBE_FROM LENS_FROM
 module load proxy/default 2>/dev/null || true  # wandb only
 export MARIN_PREFIX=${MARIN_PREFIX:-/scratch/gpfs/GROUP/USER/marin_store_big}
 export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
@@ -41,6 +41,7 @@ case $NAME in
   auto10-resume-mix) S="$SEP PLS_MIX=0.2";;      auto10-resume-mlpo) S="$SEP PLS_MLPONLY=1";;
   auto10-resume-conf) S="$SEP PLS_CONF=1";;      auto10-resume-first) S="$SEP PLS_FIRST=256";;
   auto10-resume-os) S="$SEP PLS_OPT_SPLIT=1";;   auto10-resume-randl) S="$SEP PLS_RANDL=1";;
+  auto10-resume-upto3) S="$SEP PLS_SEP_UPTO=3";; auto10-resume-upto2) S="$SEP PLS_SEP_UPTO=2";;
   *) echo "unknown resume job name '$NAME'"; exit 2;;
 esac
 if [ "${WANDB_MODE:-}" != offline ] && ! curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz; then

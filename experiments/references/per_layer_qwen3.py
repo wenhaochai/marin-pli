@@ -362,6 +362,10 @@ class PerLayerQwen3Config(Qwen3Config):
     # output, so the backbone and the main head train exactly as the baseline (online tuned-lens probes of an
     # undisturbed model).
     pls_detach_backbone: bool = False
+    # With separate heads (owner popup 2026-10-18, page Figure 22): the readouts of layers 1..pls_sep_upto send their
+    # gradient into the backbone; the deeper readouts stop at their layer's output, as probes (pls_detach_backbone for those
+    # layers only). Tests whether sparing the layers next to the output removes the last-layer cost. 0: off. No new parameters.
+    pls_sep_upto: int = 0
     # With separate heads: layer k's loss trains its head and layer k only. Its readout recomputes layer k on the
     # stop-gradient output of layer k-1 (the same values), so no layer loss reaches earlier layers or the embedding;
     # the final loss trains everything as usual. One extra forward of layers 0..L-2 per step.
@@ -464,6 +468,9 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("pls_local_heads needs pls_separate_heads, without pls_detach_backbone, pls_probe or a weight schedule, on the baseline transformer")
         if self.pls_heads_only and (not self.pls_separate_heads or self.pls_local_heads or self.pls_probe or self.pls_off_end):
             raise ValueError("pls_heads_only needs pls_separate_heads, without pls_local_heads, pls_probe or a weight schedule")
+        if self.pls_sep_upto and (not self.pls_separate_heads or self.pls_detach_backbone or not 0 < self.pls_sep_upto < self.num_layers - 1
+                                  or self.pls_local_heads or self.pls_pcgrad or self.pls_on_end or self.pls_off_end or self.pls_probe or self._auto10()):
+            raise ValueError("pls_sep_upto needs pls_separate_heads and 0 < pls_sep_upto < num_layers - 1, without pls_detach_backbone, pls_local_heads, pls_pcgrad, a schedule, pls_probe or an auto10 attempt")
         if self.pls_detach_backbone and not self.pls_separate_heads:
             raise ValueError("pls_detach_backbone needs pls_separate_heads: with the shared head the loss would train the baseline's lm_head")
         if self.pls_separate_heads and self.pls_detach_head:
@@ -1041,7 +1048,8 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
                 return loss, per
             loss, per = final, []
             for k in range(L - 1):
-                ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
+                probe = cfg.pls_detach_backbone or bool(cfg.pls_sep_upto and k >= cfg.pls_sep_upto)  # k is 0-based: layer k + 1
+                ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=probe, **kw)
                 loss = loss + ce * (w * self._shape(k))  # NamedArray on the left: w may be a traced scalar
                 per.append(jnp.asarray(_scalar(ce), jnp.float32))
             return loss, jnp.stack(per)
