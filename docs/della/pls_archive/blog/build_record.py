@@ -94,6 +94,17 @@ RUNS = [
     (S("Probes only, heads retrained (frozen backbone)", "只加探针，重训读出头（冻结骨干）"), "300m", 12, 1.0, 4, ("slurm", 15011513, "300m-della4xh100-pls1-sep-bbfrozen-headft2000"), "18"),
     # the 130m separate heads at weight 1 again, for its final checkpoint (Figure 16, the logit lens; owner popups 2026-10-17)
     (S("Separate heads, rerun for its checkpoint", "独立头，为保留 checkpoint 重跑"), "130m", 6, 2.6, 8, ("slurm", 15720165, "130m-della8xh100-pls1-sep"), "16"),
+    # the logit lens (Figures 16, 17; owner popups 2026-10-17, 18) and the Kimi K3 lens (Figure 22): eval-only jobs, one row
+    # per job; hours from the task ledgers (run column = the group); the link opens one of the job's runs, its group's others
+    # sit beside it on W&B (-lensat<step> in the name)
+    *[(S(en, zh), size, layers, 0.0, 8, ("lens", jid, grp, link), figs) for en, zh, size, layers, jid, grp, link, figs in [
+        ("Logit lens of 20 finished 6-layer models (eval)", "20 个训练完的 6 层模型的 logit lens（评估）", "130m", 6, 15720392, "lens-130m", "130m-della8xh100-pls1-sep-bbfrozen-lensat4958", "16"),
+        ("Logit lens of the 6-layer separate-heads model (eval)", "6 层独立头模型的 logit lens（评估）", "130m", 6, 15787177, "lens-130sep", "130m-della8xh100-pls1-sep-lensat4958", "16"),
+        ("Logit lens, 48 layers: five designs, both setups, and ordinary models of 12-36 layers (eval)", "logit lens，48 层：五种架构的两种设置，以及 12-36 层普通模型（评估）", "130m", 48, 15720393, "lens-48a", "130m-della8xh100-pls1-sep-vs-d48-lensat4958-g4", "16, 17"),
+        ("Logit lens, 48 layers: Hyper-Connections and mHC, both setups (eval)", "logit lens，48 层：Hyper-Connections 和 mHC 的两种设置（评估）", "130m", 48, 15720394, "lens-48b", "130m-della8xh100-pls1-sep-ahc-vs-d48-lensat4958-g4", "17"),
+        ("Logit lens, 48 layers: AttnRes (Full), AttnRes (Block), MoDA, both setups (eval)", "logit lens，48 层：AttnRes (Full)、AttnRes (Block)、MoDA 的两种设置（评估）", "130m", 48, 15795008, "lens-48c", "130m-della8xh100-pls1-sep-aattnres-vs-d48-lensat4958-g4", "17"),
+        ("Logit lens of the 300m models and the 300m and 520m NTP / MTP models (eval)", "300m 模型以及 300m、520m NTP / MTP 模型的 logit lens（评估）", "300m", 12, 15720395, "lens-300m", "300m-della8xh100-pls1-sep-lensat11443", "16"),
+        ("Kimi K3 logit lens (eval, 64 x 1,024 tokens)", "Kimi K3 的 logit lens（评估，64 x 1,024 个 token）", "K3", 93, 15736820, "k3-lens", "", "22")]],
     # ten more attempts at the last-layer cost (Figure 15; owner popup 2026-10-16), branch pls-auto10: two 130m runs per
     # 8-GPU pair job (pls_auto10_pair.sbatch, fetchable); the job ids join as the pairs are submitted
     *[(S(en, zh), "130m", 6, 2.6, 4, ("chain", jid, rid) if isinstance(jid, list) else ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
@@ -123,7 +134,8 @@ JOBS = {"130m-della4xh100-pls1": [14732138], "130m-della4xh100-pls1-dh": [147690
         "130m-della4xh100-pls1-sep-bbfrozen": [14888104], **{f"130m-della4xh100-d{d}": [f"14886384_{d}"] for d in range(1, 6)},
         "300m-della4xh100-pls1": [14732139, 14732140], "300m-della4xh100-pls1-sep": [14940604], "300m-della4xh100-pls1-sep-bbfrozen": [14888822]}
 STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), "crashed": S("Failed", "失败"), "failed": S("Failed", "失败"),
-         "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中")}
+         "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中"),
+         "PAUSED": S("Paused, resume queued", "暂停，续跑已排队"), "PARTLY": S("Partly done", "部分完成")}
 OK_EXIT = {"0", "124", "143"}   # training-task exits that count for the run (see the docstring)
 api = wandb.Api(timeout=300)
 
@@ -246,7 +258,19 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
         hours = run_hours(rid, ref); live = [st for st in (sacct(j)[0] for j in ref) if st in ("RUNNING", "PENDING")]
         # Running: a chain job trains now, or the run is past 10% of its steps and its next job waits (between 24 h jobs)
         under_way = run is not None and int(run.summary.get("_step", 0)) >= 0.1 * int(run.config["trainer"]["num_train_steps"])
-        state = "COMPLETED" if done else ("RUNNING" if "RUNNING" in live or under_way else "PENDING") if live else "failed"
+        # Paused: under way, no chain job training now, the next one queued (controller audit 2026-10-18)
+        state = "COMPLETED" if done else ("RUNNING" if "RUNNING" in live else "PAUSED" if under_way else "PENDING") if live else "failed"
+    elif kind == "lens":   # an eval-only job of several checkpoints: ("lens", jobid, group = the ledger's run name, run id linked)
+        st = ("COMPLETED" if FETCH[str(ref)]["exit"] == "0" else "FAILED") if str(ref) in FETCH else sacct(ref)[0]
+        mine = [t for t in TASKS if t["run"] == rid and t["kind"] == "main"]
+        hours = sum(int(t["end"]) - int(t["start"]) for t in mine if t["exit"] == "0") / 3600
+        ok = any(t["exit"] == "0" for t in mine)
+        if not mine and str(ref) not in FETCH:   # a plain job without a ledger (the K3 lens): the whole job is the row
+            st, hours = sacct(ref); ok = st == "COMPLETED"
+            hours = hours if st != "PENDING" else 0.0
+        state = st if st in ("COMPLETED", "RUNNING", "PENDING") else ("PARTLY" if ok else "failed")
+        run = wandb_run(src[3]) if src[3] and ok else None
+        rid = src[3] or rid
     elif kind == "slurm" and str(ref) in FETCH:   # run by a host job (fetch_pending.sh)
         F = FETCH[str(ref)]
         state = "COMPLETED" if F["exit"] == "0" else "planned"
@@ -303,9 +327,12 @@ for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
         continue
     rid = src[1] if src[0] == "wandb" else src[2]
     chain = [j for j in src[1] if sacct(j)[0] != "PENDING"] if src[0] == "chain" else []
-    for j in ([src[1]] if src[0] == "slurm" else []) + chain + JOBS.get(rid, []):
+    for j in ([src[1]] if src[0] in ("slurm", "lens") else []) + chain + JOBS.get(rid, []):
         MAIN[str(j)] = rid
+LENSJOBS = {str(src[1]) for (*_, src, _) in RUNS if src[0] == "lens"}
 for j, rid in MAIN.items():
+    if j in LENSJOBS:
+        continue
     seen = log_runs(j)
     if seen and P.split("/")[-1] + rid not in seen:
         raise RuntimeError(f"job {j} is listed for run {rid}, but its log names {sorted(seen)}")
