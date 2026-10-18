@@ -198,6 +198,15 @@ def fetched():
 
 
 FETCH = fetched()
+LOCKS = Path("/scratch/gpfs/GROUP/USER/tmp/fetch_locks")
+
+
+def fetching(ref):
+    """True while a host job runs this job: fetch_pending.sh cancelled it from the queue and keeps its lock dir with
+    batch.sh (no UNCONFIRMED or RESUBMIT marker), and fetched.tsv has no line for it yet."""
+    d = LOCKS / str(ref)
+    return (str(ref) not in FETCH and (d / "batch.sh").exists() and not (d / "UNCONFIRMED").exists()
+            and not (d / "RESUBMIT").exists() and sacct(ref)[0].startswith("CANCELLED"))
 TASKS = [dict(t, jid=f.stem) for f in sorted(PACKED.glob("*.tsv")) if f.name != "fetched.tsv" for t in (ledger(f.stem) or [])]
 
 
@@ -277,6 +286,8 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
         hours = sum(int(t["end"]) - int(t["start"]) for t in TASKS if t["run"] == rid and t["kind"] == "main" and t["exit"] in OK_EXIT) / 3600 if state == "COMPLETED" else 0.0
         if state == "planned":
             run = None
+    elif kind == "slurm" and fetching(ref):   # a host job runs it now: no fetched.tsv line until it ends
+        state, hours = "RUNNING", 0.0
     elif kind == "slurm":
         try:
             state, hours = sacct(ref)
@@ -340,7 +351,7 @@ missing = [rid for (_, _, _, _, _, src, _), row in zip(RUNS, rows) if row["state
 if missing:
     raise RuntimeError(f"finished rows without their Slurm jobs in JOBS: {missing}")
 jobs = project_jobs()
-absent = sorted(set(MAIN) - {j for j, *_ in jobs} - set(FETCH))
+absent = sorted(set(MAIN) - {j for j, *_ in jobs} - set(FETCH) - {j for j in MAIN if fetching(j)})   # a fetched job still running has no sacct time yet
 if [j for j in absent if sacct(j.split("_")[0])[0] != "PENDING"]:
     raise RuntimeError(f"jobs listed for rows are not among the project's GPU jobs: {absent}")
 # H100-hours by line (template dcfd5a1, owner 2026-10-07). A plain job goes whole to main (it belongs to a row) or other.
