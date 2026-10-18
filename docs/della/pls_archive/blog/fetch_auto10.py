@@ -8,7 +8,8 @@ from pathlib import Path
 OUT = Path(__file__).resolve().parent / "auto10.json"
 P = "reself/marin-della/muonh-qwen3-130m-della4xh100-pls1-sep"
 RUNS = {"os": "-os", "mix": "-mix0.2", "kd": "-kd", "conf": "-conf", "ad": "-ad1024", "mlpo": "-mlpo", "first": "-first256", "randl": "-randl",
-        "hc": "-ahc", "hc-probes": "-bbfrozen-ahc", "attnres": "-aattnres", "attnres-probes": "-bbfrozen-aattnres"}
+        "hc": "-ahc", "hc-probes": "-bbfrozen-ahc", "attnres": "-aattnres", "attnres-probes": "-bbfrozen-aattnres",
+        "upto3": "-upto3", "upto2": "-upto2"}
 keys = [f"train/pls/L{k}" for k in range(6)]
 api = wandb.Api(timeout=300)
 out, errors = {}, 0

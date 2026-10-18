@@ -108,7 +108,9 @@ RUNS = [
         ("Hyper-Connections: separate heads", "Hyper-Connections：独立头", 15700214, "130m-della4xh100-pls1-sep-ahc"),
         ("Hyper-Connections: probes only", "Hyper-Connections：只加探针", 15700214, "130m-della4xh100-pls1-sep-bbfrozen-ahc"),
         ("AttnRes (Full): separate heads", "AttnRes (Full)：独立头", 15699797, "130m-della4xh100-pls1-sep-aattnres"),
-        ("AttnRes (Full): probes only", "AttnRes (Full)：只加探针", 15699797, "130m-della4xh100-pls1-sep-bbfrozen-aattnres")]],
+        ("AttnRes (Full): probes only", "AttnRes (Full)：只加探针", 15699797, "130m-della4xh100-pls1-sep-bbfrozen-aattnres"),
+        ("Separate heads, only layers 1-3 reach the backbone", "独立头，只有第 1-3 层的梯度进入主干", 15772582, "130m-della4xh100-pls1-sep-upto3"),
+        ("Separate heads, only layers 1-2 reach the backbone", "独立头，只有第 1-2 层的梯度进入主干", 15772582, "130m-della4xh100-pls1-sep-upto2")]],
 ]
 # Completed jobs whose run is replaced by a corrected one: the 48-layer Sandwich-LN pair stalled near 6.3 nats on the 130m
 # learning rate (2026-10-05; rerun after the depth_lr_diag sweep).

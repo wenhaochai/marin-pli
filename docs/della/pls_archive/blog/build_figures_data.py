@@ -367,7 +367,9 @@ AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"e
           ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, None),
           ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, None), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
           ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, None),
-          ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, None)]
+          ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, None),
+          # 11, 12 (owner popups 2026-10-18, no extra parameters): only the readouts of layers 1-3 / 1-2 reach the backbone
+          ("upto3", {"en": "11 Layers 1-3", "zh": "11 只监督第 1-3 层"}, QUEUED), ("upto2", {"en": "12 Layers 1-2", "zh": "12 只监督第 1-2 层"}, QUEUED)]
 A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
 A10["sep"] = [float(v) for v in Z["-pls1-sep/final"]]
 gap10 = {k: [float(A10[k][j] - cy[j]) for j in range(6)] for k in A10}
@@ -381,7 +383,7 @@ def auto10_panel(j, label, lo, hi, step):
                 marks=[dict(type="bars", color=BLUE7 if k == "sep" else "#8AB4F8", vals=[v if i == n else None for n, v in enumerate(vals)]) for i, (k, _, _) in enumerate(AUTO10)])
 
 
-figs["fig-auto10"] = dict(title={"en": "Ten more attempts at the last-layer cost, 130m", "zh": "降低最后一层代价的另外十种尝试，130m"},
+figs["fig-auto10"] = dict(title={"en": "More attempts at the last-layer cost, 130m", "zh": "降低最后一层代价的更多尝试，130m"},
                           legend=[[{"en": "Separate heads, weight 1", "zh": "独立头，权重 1"}, BLUE7, "box"], [{"en": "One attempt", "zh": "一种尝试"}, "#8AB4F8", "box"]],
                           quantity={"en": "Final training loss minus the ordinary model of the same depth (nats)", "zh": "最终训练损失减去同深度普通模型（nats）"},
                           height=200, cols=1, panels=[auto10_panel(0, {"en": "Layer 1", "zh": "第 1 层"}, 0, 1.2, 0.2), auto10_panel(5, {"en": "Layer 6, the output", "zh": "第 6 层，即输出"}, 0, 0.3, 0.05)])
