@@ -395,12 +395,37 @@ print("fig-auto10", {k: [round(g, 3) for g in (v[0], v[5])] for k, v in gap10.it
 # checkpoint). Panels: 130m (6 layers) and 48 layers of width 512 (Sandwich-LN); own readouts in the dark tone, the
 # lens in the light tone of the same colour. lens.json (fetch_lens.py) fills it.
 LENS_STATUS = QUEUED
+LENS = json.load(open(HERE / "lens.json")) if (HERE / "lens.json").exists() else {}
+
+
+def lens_panel(key, xs, label):
+    """One panel of fig-lens: per setup with both runs finished, its own readouts (dark) and the logit lens (light) by
+    layer; the status word while none has."""
+    P_ = LENS.get(key, {})
+    if not P_:
+        return dict(**empty_view(list(xs), 3.6, 9, LENS_STATUS, ys=(4, 5, 6, 7, 8)), label=label)
+    marks, ys = [], []
+    for setup, dark, light in (("probes", RED, "#F28B82"), ("sep", BLUE7, "#8AB4F8")):
+        if setup not in P_:
+            continue
+        for kind, c in (("lens", light), ("own", dark)):
+            y = np.array(P_[setup][kind], float); assert len(y) == len(xs), (key, setup, kind, len(y), len(xs))
+            marks.append(line(pts(xs, y), c, 1.4))
+            if len(xs) <= 12:
+                marks.append(dots(pts(xs, y), c))
+            ys.append(y)
+    yy = np.concatenate(ys)
+    v = view(xs, yy, endpoints_only=True)
+    v["ylim"] = [0.97 * float(yy.min()), 1.08 * float(yy.max())]
+    v["yticks"] = [[a, f"{a:g}"] for a in (3.5, 4, 5, 6, 7, 8, 10, 12, 15, 20) if v["ylim"][0] <= a <= v["ylim"][1]]
+    print("fig-lens", key, {k: {kk: [vv[0], vv[-1]] for kk, vv in d.items()} for k, d in P_.items()})
+    return dict(**v, marks=marks, label=label)
 figs["fig-lens"] = dict(title={"en": "Held-out loss by layer through each layer's own readout and through the final head", "zh": "按层的留出损失：经各层自己的读出头与经最终输出头"},
                         legend=[[{"en": "Ordinary model, probes", "zh": "普通模型，探针"}, RED, "line"], [{"en": "Ordinary model, logit lens", "zh": "普通模型，logit lens"}, "#F28B82", "line"],
                                 [{"en": "Separate heads, own heads", "zh": "独立头，自己的头"}, BLUE7, "line"], [{"en": "Separate heads, logit lens", "zh": "独立头，logit lens"}, "#8AB4F8", "line"]],
                         quantity={"en": "Held-out cross-entropy (nats, log scale)", "zh": "留出数据上的交叉熵（nats，对数坐标）"}, xlabel=XL, height=220, cols=1,
-                        panels=[dict(**empty_view(list(x6), 3.6, 9, LENS_STATUS, ys=(4, 5, 6, 7, 8)), label={"en": "6 layers, 130m", "zh": "6 层，130m"}),
-                                dict(**empty_view(list(x48("")), 3.6, 9, LENS_STATUS, ys=(4, 5, 6, 7, 8)), label={"en": "48 layers, Sandwich-LN", "zh": "48 层，Sandwich-LN"})])
+                        panels=[lens_panel("130m", x6, {"en": "6 layers, 130m", "zh": "6 层，130m"}),
+                                lens_panel("d48", np.asarray(x48("")), {"en": "48 layers, Sandwich-LN", "zh": "48 层，Sandwich-LN"})])
 
 # Figure 10: the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
