@@ -366,7 +366,7 @@ AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"e
           ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, None), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, RUNNING),
           ("conf", {"en": "4 Confidence", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, None),
           ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, None), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
-          ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, QUEUED),
+          ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, None),
           ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, None)]
 A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
 A10["sep"] = [float(v) for v in Z["-pls1-sep/final"]]
