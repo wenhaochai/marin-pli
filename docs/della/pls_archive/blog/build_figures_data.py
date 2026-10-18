@@ -425,6 +425,7 @@ figs["fig-lens"] = dict(title={"en": "Held-out loss by layer through each layer'
                                 [{"en": "Separate heads, own heads", "zh": "独立头，自己的头"}, BLUE7, "line"], [{"en": "Separate heads, logit lens", "zh": "独立头，logit lens"}, "#8AB4F8", "line"]],
                         quantity={"en": "Held-out cross-entropy (nats, log scale)", "zh": "留出数据上的交叉熵（nats，对数坐标）"}, xlabel=XL, height=220, cols=1,
                         panels=[lens_panel("130m", x6, {"en": "6 layers, 130m", "zh": "6 层，130m"}),
+                                lens_panel("300m", np.asarray(x300), {"en": "12 layers, 300m", "zh": "12 层，300m"}),
                                 lens_panel("d48", np.asarray(x48("")), {"en": "48 layers, Sandwich-LN", "zh": "48 层，Sandwich-LN"})])
 # Third panel: the logit lens of ordinary models of 12, 24, 36 layers (GM2 grey 400, 600, 800: context) beside the 48-layer
 # ordinary model (the probes' backbone, light red as in the other panels); lens.json "depth" (fetch_lens.py)
@@ -588,8 +589,9 @@ to_layers("fig-heads-300m", [U300], 12)
 to_layers("fig-headft", [U300], 12)
 to_layers("fig-d48", [x48("")[0]], 48)
 to_layers("fig-d48-arch", [x48(k)[0] for k, _ in ARCH], 48)
-to_layers("fig-lens", [U130, x48("")[0], x48("")[0]], 6)
-for _p in figs["fig-lens"]["panels"][1:]:
+to_layers("fig-lens", [U130, U300, x48("")[0], x48("")[0]], 6)
+figs["fig-lens"]["panels"][1].update(xlim=[0.5, 12.5], xticks=[[k, str(k)] for k in range(1, 13)])
+for _p in figs["fig-lens"]["panels"][2:]:
     _p.update(xlim=[0.5, 48.5], xticks=[[k, str(k)] for k in (1, 12, 24, 36, 48)])
 to_layers("fig-lens-arch", [x48(k)[0] for k, _ in ARCH], 48)
 

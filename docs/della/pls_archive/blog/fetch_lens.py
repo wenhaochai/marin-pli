@@ -22,6 +22,8 @@ SPECS = {
     "d48": {"sep": ("130m-della4xh100-pls1-sep-vs-d48-g4", "130m-della8xh100-pls1-sep-vs-d48-lensat4958-g4", 48),
             "probes": ("130m-della4xh100-pls1-sep-bbfrozen-vs-d48-g4", "130m-della8xh100-pls1-sep-bbfrozen-vs-d48-lensat4958-g4", 48)},
 }
+SPECS["300m"] = {"sep": ("300m-della4xh100-pls1-sep", "300m-della8xh100-pls1-sep-lensat11443", 12),
+                 "probes": ("300m-della4xh100-pls1-sep-bbfrozen", "300m-della8xh100-pls1-sep-bbfrozen-lensat11443", 12)}
 # 48 layers, the other nine designs (Figure 17; owner popup 2026-10-18): panel "d48-<arch>"
 for a in ("preln", "lns", "deepnorm", "keel", "hc", "mhc", "attnres", "attnres_block", "moda"):
     SPECS[f"d48-{a}"] = {"sep": (f"130m-della4xh100-pls1-sep-a{a}-vs-d48-g4", f"130m-della8xh100-pls1-sep-a{a}-vs-d48-lensat4958-g4", 48),
