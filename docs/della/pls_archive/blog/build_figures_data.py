@@ -416,8 +416,8 @@ def lens_panel(key, xs, label):
             ys.append(y)
     yy = np.concatenate(ys)
     v = view(xs, yy, endpoints_only=True)
-    v["ylim"] = [0.97 * float(yy.min()), 1.08 * float(yy.max())]
-    v["yticks"] = [[a, f"{a:g}"] for a in (3.5, 4, 5, 6, 7, 8, 10, 12, 15, 20) if v["ylim"][0] <= a <= v["ylim"][1]]
+    v["ylim"] = [0.97 * float(yy.min()), 1.45 * float(yy.max())]   # log scale: the top band holds the panel name clear of layer 1
+    v["yticks"] = [[a, f"{a:g}"] for a in (4, 5, 6, 8, 12) if v["ylim"][0] <= a <= v["ylim"][1]]
     print("fig-lens", key, {k: {kk: [vv[0], vv[-1]] for kk, vv in d.items()} for k, d in P_.items()})
     return dict(**v, marks=marks, label=label)
 figs["fig-lens"] = dict(title={"en": "Held-out loss by layer through each layer's own readout and through the final head", "zh": "按层的留出损失：经各层自己的读出头与经最终输出头"},
