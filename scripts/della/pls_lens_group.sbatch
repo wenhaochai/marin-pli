@@ -81,6 +81,7 @@ case $NAME in
   lens-48a) SPECS=("${G48A[@]}");;
   lens-48b) SPECS=("${G48B[@]}");;
   lens-300m) SPECS=("${G300[@]}");;
+  lens-130sep) SPECS=("130m-della8xh100-pls1-sep|4958|SIZE=130m PLS_W=1 PLS_SEP=1");;   # the separate-heads rerun (15720165) that kept its checkpoint
   *) echo "unknown lens job name '$NAME'"; exit 2;;
 esac
 LIMIT=${LENS_EVAL_MIN:-40}m   # one checkpoint's eval, load and compile included
