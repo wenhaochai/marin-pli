@@ -67,6 +67,11 @@ for a in "" preln lns deepnorm keel; do t=${a:+-a$a}; k=${a:+ ARCH=$a}
   G48A+=("130m-della4xh100-pls1-sep$t-vs-d48-g4|4958|$D48$k" "130m-della4xh100-pls1-sep-bbfrozen$t-vs-d48-g4|4958|$D48 PLS_DETACH_BB=1$k"); done
 for a in hc mhc attnres attnres_block moda; do
   G48B+=("130m-della4xh100-pls1-sep-a$a-vs-d48-g4|4958|$D48 ARCH=$a" "130m-della4xh100-pls1-sep-bbfrozen-a$a-vs-d48-g4|4958|$D48 PLS_DETACH_BB=1 ARCH=$a"); done
+# lens-48c: the designs trained at microbatch 1 (launcher PARAM_MAP_PDP1 applies only when PDP > 1; unset PDP means the
+# whole per-device batch, which ran out of memory for attnres, attnres_block in 15720394). PDP only splits the batch.
+G48C=()
+for a in attnres attnres_block moda; do
+  G48C+=("130m-della4xh100-pls1-sep-a$a-vs-d48-g4|4958|$D48 ARCH=$a PDP=1" "130m-della4xh100-pls1-sep-bbfrozen-a$a-vs-d48-g4|4958|$D48 PLS_DETACH_BB=1 ARCH=$a PDP=1"); done
 G48A+=("130m-della4xh100-d12|4958|SIZE=130m PLS_W=0 LAYERS=12" "130m-della4xh100-d24|4958|SIZE=130m PLS_W=0 LAYERS=24" "130m-della4xh100-d36|4958|SIZE=130m PLS_W=0 LAYERS=36")
 G300=(
   "300m-della4xh100-pls1-sep|11443|SIZE=300m PLS_W=1 PLS_SEP=1"
@@ -80,6 +85,7 @@ case $NAME in
   lens-130m) SPECS=("${G130[@]}");;
   lens-48a) SPECS=("${G48A[@]}");;
   lens-48b) SPECS=("${G48B[@]}");;
+  lens-48c) SPECS=("${G48C[@]}");;
   lens-300m) SPECS=("${G300[@]}");;
   lens-130sep) SPECS=("130m-della8xh100-pls1-sep|4958|SIZE=130m PLS_W=1 PLS_SEP=1");;   # the separate-heads rerun (15720165) that kept its checkpoint
   *) echo "unknown lens job name '$NAME'"; exit 2;;
