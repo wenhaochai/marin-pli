@@ -454,13 +454,14 @@ def mtpl_marks():
     for arm, c in (("ntp", RED), ("mtp", MTPC)):
         p = pts([d["params"] for d in done], [d[arm] for d in done])
         marks += [line(p, c), dots(p, c)]
+    assert all(3.0 <= d[a_] <= 4.1 for d in done for a_ in ("ntp", "mtp")), "fig-mtpl: a point outside the y range"
     print("fig-mtpl", {f"{d['params']:.3g}": (d["ntp"], d["mtp"]) for d in done})
     return dict(marks=marks)
 figs["fig-mtpl"] = dict(title={"en": "Next-token loss by model size, NTP and MTP", "zh": "按模型尺度的下一个词损失，NTP 与 MTP"},
                         legend=[[{"en": "NTP", "zh": "NTP"}, RED, "line"], [{"en": "NTP + MTP", "zh": "NTP + MTP"}, MTPC, "line"]],
                         quantity=CE_EVAL, xlabel={"en": "Parameters", "zh": "参数量"}, height=220,
-                        panels=[dict(xlog=True, ylog=True, yoff=YOFF, xlim=[8e7, 2e9], ylim=[3.3, 4.1], xticks=[[1e8, "100M"], [3e8, "300M"], [1e9, "1B"]],
-                                     yticks=[[a, f"{a:g}"] for a in (3.4, 3.6, 3.8, 4.0)], **mtpl_marks())])
+                        panels=[dict(xlog=True, ylog=True, yoff=YOFF, xlim=[8e7, 2e9], ylim=[3.0, 4.1], xticks=[[1e8, "100M"], [3e8, "300M"], [1e9, "1B"]],
+                                     yticks=[[a, f"{a:g}"] for a in (3.2, 3.4, 3.6, 3.8, 4.0)], **mtpl_marks())])
 def depth_panel(target):
     """fig-mtpl-depth from mtpl.json (fetch_mtpl.py): MTP minus NTP of each layer's post-hoc probe loss (target "next" or
     "after") at relative depth k / L, a line and dots per size whose two probe runs have finished; the status word while
