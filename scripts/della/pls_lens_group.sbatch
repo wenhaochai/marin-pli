@@ -55,7 +55,7 @@ G130=(
   "130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut|4958|SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=1 PLS_OPT_SPLIT=1 PLS_FUT=1 PLS_MTP_W=0.3"
   "130m-della4xh100-pls1-sep-aattnres|4958|SIZE=130m PLS_W=1 PLS_SEP=1 ARCH=attnres"
   "130m-della4xh100-pls1-sep-bbfrozen-aattnres|4958|SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=1 ARCH=attnres"
-  "130m-della4xh100-d1|4958|SIZE=130m PLS_W=0 LAYERS=1"
+  # no d1: a 1-layer model has no intermediate layer (its lens is its own head; the monitor fails at L=1, 15720392)
   "130m-della4xh100-d2|4958|SIZE=130m PLS_W=0 LAYERS=2"
   "130m-della4xh100-d3|4958|SIZE=130m PLS_W=0 LAYERS=3"
   "130m-della4xh100-d4|4958|SIZE=130m PLS_W=0 LAYERS=4"
@@ -95,7 +95,8 @@ for spec in "${SPECS[@]}"; do
   t0=$(date +%H:%M:%S); r=0
   # shellcheck disable=SC2086
   env $knobs NUM_GPUS=8 LENS_FROM=$ck bash $PT "lens-$src" "${NAME}" main 8 "$LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 || r=$?
-  rid=$(sed -n 's/^output: //p' "$log" | head -1); rid=$(basename "$(dirname "$rid")")
+  # a real run prints "Using output path: <prefix>/speedrun/<id>/<date>" (only a dry run prints "output: ...", 2026-10-18)
+  rid=$(sed -n 's/.*Using output path: //p' "$log" | head -1); rid=$(basename "$(dirname "$rid")")
   echo "$src: rc=$r $t0-$(date +%H:%M:%S) run $rid; $(grep -oE 'eval loss: [0-9.]+' "$log" | tail -1)"
   if [ $r -eq 0 ]; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
   if [[ -n $rid && $rid == *-lensat${step}* ]]; then   # only this eval's own output
