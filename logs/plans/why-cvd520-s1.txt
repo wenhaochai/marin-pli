@@ -1,0 +1,5 @@
+# Q10k (owner popup 2026-10-18): cvd at 520m, seed 1, full + rep8 (seed 0 led 128K and 8K by 0.023 at 8 passes); 24 h host job: after the lanes, fetch_pending.sh runs pending fetchable jobs in the time left
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=520m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+DATA_EPOCHS=8+SEED=1
+par cvd520-full-s1 520m-della4xh100-cvd8k-p0.5-s1 main 4 1380m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=520m VARIANT=cvd SEED=1
+par cvd520-rep8-s1 520m-della4xh100-cvd8k-p0.5-rep8-s1 main 4 1380m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=520m VARIANT=cvd DATA_EPOCHS=8 SEED=1
+wait
