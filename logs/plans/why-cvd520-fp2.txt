@@ -1,0 +1,4 @@
+# Q10k (owner popup 2026-10-18): cvd at 520m only from pass 2 (CVD_FROM_PASS=2), rep8 seed 0; the full-data point is the 520m 128K baseline (pass 1 is the baseline); 4-GPU 24 h host job
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZES=520m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+CVD_FROM_PASS=2+DATA_EPOCHS=8
+par cvd520-fp2-rep8 520m-della4xh100-cvd8k-p0.5-fp2-rep8 main 4 1380m scripts/della/muonh_qwen3_h100x4.sbatch CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=520m VARIANT=cvd CVD_FROM_PASS=2 DATA_EPOCHS=8
+wait
