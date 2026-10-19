@@ -127,6 +127,10 @@ parameter-count control (low-rank tables).
 - tools/packed_task.sh writes a ledger line only when timeout returns: a job ended by Slurm (wall, idle cancel, scancel)
   loses the running tasks' lines, and their hours count as other compute (tool owned by the controller).
 - The vo130 job's last step (128K, 8 passes) runs on 4 GPUs for about an hour while the other 4 idle (under 90 min).
+- Page Figure 1 rule (owner popups 2026-10-18): y is the 300m 8-pass Paloma bpb; the goal is the Marin tokenizer's
+  full-data result (1.3856, repeating costs nothing), with any tokenizer and no compute limit. Under this rule the
+  unchanged bytes (1.3736, one seed, 54247 steps against 11443) already reach it; the best Marin setup is 1.4397.
+  The /goal criteria for the 128K tokenizer itself are unchanged.
 - Disk 2026-10-18 (owner approved; the controller ran tmp/ckpt_delete.sh): 123 non-final step dirs of finished runs
   deleted, 272 GB. Every run keeps its last step, which is the only one the analyses read (vo-toklosses: step-11443).
   Kept: pls runs, OV runs (ov12.8m/ov1.28m, 1773 GB, not approved), bytes-300m-rep2.4 (running), 10 dirs written in the
