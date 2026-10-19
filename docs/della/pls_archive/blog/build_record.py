@@ -266,7 +266,7 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
         state, hours = r.state, float(r.summary.get("_runtime", 0)) / 3600
     elif kind == "chain":
         done = run is not None and run.state == "finished" and int(run.summary.get("_step", -1)) == int(run.config["trainer"]["num_train_steps"]) - 1
-        hours = run_hours(rid, ref); live = [st for st in (sacct(j)[0] for j in ref) if st in ("RUNNING", "PENDING")]
+        hours = run_hours(rid, ref); live = [st for st in ("RUNNING" if fetching(j) else sacct(j)[0] for j in ref) if st in ("RUNNING", "PENDING")]   # a host job may run one
         # Running: a chain job trains now, or the run is past 10% of its steps and its next job waits (between 24 h jobs)
         under_way = run is not None and int(run.summary.get("_step", 0)) >= 0.1 * int(run.config["trainer"]["num_train_steps"])
         # Paused: under way, no chain job training now, the next one queued (controller audit 2026-10-18)

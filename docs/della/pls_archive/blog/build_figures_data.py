@@ -363,7 +363,7 @@ figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step 
 # heads at weight 1. auto10.json (fetch_auto10.py, once runs finish): {key: [final loss of layers 1..6]}; a key without
 # data shows its status word under its bar.
 AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"en": "1 Own clip", "zh": "1 单独裁剪"}, None),
-          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, None), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, QUEUED),
+          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, None), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, RUNNING),
           ("conf", {"en": "4 Conf. weight", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, None),
           ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, None), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
           ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, None),
