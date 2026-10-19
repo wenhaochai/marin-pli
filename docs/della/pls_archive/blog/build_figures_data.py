@@ -363,7 +363,7 @@ figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step 
 # heads at weight 1. auto10.json (fetch_auto10.py, once runs finish): {key: [final loss of layers 1..6]}; a key without
 # data shows its status word under its bar.
 AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"en": "1 Own clip", "zh": "1 单独裁剪"}, None),
-          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, None), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, RUNNING),
+          ("mix", {"en": "2 Mix 0.2", "zh": "2 混合 0.2"}, None), ("kd", {"en": "3 Distill", "zh": "3 自蒸馏"}, None),
           ("conf", {"en": "4 Conf. weight", "zh": "4 置信度"}, None), ("ad", {"en": "5 Adapter", "zh": "5 适配器"}, None),
           ("mlpo", {"en": "6 MLP only", "zh": "6 只更新 MLP"}, None), ("first", {"en": "7 First 256", "zh": "7 前 256"}, None),
           ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, None),
@@ -388,10 +388,13 @@ wait10_zh = "；".join("、".join(ns) + " " + zh for (en, zh), ns in wait10.item
 
 def auto10_panel(j, label, lo, hi, step):
     vals = [round(gap10[k][j], 4) if k in gap10 else None for k, _, _ in AUTO10]
-    assert all(v is None or lo <= v <= hi for v in vals), f"fig-auto10 layer {j + 1}: a bar outside [{lo}, {hi}]: {vals}"
+    assert all(v is None or lo <= v for v in vals), f"fig-auto10 layer {j + 1}: a bar below {lo}: {vals}"
+    # a bar above the axis is drawn to its top and its label carries the value (3 Distill at layer 6: 0.70 nats)
+    cats = [{"en": c["en"] + f" ({v:.2f}, off scale)", "zh": c["zh"] + f"（{v:.2f}，超出坐标）"} if v is not None and v > hi else c for c, v in zip(cats10, vals)]
+    vals = [min(v, 0.98 * hi) if v is not None else None for v in vals]
     if wait10:
         label = {"en": label["en"] + " · " + wait10_en, "zh": label["zh"] + " · " + wait10_zh}
-    return dict(xlim=[-1.3, len(AUTO10) - 0.4], ylim=[lo, hi], yticks=lin_ticks(lo, hi, step, "{:.2f}"), cats=cats10, label=label,
+    return dict(xlim=[-1.3, len(AUTO10) - 0.4], ylim=[lo, hi], yticks=lin_ticks(lo, hi, step, "{:.2f}"), cats=cats, label=label,
                 marks=[dict(type="bars", color=BLUE7 if k == "sep" else "#8AB4F8", vals=[v if i == n else None for n, v in enumerate(vals)]) for i, (k, _, _) in enumerate(AUTO10)])
 
 
