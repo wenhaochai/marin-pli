@@ -16,6 +16,9 @@ Per layer k = 1..48:
              residual designs and moda: both branch outputs (the writes, below) are zero. For deepnorm and keel the
              post-norms stay, so the layer still applies h <- N(a h) twice (a re-gain; deepnorm's LN(a h) also re-centres);
              skip_ce_bypass (deepnorm, keel only) passes h through the layer unchanged instead.
+    skip_ce_delete (--delete, added afterwards to the same JSONs): layer k deleted, the model as close to the 47-layer model as
+             the trained weights allow; DELETE_NOTE says per design what that is and when it equals skip_ce (preln, sandwich,
+             moda, attnres) or skip_ce_bypass (deepnorm, keel); hc/mhc also skip_ce_delete_reindex.
              moda: zero writes, and the layer's two depth key/value slots (its attention's and its MLP input's) are
              left out of every later layer's depth softmax (as if the layer did not exist; masked like unfilled slots).
              hc, mhc: the layer's two branch writes w (x) f are zero; its read, stream mixing A and write weights still run.
@@ -89,6 +92,7 @@ ap.add_argument("--b", type=int, default=16)
 ap.add_argument("--b-skip", type=int, default=8)
 ap.add_argument("--t", type=int, default=1024)
 ap.add_argument("--n-sample", type=int, default=2048)
+ap.add_argument("--delete", action="store_true", help="only add skip_ce_delete to the existing OUT_DIR JSONs (see DELETE_NOTE)")
 args = ap.parse_args()
 
 ROOT = "/scratch/gpfs/GROUP/USER/marin_store_big/speedrun"
@@ -286,12 +290,13 @@ class Residual(Design):
     def before(self, carry):
         return carry
 
-    def layer(self, i, h, keep, rec, gv=None):
+    def layer(self, i, h, keep, rec, gv=None, pos=None):
+        pos = i if pos is None else pos  # the layer's position (lns's 1 / sqrt(pos + 1)); the deletion runs renumber it
         recs = []
         for j in range(2):
             t = 2 * i + j + 1
             M = self.mats[t] if (rec and self.has_norm) else None
-            h, r = self._sublayer(self.layers[i], j, h, jnp.float32(keep), jnp.int32(i), self.arch == "keel" and i == 0, rec, gv, M)
+            h, r = self._sublayer(self.layers[i], j, h, jnp.float32(keep), jnp.int32(pos), self.arch == "keel" and i == 0, rec, gv, M)
             recs.append(r)
         return h, recs
 
@@ -445,12 +450,16 @@ class Hyper(Design):
     def before(self, H):
         return self.A(hax.sum(H, axis="stream"))
 
-    def layer(self, i, H, keep, rec, gv=None):
+    def layer(self, i, H, keep, rec, gv=None, pos=None):
+        pos = i if pos is None else pos  # the sublayer constants' index 2 pos + j (read / bias one-hot on stream (2 pos + j) mod m)
         recs = []
         for j in range(2):
-            H, r = self._sub(self.layers[i], j, H, jnp.int32(i), jnp.float32(keep), rec, gv)
+            H, r = self._sub(self.layers[i], j, H, jnp.int32(pos), jnp.float32(keep), rec, gv)
             recs.append(r)
         return H, recs
+
+    def bypass(self, i, H):  # deletion: no write and identity mixing, the streams pass through
+        return H
 
     def state(self, H, i):
         return self.A(hax.sum(H, axis="stream"))
@@ -537,7 +546,11 @@ class AttnRes(Design):
         self.avail[slot] = True
         return V, R, slot
 
-    def layer(self, i, carry, keep, rec, gv=None):
+    def bypass(self, i, carry):
+        return carry
+
+    def layer(self, i, carry, keep, rec, gv=None, pos=None):
+        pos = i if pos is None else pos  # the layer's position: attnres_block's slot is 1 + (2 pos + j) // 12
         V, R = carry
         if keep == 0.0:  # removed: no source written
             return (V, R), [None, None]
@@ -546,7 +559,7 @@ class AttnRes(Design):
             s = 2 * i + j
             h = self._mix(V, R, self.Q[s], jnp.asarray(self.avail))[0]
             f = self._branch(self.layers[i], j, h)
-            V, R, slot = self._write(V, R, s, f)
+            V, R, slot = self._write(V, R, 2 * pos + j, f)
             if rec:
                 recs.append(dict(ratio=wratio(f, h), r=gdot(gv, f), slot=slot))
             else:
@@ -581,6 +594,58 @@ def design_for(m, cfg, bt):
     raise ValueError(a)
 
 
+# ---- deletion runs (--delete; coordinator follow-up 2026-10-19, after PracRemove.lean) --------------------------------
+DELETE_NOTE = {
+    "preln": "skip_ce is a true deletion (zero writes = the 47-layer model)",
+    "sandwich": "skip_ce is a true deletion (RN_out(0) = 0: zero writes = the 47-layer model)",
+    "moda": "skip_ce is a true deletion (zero writes and the layer's depth slots masked = the 47-layer model)",
+    "attnres": "skip_ce is a true deletion (the layer's sources never enter a mix = the 47-layer model)",
+    "deepnorm": "skip_ce_bypass copied (the layer skipped, h passes unchanged); skip_ce leaves h <- LN(a h) twice. The 47-layer model would also "
+                "change a = (2L)^(1/4) and the init-scale constant with L; both kept at L = 48",
+    "keel": "skip_ce_bypass copied (h passes unchanged); skip_ce leaves h <- RN(a h) twice. Kept: a = 2L with L = 48, and layer 1's special "
+            "first-layer form stays on layer 1 (deleting layer 1 does not make layer 2 the special one)",
+    "hc": "skip_ce_delete: the layer skipped entirely (identity mixing, no write; the streams pass unchanged), later layers keep their own "
+          "sublayer constants (read one-hot on stream (2l + j) mod m, l the trained index); skip_ce_delete_reindex: later layers renumbered "
+          "l -> l - 1 as in a 47-layer model (one-hot shifts by 2 streams); skip_ce keeps the layer's trained mixing A, read and write weights",
+    "mhc": "as hc: skip_ce_delete keeps later layers' bias constants (read +8 on stream (2l + j) mod m), skip_ce_delete_reindex renumbers them",
+    "lns": "skip_ce_delete: the layer skipped and the later layers renumbered, so layer l > k scales by 1 / sqrt(l) instead of 1 / sqrt(l + 1) "
+           "(the 47-layer model); skip_ce (zero writes) keeps the later layers' trained scales",
+    "attnres_block": "skip_ce_delete: the layer skipped and the later layers moved up one position with the block size kept at 12 sublayers "
+                     "(6 layers): a later sublayer at position p joins block p // 12, so later block boundaries move by one layer; skip_ce keeps "
+                     "each later layer's trained block slot. (The model's own code at L = 47 would use 94 // 8 = 11 sublayers per block.)",
+}
+
+
+def run_delete(arch, setup, m, cfg, tr, W_main, forward):
+    dpath = os.path.join(args.out_dir, f"{arch}-{setup}.json")
+    old = json.load(open(dpath))
+    bt, L = BT_SKIP, cfg.num_layers
+    D = design_for(m, cfg, bt)
+    ce = lambda h: float(ce_of(h, tr.norm, W_main, bt["tgt"], bt["valid"]))  # noqa: E731
+    base = ce(forward(D, bt)[0])
+    print(f"[{arch}-{setup}] base CE {base:.5f} (stored {old['base_ce']:.5f}, diff {base - old['base_ce']:.1e})", flush=True)
+    layers = [int(v) for v in args.skip_layers.split(",") if v] or list(range(1, L + 1))
+    t0 = time.time()
+    for k in range(1, L + 1):
+        r = old["layers"][k - 1]
+        r["skip_ce_delete"] = None
+        if arch in ("hc", "mhc"):
+            r["skip_ce_delete_reindex"] = None
+        if k not in layers:
+            continue
+        if arch in ("hc", "mhc"):
+            r["skip_ce_delete"] = ce(forward(D, bt, skip=k - 1, bypass=True)[0])
+            r["skip_ce_delete_reindex"] = ce(forward(D, bt, skip=k - 1, bypass=True, reindex=True)[0])
+        else:  # lns, attnres_block
+            r["skip_ce_delete"] = ce(forward(D, bt, skip=k - 1, bypass=True, reindex=True)[0])
+        print(f"[{arch}-{setup}] delete layer {k}: {r['skip_ce_delete'] - base:+.4f} (skip_ce {r['skip_ce'] - base:+.4f})"
+              + (f" reindex {r['skip_ce_delete_reindex'] - base:+.4f}" if arch in ("hc", "mhc") else "") + f" | {time.time() - t0:.0f}s", flush=True)
+    old["delete_note"] = DELETE_NOTE[arch]
+    old["delete_base_ce"] = base
+    json.dump(old, open(dpath, "w"), indent=1)
+    print(f"[{arch}-{setup}] wrote {dpath}", flush=True)
+
+
 # ---- one model ------------------------------------------------------------------------------------------------------
 def run_model(name):
     t_start = time.time()
@@ -594,6 +659,17 @@ def run_model(name):
     assert (setup == "ord") == bool(cfg.pls_detach_backbone), (name, cfg.pls_detach_backbone)
     assert L == 48 and cfg.pls_separate_heads and (arch_raw != "baseline" or cfg.hybrid_norm), (L, cfg.pls_separate_heads)
     ckpt = f"{ROOT}/{name}/2026.09.13/checkpoints/step-4958"
+    if args.delete:  # copy-only designs need no model
+        dpath = os.path.join(args.out_dir, f"{arch}-{setup}.json")
+        old = json.load(open(dpath))
+        src = {"preln": "skip_ce", "sandwich": "skip_ce", "moda": "skip_ce", "attnres": "skip_ce", "deepnorm": "skip_ce_bypass", "keel": "skip_ce_bypass"}.get(arch)
+        if src is not None:
+            for r in old["layers"]:
+                r["skip_ce_delete"] = r[src]
+            old["delete_note"] = DELETE_NOTE[arch]
+            json.dump(old, open(dpath, "w"), indent=1)
+            print(f"[{arch}-{setup}] skip_ce_delete = {src} (copied) -> {dpath}", flush=True)
+            return
     template = eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, cfg, key=jrandom.PRNGKey(0))
     m = load_checkpoint(template, ckpt, subpath="model")
     m = jax.tree_util.tree_map(lambda a: a.astype(jnp.float32) if eqx.is_inexact_array(a) else a, m)
@@ -610,7 +686,7 @@ def run_model(name):
     def embed(bt):
         return m.embeddings.embed(bt["ids"]).rearrange((bt["Batch"], bt["Pos"], Embed)).array
 
-    def forward(D, bt, skip=None, rec=False, bypass=False, gv=None):
+    def forward(D, bt, skip=None, rec=False, bypass=False, gv=None, reindex=False):
         x = embed(bt)
         carry = D.init(x)
         prev = D.before(carry) if rec else None
@@ -620,7 +696,10 @@ def run_model(name):
                 carry = D.bypass(i, carry)
                 continue
             t1 = time.time()
-            carry, recs = D.layer(i, carry, 0.0 if skip == i else 1.0, rec, gv)
+            if reindex and skip is not None and i > skip:  # the layers after a deleted one move up one position
+                carry, recs = D.layer(i, carry, 1.0, rec, gv, pos=i - 1)
+            else:
+                carry, recs = D.layer(i, carry, 0.0 if skip == i else 1.0, rec, gv)
             if rec:
                 recs_all += recs
                 S = D.state(carry, i)
@@ -634,6 +713,10 @@ def run_model(name):
                     print(f"[{arch}-{setup}] layer {i + 1}: lens {float(lens):.3f} own {float(own):.3f} imp {float(bi):.4f} erank {float(er):.1f} "
                           f"aniso {float(an):.3f} massive {float(ms):.1f}@{int(md)} | {time.time() - t1:.1f}s", flush=True)
         return D.final(carry), carry, recs_all, rows, x
+
+    if args.delete:
+        run_delete(arch, setup, m, cfg, tr, W_main, forward)
+        return
 
     out = dict(arch=arch, setup=setup, model=name, ckpt=ckpt, text=f"paloma c4_en validation, first {B} x {T} tokens (skip: first {B_SKIP}), documents isolated by segment ids",
                tokens_skip=BT_SKIP["n_valid"], tokens=BT_REC["n_valid"], n_sample=N_SAMPLE)
