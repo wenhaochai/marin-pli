@@ -106,7 +106,9 @@ RUNS = [
         ("Logit lens of the 300m models and the 300m and 520m NTP / MTP models (eval)", "300m 模型以及 300m、520m NTP / MTP 模型的 logit lens（评估）", "300m", 12, 15720395, "lens-300m", "300m-della8xh100-pls1-sep-lensat11443", "16"),
         ("Kimi K3 logit lens (eval, 64 x 1,024 tokens)", "Kimi K3 的 logit lens（评估，64 x 1,024 个 token）", "K3", 93, 15736820, "k3-lens", "", "22"),
         ("Kimi K3 AttnRes check-up: smoke (eval)", "Kimi K3 AttnRes 体检：冒烟测试（评估）", "K3", 93, 15817062, "k3-checkup-smoke", "", "23-28"),
-        ("Kimi K3 AttnRes check-up (eval, Paloma C4, 64 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检（评估，Paloma C4，64 x 1,024 个 token，12 种消融）", "K3", 93, 15817869, "k3-checkup", "", "23-28")]],
+        ("Kimi K3 AttnRes check-up (eval, Paloma C4, 64 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检（评估，Paloma C4，64 x 1,024 个 token，12 种消融）", "K3", 93, 15817869, "k3-checkup", "", "23-28"),
+        ("Kimi K3 AttnRes check-up v2: smoke, one read per layer (eval)", "Kimi K3 AttnRes 体检 v2：冒烟测试，每层只读一次（评估）", "K3", 93, 15844464, "k3-checkup-v2-smoke", "", "23-29"),
+        ("Kimi K3 AttnRes check-up v2 (eval, Paloma C4, 128 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检 v2（评估，Paloma C4，128 x 1,024 个 token，12 种消融）", "K3", 93, 15844650, "k3-checkup-v2", "", "23-29")]],
     # ten more attempts at the last-layer cost (Figure 15; owner popup 2026-10-16), branch pls-auto10: two 130m runs per
     # 8-GPU pair job (pls_auto10_pair.sbatch, fetchable); the job ids join as the pairs are submitted
     *[(S(en, zh), "130m", 6, 2.6, 4, ("chain", jid, rid) if isinstance(jid, list) else ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
