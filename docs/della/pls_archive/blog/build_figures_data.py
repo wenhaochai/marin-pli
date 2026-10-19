@@ -591,6 +591,131 @@ figs["fig-k3lens"] = dict(title={"en": "Logit lens of Kimi K3 by layer", "zh": "
                                   [{"en": "Weight: current block", "zh": "权重：当前块"}, YELLOW9, "line"]],
                           quantity=CE, xlabel={"en": "Layer", "zh": "层"}, height=220, cols=1, panels=K3P)
 
+# AttnRes check-up (owner popup 2026-10-19 "按方案做", "越全面越好"; separate-heads models added the same day): the same
+# measurements on Kimi K3 (k3_checkup.py, Paloma c4_en re-tokenized, 64 x 1,024 tokens) and on our 48-layer AttnRes (Block)
+# and AttnRes (Full), ordinary and separate heads (attnres_checkup.py, CPU, Paloma c4_en, 16 x 1,024 tokens). Data:
+# checkup/<key>.json, one per model (schema in the two scripts); a model without its file shows its status.
+CK_STATUS = RUNNING
+CK = [("k3", {"en": "Kimi K3 (93 layers, blocks of 12)", "zh": "Kimi K3（93 层，每块 12 层）"}),
+      ("block", {"en": "Ours, AttnRes (Block), ordinary model", "zh": "我们的 AttnRes (Block)，普通模型"}),
+      ("block-sep", {"en": "Ours, AttnRes (Block), separate heads", "zh": "我们的 AttnRes (Block)，独立头"}),
+      ("full", {"en": "Ours, AttnRes (Full), ordinary model", "zh": "我们的 AttnRes (Full)，普通模型"}),
+      ("full-sep", {"en": "Ours, AttnRes (Full), separate heads", "zh": "我们的 AttnRes (Full)，独立头"})]
+CKD = {k: json.load(open(HERE / "checkup" / f"{k}.json")) for k, _ in CK if (HERE / "checkup" / f"{k}.json").exists()}
+GRN, PUR, ORA, PINK = GREEN, PURPLE, YELLOW9, PINK7
+GRN3, PUR3, ORA3, PINK3 = "#81C995", "#C58AF9", "#FDD663", "#F48FB1"
+
+
+def ck_axis(k):
+    n = 93 if k == "k3" else 48
+    t = [1, 12, 24, 36, 48, 60, 72, 84, 93] if n == 93 else [1, 6, 12, 18, 24, 30, 36, 42, 48]
+    return n, [[a, str(a)] for a in t]
+
+
+def ck_groups(d, r, key):
+    """[embedding, older blocks, the last finished block, the current block] from a probs list (the grouped list for Full)."""
+    p = r.get(key + "_grouped", r[key])
+    bl = d.get("block_layers") or 6
+    cur = (r["layer"] + 1) % bl != 0 if key != "attn_in_probs" else r["layer"] % bl != 0
+    emb, rest = p[0], p[1:]
+    current = rest[-1] if cur and rest else 0.0
+    fin = rest[:-1] if cur and rest else rest
+    last = fin[-1] if fin else 0.0
+    older = sum(fin[:-1]) if len(fin) > 1 else 0.0
+    return emb, older, last, current
+
+
+def ck_panels(lo, hi, ylog, yt, fill):
+    out = []
+    for k, lab in CK:
+        n, xt = ck_axis(k)
+        q = dict(xlog=False, ylog=ylog, xlim=[0.5, n + 0.5], ylim=[lo, hi], xticks=xt, yticks=[[a, f"{a:g}"] for a in yt], marks=[], label=lab)
+        if ylog:
+            q["yoff"] = 0.0
+        if k in CKD:
+            q["marks"] = fill(CKD[k])
+        else:
+            q["empty"] = CK_STATUS
+        out.append(q)
+    return out
+
+
+def line(d, f, col):
+    return dict(type="line", color=col, pts=[[r["layer"] + 1, round(float(f(r)), 4)] for r in d["layers"]])
+
+
+def ck_lens(d):
+    m = [line(d, lambda r: r["sum_ce"], GREY), line(d, lambda r: r["exit_ce"], RED), line(d, lambda r: r["next_ce"], BLUE7)]
+    if "own_ce" in d["layers"][0]:
+        m.append(line(d, lambda r: r["own_ce"], GREEN))
+    return m
+
+
+def ck_weights(key):
+    def fill(d):
+        return [line(d, lambda r, j=j: ck_groups(d, r, key)[j], c) for j, c in enumerate((GRN, PUR, PINK, ORA))]
+    return fill
+
+
+def ck_read(d):
+    m = []
+    for key, cols in (("mlp_in_probs", (GRN3, PUR3, PINK3, ORA3)), ("attn_in_probs", (GRN, PUR, PINK, ORA))):
+        m += [line(d, lambda r, j=j, key=key: ck_groups(d, r, key)[j], c) for j, c in enumerate(cols)]
+    return m
+
+
+def ck_query(d):
+    q = d["queries"]; n = len(q["norm"]) - 1   # sublayers, then the head
+    xs = [1 + i / 2 for i in range(n)]          # attention of layer k at k, its MLP at k + 0.5
+    mx = max(q["norm"]) or 1.0
+    return [dict(type="line", color=BLUE7, pts=[[x, round(v / mx, 4)] for x, v in zip(xs, q["norm"][:n])]),
+            dict(type="line", color=RED, pts=[[x, round(v, 4)] for x, v in zip(xs, q["cos_out"][:n])])]
+
+
+def ck_write(d):
+    mx = max(max(r["attn_write_rms"], r["mlp_write_rms"]) for r in d["layers"]) or 1.0
+    return [line(d, lambda r: r["attn_write_rms"] / mx, BLUE7), line(d, lambda r: r["mlp_write_rms"] / mx, BLUE3),
+            line(d, lambda r: r["attn_write_cos_out"], RED), line(d, lambda r: r["mlp_write_cos_out"], RED3)]
+
+
+W4 = [[{"en": "Embedding", "zh": "embedding"}, GRN, "line"], [{"en": "Older blocks", "zh": "更早的块"}, PUR, "line"],
+      [{"en": "Last finished block", "zh": "刚完成的块"}, PINK, "line"], [{"en": "Current block", "zh": "当前块"}, ORA, "line"]]
+figs["fig-ck-lens"] = dict(title={"en": "AttnRes check-up: logit lens by layer", "zh": "AttnRes 体检：按层的 logit lens"},
+                           legend=[[{"en": "Next layer's input", "zh": "下一层的输入"}, BLUE7, "line"], [{"en": "Output mix, stopped here", "zh": "在此停下的输出混合"}, RED, "line"],
+                                   [{"en": "Plain sum of the sources", "zh": "各来源直接相加"}, GREY, "line"], [{"en": "The layer's own separate head", "zh": "该层自己的独立头"}, GREEN, "line"]],
+                           quantity=CE, xlabel={"en": "Layer", "zh": "层"}, height=200, cols=1, panels=ck_panels(0.3, 45.0, True, (0.5, 1, 2, 4, 8, 16), ck_lens))
+figs["fig-ck-mix"] = dict(title={"en": "AttnRes check-up: output-mix weights by layer", "zh": "AttnRes 体检：按层的输出混合权重"}, legend=W4,
+                          quantity={"en": "Weight (mean over tokens)", "zh": "权重（token 平均）"}, xlabel={"en": "Layer", "zh": "层"}, height=170, cols=1,
+                          panels=ck_panels(0, 1.25, False, (0, 0.25, 0.5, 0.75, 1), ck_weights("exit_probs")))
+figs["fig-ck-read"] = dict(title={"en": "AttnRes check-up: where each layer reads from", "zh": "AttnRes 体检：每一层从哪里读"},
+                           legend=W4 + [[{"en": "Light tone: the MLP's input", "zh": "浅色：MLP 的输入"}, GREY, "line"]],
+                           quantity={"en": "Weight of the attention input (dark) and the MLP input (light)", "zh": "注意力输入（深色）和 MLP 输入（浅色）的权重"},
+                           xlabel={"en": "Layer", "zh": "层"}, height=170, cols=1, panels=ck_panels(0, 1.25, False, (0, 0.25, 0.5, 0.75, 1), ck_read))
+figs["fig-ck-query"] = dict(title={"en": "AttnRes check-up: the learned queries", "zh": "AttnRes 体检：学到的查询向量"},
+                            legend=[[{"en": "Query length, relative to the longest", "zh": "查询长度（相对最长者）"}, BLUE7, "line"], [{"en": "Cosine with the output query", "zh": "与输出查询的余弦"}, RED, "line"]],
+                            quantity={"en": "Value", "zh": "数值"}, xlabel={"en": "Layer", "zh": "层"}, height=170, cols=1, panels=ck_panels(-0.5, 1.25, False, (-0.5, 0, 0.5, 1), ck_query))
+figs["fig-ck-write"] = dict(title={"en": "AttnRes check-up: what each sublayer writes", "zh": "AttnRes 体检：每个子层写入了什么"},
+                            legend=[[{"en": "Attention write size, relative", "zh": "注意力写入大小（相对）"}, BLUE7, "line"], [{"en": "MLP write size, relative", "zh": "MLP 写入大小（相对）"}, BLUE3, "line"],
+                                    [{"en": "Attention write · output query (cosine)", "zh": "注意力写入与输出查询的余弦"}, RED, "line"], [{"en": "MLP write · output query (cosine)", "zh": "MLP 写入与输出查询的余弦"}, RED3, "line"]],
+                            quantity={"en": "Value", "zh": "数值"}, xlabel={"en": "Layer", "zh": "层"}, height=170, cols=1, panels=ck_panels(-0.5, 1.25, False, (-0.5, 0, 0.5, 1), ck_write))
+ABL = [("uniform_all", {"en": "Uniform", "zh": "均匀"}), ("sum_all", {"en": "Plain sum", "zh": "直接相加"}), ("no_embedding", {"en": "No embedding", "zh": "去掉 embedding"}),
+       ("recent_only", {"en": "Recent only", "zh": "只读最近"})] + [(f"uniform_block_{b}", {"en": f"Block {b} uniform", "zh": f"第 {b} 块均匀"}) for b in range(1, 9)]
+abl_panels = []
+for k, lab in CK:
+    q = dict(xlim=[-0.7, len(ABL) - 0.3], ylim=[0, 8], yticks=lin_ticks(0, 8, 2, "{:.0f}"), cats=[c for _, c in ABL], label=lab, marks=[])
+    if k in CKD:
+        a = CKD[k]["ablations"]; b = a["baseline"]["ce"]
+        vals = [round(a[n]["ce"] - b, 4) if n in a else None for n, _ in ABL]
+        q["marks"] = [dict(type="bars", color=BLUE3, vals=[min(max(v, 0), 7.9) if v is not None else None for v in vals])]
+        q["cats"] = [{"en": c["en"] + (f" ({v:.1f})" if v is not None and v > 8 else ""), "zh": c["zh"] + (f"（{v:.1f}）" if v is not None and v > 8 else "")} for (_, c), v in zip(ABL, vals)]
+    else:
+        q["empty"] = CK_STATUS
+    abl_panels.append(q)
+figs["fig-ck-ablate"] = dict(title={"en": "AttnRes check-up: loss when the mixing weights are replaced", "zh": "AttnRes 体检：替换混合权重后的损失"},
+                             legend=[[{"en": "Loss increase over the model's own weights", "zh": "相对模型自己权重的损失增加"}, BLUE3, "box"]],
+                             quantity={"en": "Increase in next-token loss (nats)", "zh": "下一个词损失的增加（nats）"}, height=170, cols=1, panels=abl_panels)
+print("fig-ck", sorted(CKD))
+
 # Layer index on the x axis of every by-layer figure (owner, 2026-10-17: "所有横轴应该改成层数"). Within one model the backbone
 # compute of a readout is proportional to its layer (x = 6 N_layer k D), so dividing by one layer's compute gives k and the
 # fitted curves keep their shape; each panel divides by its own model's layer (Figure 7: the design's own per-layer size).
