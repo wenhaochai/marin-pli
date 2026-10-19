@@ -29,6 +29,7 @@ case $NAME in
   auto10-kd-ad)     A="$SEP PLS_KD=1";        B="$SEP PLS_ADAPT=1024";;   # 3: distillation; 5: exit adapters
   auto10-conf-first) A="$SEP PLS_CONF=1";     B="$SEP PLS_FIRST=256";;    # 4: confidence gate; 7: first 256 positions
   auto10-upto)      A="$SEP PLS_SEP_UPTO=3"; B="$SEP PLS_SEP_UPTO=2";;  # owner popup 2026-10-18: only layers 1-3 (1-2) reach the backbone
+  auto10-upto1s)    A="$SEP PLS_SEP_UPTO=1"; B="$SEP PLS_SEP_UPTO=2 SEED=1";;  # owner popup 2026-10-18: 13 only layer 1; 14 layers 1-2 with init seed 1 (data order unchanged)
   *) echo "unknown auto10 job name '$NAME'"; exit 2;;
 esac
 export PAIR_A=$A PAIR_B=$B PAIR_GRACE_MIN=25
