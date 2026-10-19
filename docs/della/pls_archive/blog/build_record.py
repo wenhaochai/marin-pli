@@ -422,7 +422,8 @@ for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
 # eval jobs that write no W&B run (the K3 jobs read a public model with their own scripts): the code link is the public
 # commit of the script they ran (scrubbed marin-pli history, per-layer-contribution branch)
 CODE_NO_WANDB = {15736820: "aa402e9c51347df74acecb31e042c928d2ec4495", 15817062: "8abc839e279992f660f7fc7765a3ec001d64b49b",
-                 15817869: "8abc839e279992f660f7fc7765a3ec001d64b49b", 15795008: "7252c0f1148d25f06984a3854d5d8c4f8dbf8189"}
+                 15817869: "8abc839e279992f660f7fc7765a3ec001d64b49b", 15795008: "7252c0f1148d25f06984a3854d5d8c4f8dbf8189",
+                 15844464: "0b6172eea78e696a5261821c1fc528c43f060a51", 15844650: "0b6172eea78e696a5261821c1fc528c43f060a51"}
 for (setup, size, layers, tok, gpus, src, figs), row in zip(RUNS, rows):
     if src[0] == "lens" and src[1] in CODE_NO_WANDB and not row["code"] and row["state"] != STATE["planned"]:
         row["code"] = CODE + CODE_NO_WANDB[src[1]]
