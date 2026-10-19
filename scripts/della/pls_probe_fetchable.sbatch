@@ -23,6 +23,7 @@ if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o
 ROOT=/scratch/gpfs/GROUP/USER/marin_store_big/speedrun
 B130="SIZE=130m NUM_GPUS=8 PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=1 PLS_OPT_SPLIT=1 PLS_FUT=1 TOTAL_STEPS=2000"
 LAD="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=8"   # PDP 8: 24 probe heads keep every layer's output (the pls OOMs at 520m, 1_2b)
+LAD12="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=2"   # 1_2b: PDP 8 asked 60 GiB in one op in jit__train_step (smokes of 15760472, 15779949)
 case $NAME in
   mtpl-probe-130m-ntp) S="$B130 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-fut/2026.09.13/checkpoints/step-4958";;
   mtpl-probe-130m-mtp) S="$B130 PLS_MTP_W=0.3 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut/2026.09.13/checkpoints/step-4958";;
@@ -31,8 +32,8 @@ case $NAME in
   # 520m and 1_2b train at batch 256: 1000 probe steps are the same 1B tokens as 2000 steps at batch 128
   mtpl-probe-520m-ntp) S="SIZE=520m $LAD TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev/2026.09.13/checkpoints/step-9917";;
   mtpl-probe-520m-mtp) S="SIZE=520m $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-9917";;
-  mtpl-probe-1_2b-ntp) S="SIZE=1_2b $LAD TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev/2026.09.13/checkpoints/step-22887";;
-  mtpl-probe-1_2b-mtp) S="SIZE=1_2b $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-22887";;
+  mtpl-probe-1_2b-ntp) S="SIZE=1_2b $LAD12 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev/2026.09.13/checkpoints/step-22887";;
+  mtpl-probe-1_2b-mtp) S="SIZE=1_2b $LAD12 PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-22887";;
   # the 130m separate heads at weight 1 again, for its final checkpoint (the logit lens needs one; owner popup 2026-10-17)
   pls-130m-sep-ckpt) S="SIZE=130m NUM_GPUS=8 PLS_W=1 PLS_SEP=1";;
   *) echo "unknown probe job name '$NAME'"; exit 2;;
