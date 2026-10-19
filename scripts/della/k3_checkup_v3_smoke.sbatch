@@ -39,7 +39,7 @@ run_pass() {   # $1 tag, $2 token file, $3 text, $4 layers
   mkdir -p "$OUT" "$SHM"
   nvidia-smi --query-gpu=timestamp,index,utilization.gpu,memory.used --format=csv,noheader,nounits -lms 2000 > "$OUT/gpu_util.csv" 2>/dev/null &
   smi=$!; bg+=($smi)
-  $PY $WT/scripts/della/k3_checkup_loader.py "$MODEL" "$SHM" $G $4 3 16 > "$OUT/loader.log" 2>&1 &
+  $PY $WT/scripts/della/k3_checkup_loader.py "$MODEL" "$SHM" $G $4 3 32 > "$OUT/loader.log" 2>&1 &
   ldr=$!; bg+=($ldr)
   for r in $(seq 0 $((G - 1))); do
     K3_SHM=$SHM CUDA_VISIBLE_DEVICES=${DEVS[$r]} $PY $WT/scripts/della/k3_checkup_v3.py "$MODEL" "$2" "$OUT" $r $G $4 > "$OUT/rank$r.log" 2>&1 &

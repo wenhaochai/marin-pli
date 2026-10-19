@@ -312,20 +312,26 @@ def main():
             time.sleep(0.1)
         return p
 
-    def fetch(i):
-        """Layer i's tensors as CPU copies (clone: safe_open's tensors map the file lazily). With K3_SHM the shard is
-        read from /dev/shm, staged once per node by the loader, and this rank marks it done after copying."""
+    def fetch(i, clone=True):
+        """Layer i's tensors. With K3_SHM the shard is read from /dev/shm (staged once per node by the loader). clone:
+        CPU copies, and the shard is marked done here; clone=False: the tensors as safe_open gives them (straight from
+        /dev/shm, no extra host copy), and the caller marks the shard done (mark_done) once it has built the layer."""
         if not SHM:
             return {k: get(k).clone() for k in keys_of[i]}
         f = index[keys_of[i][0]]
         p = wait_shm(f, f"layer {i}")
         t0 = time.time()
         h = safe_open(p, framework="pt", device="cpu")
-        ts = {k: h.get_tensor(k).clone() for k in keys_of[i]}
+        ts = {k: (h.get_tensor(k).clone() if clone else h.get_tensor(k)) for k in keys_of[i]}
         del h
         copy_s[i] = time.time() - t0
-        open(os.path.join(SHM, f"done.{i}.{RANK}"), "w").close()
+        if clone:
+            mark_done(i)
         return ts
+
+    def mark_done(i):
+        if SHM:
+            open(os.path.join(SHM, f"done.{i}.{RANK}"), "w").close()
 
     def deq(packed, scale):
         """MXFP4 (compressed-tensors mxfp4-pack-quantized, group 32) -> bf16 [out, in]."""
@@ -459,12 +465,14 @@ def main():
         """fetch(i), and with to_gpu also build the layer on the GPU on a side stream, so the copy of layer i+1 runs
         while layer i computes. Returns (cpu tensors, None) or (None, layer)."""
         torch.set_grad_enabled(False)   # grad mode is per thread
-        ts = fetch(i)
         if not to_gpu:
-            return ts, None
+            return fetch(i), None
+        ts = fetch(i, clone=False)   # built straight from /dev/shm onto the GPU, no host copy in between
         with torch.cuda.stream(side):
             lay = build_layer(i, ts)
         side.synchronize()
+        del ts
+        mark_done(i)
         return None, lay
 
     pool = ThreadPoolExecutor(max_workers=1)

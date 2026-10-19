@@ -41,7 +41,7 @@ echo "job $JID on $(hostname): $G GPUs (${DEVS[*]}), out $OUT, shm $SHM"
 mkdir -p "$OUT" "$SHM"
 nvidia-smi --query-gpu=timestamp,index,utilization.gpu,memory.used --format=csv,noheader,nounits -lms 2000 > "$OUT/gpu_util.csv" 2>/dev/null &
 bg+=($!)
-$PY $WT/scripts/della/k3_checkup_loader.py "$MODEL" "$SHM" $G $NL 3 16 > "$OUT/loader.log" 2>&1 &
+$PY $WT/scripts/della/k3_checkup_loader.py "$MODEL" "$SHM" $G $NL 3 32 > "$OUT/loader.log" 2>&1 &
 bg+=($!)
 pids=()
 for r in $(seq 0 $((G - 1))); do
