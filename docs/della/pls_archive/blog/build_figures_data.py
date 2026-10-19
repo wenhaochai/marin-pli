@@ -371,7 +371,7 @@ AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"e
           # 11, 12 (owner popups 2026-10-18, no extra parameters): only the readouts of layers 1-3 / 1-2 reach the backbone
           ("upto3", {"en": "11 Layers 1-3", "zh": "11 只监督第 1-3 层"}, None), ("upto2", {"en": "12 Layers 1-2", "zh": "12 只监督第 1-2 层"}, None),
           # 13, 14 (owner popup 2026-10-18): only layer 1's readout; layers 1-2 again with init seed 1 (data order unchanged)
-          ("upto1", {"en": "13 Layer 1", "zh": "13 只监督第 1 层"}, QUEUED), ("upto2s1", {"en": "14 Seed 1", "zh": "14 种子 1"}, QUEUED)]
+          ("upto1", {"en": "13 Layer 1", "zh": "13 只监督第 1 层"}, RUNNING), ("upto2s1", {"en": "14 Seed 1", "zh": "14 种子 1"}, RUNNING)]
 A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
 A10["sep"] = [float(v) for v in Z["-pls1-sep/final"]]
 gap10 = {k: [float(A10[k][j] - cy[j]) for j in range(6)] for k in A10}
