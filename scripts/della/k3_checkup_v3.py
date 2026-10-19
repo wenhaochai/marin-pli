@@ -510,6 +510,8 @@ def main():
     # ---- the final output of every variant
     abl = {}
     for v in VARS:
+        if v not in HEAD_ONLY and v not in states:   # a from-L variant whose layer L was never reached (smoke runs)
+            continue
         prefix, blocks = states["baseline" if v in HEAD_ONLY else v]
         h = mix(prefix, blocks, qo, mode_of(v, L - 1, "out", B), eps)
         ce, acc = read(h)
