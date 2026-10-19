@@ -563,15 +563,33 @@ figs["fig-headft"] = dict(title={"en": "Per-layer loss before and after retraini
 # of three readings (the next layer's input mix, the output mix had the model stopped there, the plain sum of the blocks);
 # lower panel the output mix's weights on the embedding and each block. k3lens.json fills it.
 K3_STATUS = QUEUED
+K3 = json.load(open(HERE / "k3lens.json"))["layers"] if (HERE / "k3lens.json").exists() else None   # k3-lens 15736820, merged.json
 K3T = [[k, str(k)] for k in (1, 12, 24, 36, 48, 60, 72, 84, 93)]
+K3P = [dict(xlog=False, ylog=True, yoff=0.0, xlim=[0.5, 93.5], ylim=[0.3, 45.0], xticks=K3T, yticks=[[a, f"{a:g}"] for a in (0.5, 1, 2, 4, 8, 16)],
+            marks=[], label={"en": "Next-token loss", "zh": "下一个词的损失"}),
+       dict(xlog=False, ylog=False, xlim=[0.5, 93.5], ylim=[0, 1.25], xticks=K3T, yticks=[[a, f"{a:g}"] for a in (0, 0.25, 0.5, 0.75, 1)],
+            marks=[], label={"en": "Output-mix weight on each source", "zh": "输出混合在各来源上的权重"})]
+if K3 is None:
+    for q in K3P:
+        q["empty"] = K3_STATUS
+else:
+    assert [r["layer"] for r in K3] == list(range(93)), "k3lens.json: layers 0..92 expected"
+    xs = [r["layer"] + 1 for r in K3]
+    for key, col in (("sum_ce", GREY), ("exit_ce", RED), ("next_ce", BLUE7)):
+        K3P[0]["marks"].append(dict(type="line", color=col, pts=[[x, round(r[key], 4)] for x, r in zip(xs, K3)]))
+    # exit_probs: [embedding, finished blocks..., the current block's partial sum]; the finished blocks are summed
+    emb = [r["exit_probs"][0] for r in K3]; cur = [r["exit_probs"][-1] for r in K3]
+    fin = [1.0 - a - b for a, b in zip(emb, cur)]
+    assert all(-1e-3 <= f <= 1 + 1e-3 for f in fin), "k3lens.json: exit_probs do not sum to 1"
+    for vals, col in ((emb, GREEN), (fin, PURPLE), (cur, YELLOW9)):
+        K3P[1]["marks"].append(dict(type="line", color=col, pts=[[x, round(max(v, 0.0), 4)] for x, v in zip(xs, vals)]))
+    print("fig-k3lens next/exit/sum at 93", [round(K3[-1][k], 3) for k in ("next_ce", "exit_ce", "sum_ce")], "top-1", round(K3[-1]["next_acc"], 3))
 figs["fig-k3lens"] = dict(title={"en": "Logit lens of Kimi K3 by layer", "zh": "Kimi K3 按层的 logit lens"},
                           legend=[[{"en": "Next layer's input", "zh": "下一层的输入"}, BLUE7, "line"], [{"en": "Output mix, stopped here", "zh": "在此停下的输出混合"}, RED, "line"],
-                                  [{"en": "Plain sum of the blocks", "zh": "各块直接相加"}, GREY, "line"]],
-                          quantity=CE, xlabel={"en": "Layer", "zh": "层"}, height=220, cols=1,
-                          panels=[dict(xlog=False, ylog=True, yoff=0.0, xlim=[0.5, 93.5], ylim=[1.0, 14.0], xticks=K3T, yticks=[[a, f"{a:g}"] for a in (1, 2, 4, 8)],
-                                       marks=[], empty=K3_STATUS, label={"en": "Next-token loss", "zh": "下一个词的损失"}),
-                                  dict(xlog=False, ylog=False, xlim=[0.5, 93.5], ylim=[0, 1.05], xticks=K3T, yticks=[[a, f"{a:g}"] for a in (0, 0.25, 0.5, 0.75, 1)],
-                                       marks=[], empty=K3_STATUS, label={"en": "Output-mix weight on each source", "zh": "输出混合在各来源上的权重"})])
+                                  [{"en": "Plain sum of the blocks", "zh": "各块直接相加"}, GREY, "line"],
+                                  [{"en": "Weight: embedding", "zh": "权重：embedding"}, GREEN, "line"], [{"en": "Weight: finished blocks", "zh": "权重：已完成的块"}, PURPLE, "line"],
+                                  [{"en": "Weight: current block", "zh": "权重：当前块"}, YELLOW9, "line"]],
+                          quantity=CE, xlabel={"en": "Layer", "zh": "层"}, height=220, cols=1, panels=K3P)
 
 # Layer index on the x axis of every by-layer figure (owner, 2026-10-17: "所有横轴应该改成层数"). Within one model the backbone
 # compute of a readout is proportional to its layer (x = 6 N_layer k D), so dividing by one layer's compute gives k and the
