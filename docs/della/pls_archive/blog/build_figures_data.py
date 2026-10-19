@@ -790,7 +790,7 @@ for i, (a, _) in enumerate(DM_ARCH):
         d = DMD.get((a, st))
         if d is not None:
             q.pop("empty", None)
-            q["marks"].append(dict(type="line", color=col, pts=[[r["layer"], round(max(r["skip_ce"] - d["base_ce"], 1e-3), 5)] for r in d["layers"]]))
+            q["marks"].append(dict(type="line", color=col, pts=[[r["layer"], round(max(r.get("skip_ce_delete", r["skip_ce"]) - d["base_ce"], 1e-3), 5)] for r in d["layers"]]))   # the true deletion (depthmed.py --delete)
 print("fig-dm", sorted(DMD))
 
 # Layer index on the x axis of every by-layer figure (owner, 2026-10-17: "所有横轴应该改成层数"). Within one model the backbone

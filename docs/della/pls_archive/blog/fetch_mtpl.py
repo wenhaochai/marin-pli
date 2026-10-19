@@ -41,7 +41,9 @@ for size, (ntp, mtp) in RUNS.items():
             d["params"] = P130 if size == "130m" else int(r.summary["parameter_count"])
         print(size, arm, d[arm], "params", d.get("params"))
 PROBES = {"130m": ("130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958", "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958", 6),
-          "300m": ("300m-della8xh100-pls0-noev-probes2000at11443", "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443", 12)}
+          "300m": ("300m-della8xh100-pls0-noev-probes2000at11443", "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443", 12),
+          "520m": ("520m-della8xh100-pls0-noev-probes1000at9917", "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917", 24),
+          "1_2b": ("1_2b-della8xh100-pls0-noev-probes1000at22887", "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887", 16)}
 for size, (ntp, mtp, L) in PROBES.items():
     got = {}
     for arm, rid in (("ntp", ntp), ("mtp", mtp)):
