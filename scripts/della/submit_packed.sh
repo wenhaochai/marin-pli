@@ -6,7 +6,7 @@
 # run it in a clean environment inside another job's GPUs (it checks --comment=fetchable and the #FETCHABLE line).
 # TIME is the whole job's limit (about 1.25x the expected wall time); the plan's own task limits must fit inside it.
 # GPUS: 8 (default, -c 96) or 4 (-c 48); a fetch takes only a job with exactly the host's GPU count.
-# host: a long job (TIME 24:00:00); after its plan it runs tools/fetch_pending.sh, which runs pending fetchable jobs in
+# host: a long 8-GPU job (TIME 24:00:00); after its plan it runs tools/fetch_pending.sh, which runs pending fetchable jobs in
 # the time left (CLAUDE.md, 2026-10-15). It keeps the fetchable mark too (every job is fetchable by default, owner
 # 2026-10-17); a 24 h job just never fits a host's leftover.
 set -euo pipefail
@@ -14,6 +14,9 @@ cd /scratch/gpfs/GROUP/USER/project/marin
 [ $# -ge 3 ] || { sed -n 2,3p "$0"; exit 2; }
 name=$1; plan=$(realpath "$2"); time=$3; gpus=${4:-8}; mode=${5:-fetchable}
 [[ $mode == fetchable || $mode == host ]] || { echo "mode must be fetchable or host"; exit 2; }
+# owner 2026-10-19 ("宿主必须是8卡的"): only 8-GPU jobs host fetches (fetch_pending.sh v8 exits at once below 8 GPUs);
+# pack two 4-GPU runs of similar length into one 8-GPU host instead
+[[ $mode == host && $gpus != 8 ]] && { echo "a host job must have 8 GPUs: pack two 4-GPU runs into one 8-GPU plan"; exit 2; }
 [[ $name =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "bad job name '$name'"; exit 2; }
 [ -f "$plan" ] || { echo "no plan $plan"; exit 2; }
 case $gpus in 8) cpus=96 ;; 4) cpus=48 ;; *) echo "GPUS must be 8 or 4"; exit 2 ;; esac
