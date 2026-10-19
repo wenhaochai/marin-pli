@@ -8,7 +8,7 @@
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=96   # 8-GPU jobs ask for all 96 CPUs: priority JobSize counts CPUs
 #SBATCH --mem-per-gpu=64G
-#SBATCH --time=TIME_SET_AFTER_SMOKE
+#SBATCH --time=03:00:00   # upper bound; lowered with scontrol after the smoke measures a layer
 #SBATCH --comment=fetchable
 #SBATCH --output=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/slurm/%x_%j.out
 #FETCHABLE: self-contained (every path below is literal; nothing comes from the submit shell)
