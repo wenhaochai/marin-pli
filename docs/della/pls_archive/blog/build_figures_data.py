@@ -369,16 +369,28 @@ AUTO10 = [("sep", {"en": "Separate heads", "zh": "独立头"}, None), ("os", {"e
           ("randl", {"en": "8 One layer", "zh": "8 随机单层"}, None), ("hc", {"en": "9 HC", "zh": "9 HC"}, None),
           ("attnres", {"en": "10 AttnRes", "zh": "10 AttnRes"}, None),
           # 11, 12 (owner popups 2026-10-18, no extra parameters): only the readouts of layers 1-3 / 1-2 reach the backbone
-          ("upto3", {"en": "11 Layers 1-3", "zh": "11 只监督第 1-3 层"}, None), ("upto2", {"en": "12 Layers 1-2", "zh": "12 只监督第 1-2 层"}, None)]
+          ("upto3", {"en": "11 Layers 1-3", "zh": "11 只监督第 1-3 层"}, None), ("upto2", {"en": "12 Layers 1-2", "zh": "12 只监督第 1-2 层"}, None),
+          # 13, 14 (owner popup 2026-10-18): only layer 1's readout; layers 1-2 again with init seed 1 (data order unchanged)
+          ("upto1", {"en": "13 Layer 1", "zh": "13 只监督第 1 层"}, QUEUED), ("upto2s1", {"en": "14 Seed 1", "zh": "14 种子 1"}, QUEUED)]
 A10 = json.load(open(HERE / "auto10.json")) if (HERE / "auto10.json").exists() else {}
 A10["sep"] = [float(v) for v in Z["-pls1-sep/final"]]
 gap10 = {k: [float(A10[k][j] - cy[j]) for j in range(6)] for k in A10}
-cats10 = [lab if k in gap10 else {"en": lab["en"] + " · " + st["en"], "zh": lab["zh"] + " · " + st["zh"]} for k, lab, st in AUTO10]
+cats10 = [lab for k, lab, st in AUTO10]
+# the status of bars without data goes in the panel name ("Layer 1 · 3, 13, 14 queued"): a status word under each of two
+# neighbouring bars is wider than its slot and runs into the next one
+wait10 = {}
+for k, lab, st in AUTO10:
+    if k not in gap10:
+        wait10.setdefault((st["en"].lower(), st["zh"]), []).append(lab["en"].split()[0])
+wait10_en = "; ".join(", ".join(ns) + " " + en for (en, zh), ns in wait10.items())
+wait10_zh = "；".join("、".join(ns) + " " + zh for (en, zh), ns in wait10.items())
 
 
 def auto10_panel(j, label, lo, hi, step):
     vals = [round(gap10[k][j], 4) if k in gap10 else None for k, _, _ in AUTO10]
     assert all(v is None or lo <= v <= hi for v in vals), f"fig-auto10 layer {j + 1}: a bar outside [{lo}, {hi}]: {vals}"
+    if wait10:
+        label = {"en": label["en"] + " · " + wait10_en, "zh": label["zh"] + " · " + wait10_zh}
     return dict(xlim=[-1.3, len(AUTO10) - 0.4], ylim=[lo, hi], yticks=lin_ticks(lo, hi, step, "{:.2f}"), cats=cats10, label=label,
                 marks=[dict(type="bars", color=BLUE7 if k == "sep" else "#8AB4F8", vals=[v if i == n else None for n, v in enumerate(vals)]) for i, (k, _, _) in enumerate(AUTO10)])
 
