@@ -41,6 +41,9 @@ PAIRS = {
     "128K-cvin": (128000, "muonh-qwen3-300m-della4xh100-cvin8k", "muonh-qwen3-300m-della4xh100-cvin8k-rep8"),
     # its second seed (seed 1, 2026-10-13), seed-matched to the 128K and 8K-s1 pairs
     "128K-cvin-s1": (128000, "muonh-qwen3-300m-della4xh100-cvin8k-s1", "muonh-qwen3-300m-della4xh100-cvin8k-rep8-s1"),
+    # Q10i analysis B1 (2026-10-18): random replacement (cvd, p 0.5) seed 1, seed-matched to the 128K pair; where in the
+    # frequency deciles its lower cost sits
+    "128K-cvd-s1": (128000, "muonh-qwen3-300m-della4xh100-cvd8k-p0.5-s1", "muonh-qwen3-300m-della4xh100-cvd8k-p0.5-rep8-s1"),
     # bytes (K=256: ids 0-255 one byte each, specials 256-511 count 0 bytes); 256 types, so equal-count deciles split
     # single byte values at the edges (seeded tie-break): read its frequency panels as coarse
     "bytes": (256, "muonh-qwen3-300m-della4xh100-bytes", "muonh-qwen3-300m-della4xh100-bytes-rep8"),
