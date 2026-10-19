@@ -768,20 +768,20 @@ DM_LEG = [[{"en": "Ordinary model", "zh": "普通模型"}, RED, "line"], [{"en":
 DM_LEG4 = [[{"en": "Ordinary, attention", "zh": "普通模型，注意力"}, RED, "line"], [{"en": "Ordinary, MLP", "zh": "普通模型，MLP"}, RED3, "line"],
            [{"en": "Separate heads, attention", "zh": "独立头，注意力"}, BLUE7, "line"], [{"en": "Separate heads, MLP", "zh": "独立头，MLP"}, BLUE3, "line"]]
 dm_fig("fig-dm-skip", {"en": "Loss when one layer is removed, 48 layers", "zh": "删掉一层后的损失，48 层"},
-       {"en": "Increase in next-token loss (nats, log scale)", "zh": "下一个词损失的增加（nats，对数坐标）"}, 0.001, 30, (0.001, 0.01, 0.1, 1, 10), True,
+       {"en": "Increase in next-token loss (nats, log scale)", "zh": "下一个词损失的增加（nats，对数坐标）"}, 0.001, 300, (0.001, 0.01, 0.1, 1, 10), True,
        [(st, (lambda r, st=st, a=None: None), c) for st, c in ()], DM_LEG)
 dm_fig("fig-dm-write", {"en": "Write size relative to the stream, 48 layers", "zh": "写入相对残差流的大小，48 层"},
-       {"en": "RMS of the branch output / RMS of the state it read", "zh": "子层输出 RMS / 它读到的状态 RMS"}, 0.001, 30, (0.01, 0.1, 1, 10), True,
-       [("ord", "attn_write_ratio", RED), ("ord", "mlp_write_ratio", RED3), ("sep", "attn_write_ratio", BLUE7), ("sep", "mlp_write_ratio", BLUE3)], DM_LEG4)
+       {"en": "RMS of the branch output / RMS of the state it read (log scale)", "zh": "子层输出 RMS / 它读到的状态 RMS（对数坐标）"}, 0.001, 8000, (0.001, 0.1, 10, 1000), True,
+       [(st, (lambda r, k=k: max(r[k], 1e-3)), c) for st, k, c in (("ord", "attn_write_ratio", RED), ("ord", "mlp_write_ratio", RED3), ("sep", "attn_write_ratio", BLUE7), ("sep", "mlp_write_ratio", BLUE3))], DM_LEG4)
 dm_fig("fig-dm-dla", {"en": "Direct contribution of each write to the correct token, 48 layers", "zh": "每次写入对正确词的直接贡献，48 层"},
-       {"en": "Direct logit attribution (logit units)", "zh": "直接 logit 贡献（logit 单位）"}, -1, 3, (-1, 0, 1, 2), False,
-       [("ord", "attn_dla", RED), ("ord", "mlp_dla", RED3), ("sep", "attn_dla", BLUE7), ("sep", "mlp_dla", BLUE3)], DM_LEG4)
+       {"en": "Direct logit attribution (logit units)", "zh": "直接 logit 贡献（logit 单位）"}, -3, 5.5, (-2, 0, 2, 4), False,
+       [("ord", "attn_dla_w", RED), ("ord", "mlp_dla_w", RED3), ("sep", "attn_dla_w", BLUE7), ("sep", "mlp_dla_w", BLUE3)], DM_LEG4)
 dm_fig("fig-dm-lens", {"en": "Logit lens on the same text, 48 layers", "zh": "同一份文本上的 logit lens，48 层"}, CE, 2.5, 30, (3, 4, 6, 8, 12, 16), True,
        [("ord", "lens_ce", RED), ("sep", "lens_ce", BLUE7), ("ord", "own_ce", RED3), ("sep", "own_ce", BLUE3)],
        [[{"en": "Ordinary, logit lens", "zh": "普通模型，logit lens"}, RED, "line"], [{"en": "Separate heads, logit lens", "zh": "独立头，logit lens"}, BLUE7, "line"],
         [{"en": "Ordinary, own probe", "zh": "普通模型，自己的探针"}, RED3, "line"], [{"en": "Separate heads, own head", "zh": "独立头，自己的头"}, BLUE3, "line"]])
 dm_fig("fig-dm-shape", {"en": "Shape of the per-layer state, 48 layers", "zh": "每层状态的形状，48 层"},
-       {"en": "Effective rank over 2,048 tokens", "zh": "2,048 个 token 上的有效秩"}, 1, 600, (1, 10, 100), True,
+       {"en": "Effective rank over 2,048 tokens (log scale)", "zh": "2,048 个 token 上的有效秩（对数坐标）"}, 1, 5000, (1, 10, 100, 1000), True,
        [("ord", "eff_rank", RED), ("sep", "eff_rank", BLUE7)], DM_LEG)
 # fig-dm-skip: the increase over the model's own loss, floored at 1e-3 for the log axis
 for i, (a, _) in enumerate(DM_ARCH):
