@@ -4,8 +4,13 @@ embedding at the last layer. v3 splits that ablation (variants below replace v2'
   baseline, no_embedding (as v2: embedding dropped at every sublayer read and at the head);
   no_embedding_head           only the output mix drops the embedding (state = baseline's, so no extra state);
   no_embedding_reads          every sublayer read (attention and MLP inputs, all layers) drops it; the head keeps it;
-  no_embedding_reads_from_L   only the sublayer reads of layers >= L drop it (L = 12, 24, 48, 72); forked from
-                              baseline when layer L starts.
+  no_embedding_reads_attn / _mlp   only the attention reads / only the MLP reads drop it (all layers);
+  no_embedding_reads_from_L   only the sublayer reads of layers >= L drop it (L = 12, 24, 36, 48, 60, 72); forked
+                              from baseline when layer L starts.
+GPU use (coordinator, 2026-10-19: v3's first smoke showed ~9% GPU use): the rank's background thread now also builds
+layer i+1 on the GPU on a side stream while layer i runs (when the last layer's memory peak leaves room for it), the
+extra variants add compute per loaded layer, and each layer record carries wall-clock t_start/t_end so the smoke can
+measure GPU utilization inside the layer loop.
 Extra records: per layer the fraction of tokens whose embedding weight is >= 0.1 in the attention read, the MLP read
 and the exit (head) mix of the baseline, and every variant's exit CE/acc after every layer.
 --- v2 docstring follows ---
@@ -60,8 +65,9 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 
-FROM_L = (12, 24, 48, 72)
-VARIANTS_ALL = ["baseline", "no_embedding", "no_embedding_head", "no_embedding_reads"] + [f"no_embedding_reads_from_{l}" for l in FROM_L]
+FROM_L = (12, 24, 36, 48, 60, 72)
+VARIANTS_ALL = ["baseline", "no_embedding", "no_embedding_head", "no_embedding_reads", "no_embedding_reads_attn",
+                "no_embedding_reads_mlp"] + [f"no_embedding_reads_from_{l}" for l in FROM_L]
 HEAD_ONLY = {"no_embedding_head"}   # equals baseline at every layer: evaluated on baseline's state at the output only
 FORK_AT = {f"no_embedding_reads_from_{l}": l for l in FROM_L}   # equals baseline before layer L
 POS_BINS = [(0, 16), (16, 64), (64, 256), (256, 1024)]
@@ -82,6 +88,10 @@ def mode_of(var, i, kind, B):
         return "noemb" if kind == "out" else "model"
     if var == "no_embedding_reads":
         return "model" if kind == "out" else "noemb"
+    if var == "no_embedding_reads_attn":
+        return "noemb" if kind == "attn" else "model"
+    if var == "no_embedding_reads_mlp":
+        return "noemb" if kind == "mlp" else "model"
     if var in FORK_AT:
         return "noemb" if kind != "out" and i >= FORK_AT[var] else "model"
     raise ValueError(var)
@@ -442,16 +452,36 @@ def main():
         json.dump(res, open(tmp, "w"))
         os.replace(tmp, os.path.join(OUT, f"rank{RANK}.json"))
 
+    side = torch.cuda.Stream()
+    GPU_LIMIT = float(os.environ.get("K3_GPU_PREFETCH_LIMIT_GB", "74")) * 1e9
+
+    def fetch_to(i, to_gpu):
+        """fetch(i), and with to_gpu also build the layer on the GPU on a side stream, so the copy of layer i+1 runs
+        while layer i computes. Returns (cpu tensors, None) or (None, layer)."""
+        torch.set_grad_enabled(False)   # grad mode is per thread
+        ts = fetch(i)
+        if not to_gpu:
+            return ts, None
+        with torch.cuda.stream(side):
+            lay = build_layer(i, ts)
+        side.synchronize()
+        return None, lay
+
     pool = ThreadPoolExecutor(max_workers=1)
-    fut = pool.submit(fetch, 0)
+    fut = pool.submit(fetch_to, 0, False)
+    prev_peak, prev_gpu = 0.0, False
     t0 = time.time()
     for i in range(L):
         t1 = time.time()
-        ts = fut.result()
+        ts, layer = fut.result()
+        # prefetch layer i+1 onto the GPU when the last layer's peak (which already holds a prefetched layer if the
+        # last one was prefetched) leaves room for its ~16 GB; else stage it in CPU memory only
+        gpu_next = prev_peak + (2e9 if prev_gpu else 18e9) < GPU_LIMIT
         if i + 1 < L:
-            fut = pool.submit(fetch, i + 1)
+            fut = pool.submit(fetch_to, i + 1, gpu_next)
         tw = time.time() - t1
-        layer = build_layer(i, ts)
+        if layer is None:
+            layer = build_layer(i, ts)
         del ts
         torch.cuda.synchronize()
         tl = time.time() - t1
@@ -459,7 +489,8 @@ def main():
         for fork, at in FORK_AT.items():   # no_embedding_reads_from_L equals baseline before layer L
             if at == i and fork in VARS:
                 states[fork] = list(states["baseline"])   # tensors are never changed in place: sharing is safe
-        rec = dict(layer=i, wait_s=round(tw, 1), load_s=round(tl, 1), copy_s=round(copy_s.get(i, -1.0), 1), active=list(states))
+        rec = dict(layer=i, wait_s=round(tw, 1), load_s=round(tl, 1), copy_s=round(copy_s.get(i, -1.0), 1), active=list(states),
+                   gpu_prefetched_next=bool(gpu_next and i + 1 < L), t_start=t1)
 
         def on_baseline(kind, payload):
             if kind in ("attn_p", "mlp_p"):
@@ -471,6 +502,7 @@ def main():
                 rec[f"{nm}_write_rms_sum"], rec[f"{nm}_write_cos_out_sum"] = write_stats(payload)
 
         layer_step(layer, i, states, qa[i], qm[i], B, T, eps, ATT_CHUNK, TOK_CHUNK, on_baseline)
+        torch.cuda.synchronize()   # every kernel reading this layer is done before its memory can be reused
         del layer
         torch.cuda.empty_cache()
         # ---- baseline readings after layer i
@@ -500,10 +532,13 @@ def main():
         rec["variant_exit_sum"] = ve
         rec["run_s"] = round(time.time() - t1 - tl, 1)
         rec["peak_gb"] = round(torch.cuda.max_memory_allocated() / 1e9, 1)
+        rec["t_end"] = time.time()
+        prev_peak, prev_gpu = torch.cuda.max_memory_allocated(), rec["gpu_prefetched_next"]
         res["layers"].append(rec)
         save()
         n_ = res["n_pred"]
         print(f"rank {RANK} layer {i}: wait {tw:.1f}s (shm copy {rec['copy_s']}s) load+h2d {tl:.1f}s run {rec['run_s']:.1f}s "
+              f"gpu-prefetch-next {int(rec['gpu_prefetched_next'])} "
               f"total {time.time() - t1:.1f}s peak {rec['peak_gb']}GB | "
               f"next {rec['next_ce_sum'] / n_:.4f} exit {rec['exit_ce_sum'] / n_:.4f} sum {rec['sum_ce_sum'] / n_:.4f} | "
               f"sources {rec['n_sources']} variants {len(states)}", flush=True)

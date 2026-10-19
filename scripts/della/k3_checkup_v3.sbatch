@@ -16,7 +16,7 @@
 # K3 check-up v3 (no_embedding split: head / reads / reads from layer L; owner standing approval 2026-10-19), pipeline of v2: k3_checkup_loader.py reads each layer's shard once per
 # node into /dev/shm (striped parallel GPFS reads, up to 3 layers ahead); k3_checkup_v3.py runs on every GPU (rank r
 # takes every 8th of 128 c4_en sequences of 1,024 K3 tokens = 16 per rank) with the baseline and 12 AttnRes ablations
-# batched on each loaded layer; k3_checkup_v3_merge.py writes merged.json. nvidia-smi samples GPU utilization every 10 s
+# batched on each loaded layer; k3_checkup_v3_merge.py writes merged.json. nvidia-smi samples GPU utilization every 2 s
 # into gpu_util.csv. The smoke test is a copy of this script (k3_checkup_v3_smoke.sbatch).
 set -uo pipefail
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
@@ -39,7 +39,7 @@ G=${#DEVS[@]}
 nvidia-smi -L || true
 echo "job $JID on $(hostname): $G GPUs (${DEVS[*]}), out $OUT, shm $SHM"
 mkdir -p "$OUT" "$SHM"
-nvidia-smi --query-gpu=timestamp,index,utilization.gpu,memory.used --format=csv,noheader,nounits -l 10 > "$OUT/gpu_util.csv" 2>/dev/null &
+nvidia-smi --query-gpu=timestamp,index,utilization.gpu,memory.used --format=csv,noheader,nounits -lms 2000 > "$OUT/gpu_util.csv" 2>/dev/null &
 bg+=($!)
 $PY $WT/scripts/della/k3_checkup_loader.py "$MODEL" "$SHM" $G $NL 3 16 > "$OUT/loader.log" 2>&1 &
 bg+=($!)
@@ -51,6 +51,6 @@ done
 rc=0
 for p in "${pids[@]}"; do wait "$p" || rc=$?; done
 tail -n 3 "$OUT"/rank*.log "$OUT/loader.log"
-awk -F', ' '{s+=$3; n++} END {if (n) printf "GPU utilization: mean %.1f%% over %d samples (10 s, all GPUs)\n", s/n, n}' "$OUT/gpu_util.csv"
+$PY $WT/scripts/della/k3_checkup_util.py "$OUT" || true
 $PY $WT/scripts/della/k3_checkup_v3_merge.py "$OUT" "$TEXT" || rc=$?
 exit $rc

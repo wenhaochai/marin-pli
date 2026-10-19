@@ -90,7 +90,7 @@ def weights(var, i, kind, src, qv):
     k = vf * torch.rsqrt(vf.pow(2).mean(-1, keepdim=True) + eps)
     s = (k * (qv[1].float() * qv[0].reshape(-1).float())).sum(-1)
     soft = lambda keep: torch.where(torch.tensor(keep), s, torch.tensor(float("-inf"))).softmax(-1)
-    drop = {"baseline": False, "no_embedding": True, "no_embedding_head": kind == "out", "no_embedding_reads": kind != "out",
+    drop = {"baseline": False, "no_embedding": True, "no_embedding_head": kind == "out", "no_embedding_reads": kind != "out", "no_embedding_reads_attn": kind == "attn", "no_embedding_reads_mlp": kind == "mlp",
             "no_embedding_reads_from_4": kind != "out" and i >= 4, "no_embedding_reads_from_9": kind != "out" and i >= 9}[var]
     return soft([not drop] + [True] * (n - 1))
     if var == "uniform_all" or var.startswith("uniform_block_"):
