@@ -127,6 +127,10 @@ parameter-count control (low-rank tables).
 - tools/packed_task.sh writes a ledger line only when timeout returns: a job ended by Slurm (wall, idle cancel, scancel)
   loses the running tasks' lines, and their hours count as other compute (tool owned by the controller).
 - The vo130 job's last step (128K, 8 passes) runs on 4 GPUs for about an hour while the other 4 idle (under 90 min).
+- Disk 2026-10-18 (owner approved; the controller ran tmp/ckpt_delete.sh): 123 non-final step dirs of finished runs
+  deleted, 272 GB. Every run keeps its last step, which is the only one the analyses read (vo-toklosses: step-11443).
+  Kept: pls runs, OV runs (ov12.8m/ov1.28m, 1773 GB, not approved), bytes-300m-rep2.4 (running), 10 dirs written in the
+  last 24 h. A rerun from a mid-training step now needs a fresh run.
 
 ## Audit 2026-10-11 (12 dimensions, each finding checked by 3 independent refuters; tmp/audit/)
 
