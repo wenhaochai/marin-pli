@@ -728,6 +728,71 @@ figs["fig-ck-ablate"] = dict(title={"en": "AttnRes check-up: loss when the mixin
                              quantity={"en": "Increase in next-token loss (nats)", "zh": "下一个词损失的增加（nats）"}, height=170, cols=1, panels=abl_panels)
 print("fig-ck", sorted(CKD))
 
+# DepthBench internal medicine (owner popup 2026-10-19 "按方案做"): the same read-only measures on all ten 48-layer designs,
+# ordinary model (red) and separate heads (blue), Paloma C4 (depthmed.py; data depthmed/<arch>-<ord|sep>.json, schema in
+# that script). A design without its files shows its status.
+DM_STATUS = QUEUED
+DM_ARCH = [("sandwich", "Sandwich-LN (baseline)")] + ARCH
+DMD = {}
+for a, _ in DM_ARCH:
+    for st in ("ord", "sep"):
+        f = HERE / "depthmed" / f"{a}-{st}.json"
+        if f.exists():
+            DMD[(a, st)] = json.load(open(f))
+DMX = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
+
+
+def dm_fig(fid, title, quantity, lo, hi, yt, ylog, series, legend, height=150):
+    """series: [(setup, key or function of a layer row, colour)]; one panel per design."""
+    panels = []
+    for a, name in DM_ARCH:
+        q = dict(xlog=False, ylog=ylog, xlim=[0.5, 48.5], ylim=[lo, hi], xticks=DMX, yticks=[[t, f"{t:g}"] for t in yt], marks=[], label={"en": name, "zh": name})
+        if ylog:
+            q["yoff"] = 0.0
+        have = False
+        for st, key, col in series:
+            d = DMD.get((a, st))
+            if d is None:
+                continue
+            have = True
+            f = key if callable(key) else (lambda r, key=key: r[key])
+            pts = [[r["layer"], round(float(f(r)), 5)] for r in d["layers"] if f(r) is not None]
+            q["marks"].append(dict(type="line", color=col, pts=pts))
+        if not have:
+            q["empty"] = DM_STATUS
+        panels.append(q)
+    figs[fid] = dict(title=title, legend=legend, quantity=quantity, xlabel={"en": "Layer", "zh": "层"}, height=height, cols=2, panels=panels)
+
+
+DM_LEG = [[{"en": "Ordinary model", "zh": "普通模型"}, RED, "line"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"]]
+DM_LEG4 = [[{"en": "Ordinary, attention", "zh": "普通模型，注意力"}, RED, "line"], [{"en": "Ordinary, MLP", "zh": "普通模型，MLP"}, RED3, "line"],
+           [{"en": "Separate heads, attention", "zh": "独立头，注意力"}, BLUE7, "line"], [{"en": "Separate heads, MLP", "zh": "独立头，MLP"}, BLUE3, "line"]]
+dm_fig("fig-dm-skip", {"en": "Loss when one layer is removed, 48 layers", "zh": "删掉一层后的损失，48 层"},
+       {"en": "Increase in next-token loss (nats, log scale)", "zh": "下一个词损失的增加（nats，对数坐标）"}, 0.001, 30, (0.001, 0.01, 0.1, 1, 10), True,
+       [(st, (lambda r, st=st, a=None: None), c) for st, c in ()], DM_LEG)
+dm_fig("fig-dm-write", {"en": "Write size relative to the stream, 48 layers", "zh": "写入相对残差流的大小，48 层"},
+       {"en": "RMS of the branch output / RMS of the state it read", "zh": "子层输出 RMS / 它读到的状态 RMS"}, 0.001, 30, (0.01, 0.1, 1, 10), True,
+       [("ord", "attn_write_ratio", RED), ("ord", "mlp_write_ratio", RED3), ("sep", "attn_write_ratio", BLUE7), ("sep", "mlp_write_ratio", BLUE3)], DM_LEG4)
+dm_fig("fig-dm-dla", {"en": "Direct contribution of each write to the correct token, 48 layers", "zh": "每次写入对正确词的直接贡献，48 层"},
+       {"en": "Direct logit attribution (logit units)", "zh": "直接 logit 贡献（logit 单位）"}, -1, 3, (-1, 0, 1, 2), False,
+       [("ord", "attn_dla", RED), ("ord", "mlp_dla", RED3), ("sep", "attn_dla", BLUE7), ("sep", "mlp_dla", BLUE3)], DM_LEG4)
+dm_fig("fig-dm-lens", {"en": "Logit lens on the same text, 48 layers", "zh": "同一份文本上的 logit lens，48 层"}, CE, 2.5, 30, (3, 4, 6, 8, 12, 16), True,
+       [("ord", "lens_ce", RED), ("sep", "lens_ce", BLUE7), ("ord", "own_ce", RED3), ("sep", "own_ce", BLUE3)],
+       [[{"en": "Ordinary, logit lens", "zh": "普通模型，logit lens"}, RED, "line"], [{"en": "Separate heads, logit lens", "zh": "独立头，logit lens"}, BLUE7, "line"],
+        [{"en": "Ordinary, own probe", "zh": "普通模型，自己的探针"}, RED3, "line"], [{"en": "Separate heads, own head", "zh": "独立头，自己的头"}, BLUE3, "line"]])
+dm_fig("fig-dm-shape", {"en": "Shape of the per-layer state, 48 layers", "zh": "每层状态的形状，48 层"},
+       {"en": "Effective rank over 2,048 tokens", "zh": "2,048 个 token 上的有效秩"}, 1, 600, (1, 10, 100), True,
+       [("ord", "eff_rank", RED), ("sep", "eff_rank", BLUE7)], DM_LEG)
+# fig-dm-skip: the increase over the model's own loss, floored at 1e-3 for the log axis
+for i, (a, _) in enumerate(DM_ARCH):
+    q = figs["fig-dm-skip"]["panels"][i]
+    for st, col in (("ord", RED), ("sep", BLUE7)):
+        d = DMD.get((a, st))
+        if d is not None:
+            q.pop("empty", None)
+            q["marks"].append(dict(type="line", color=col, pts=[[r["layer"], round(max(r["skip_ce"] - d["base_ce"], 1e-3), 5)] for r in d["layers"]]))
+print("fig-dm", sorted(DMD))
+
 # Layer index on the x axis of every by-layer figure (owner, 2026-10-17: "所有横轴应该改成层数"). Within one model the backbone
 # compute of a readout is proportional to its layer (x = 6 N_layer k D), so dividing by one layer's compute gives k and the
 # fitted curves keep their shape; each panel divides by its own model's layer (Figure 7: the design's own per-layer size).
