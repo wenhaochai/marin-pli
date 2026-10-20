@@ -15,7 +15,7 @@ Each written document is one SEQ_LEN window, so Levanter's token dataset reads t
 run (della_muonh_qwen3_scaling.py PASS_DATA=rs | bpd<P>) reads this cache in order with no shuffle.
 
     SIZE=300m [VOCAB_K=8000] MODE=rs|bpd [P=0.1] python -m experiments.references.vocab_materialize_passes
-Writes MARIN_PREFIX/materialized/<size>[-v<K>k]-rep8-<rs|bpd<P>>/{train,meta.json}. Checks at the end: pass 1 equals the
+Writes MARIN_PREFIX/materialized/<size>[-v<K>k|-bytes]-rep8-<rs|bpd<P>>/{train,meta.json}. Checks at the end: pass 1 equals the
 subset; every rs pass is a permutation of it; a sample of bpd windows decodes to the original text (window edges aside).
 """
 
@@ -49,7 +49,7 @@ from levanter.store.cache import CacheMetadata, SerialCacheWriter, TreeCache  # 
 from experiments.references import della_muonh_qwen3_scaling as scaling  # noqa: E402
 
 PREFIX = scaling._PREFIX
-OUT = f"{PREFIX}/materialized/{SIZE}" + (f"-v{K // 1000}k" if K else "") + f"-rep8-{TAG}"
+OUT = f"{PREFIX}/materialized/{SIZE}" + ("-bytes" if K == 256 else f"-v{K // 1000}k" if K else "") + f"-rep8-{TAG}"   # same rule as _pass_data_dir in della_muonh_qwen3_scaling.py
 EX = {"input_ids": np.zeros((0,), dtype=np.int32)}
 
 
