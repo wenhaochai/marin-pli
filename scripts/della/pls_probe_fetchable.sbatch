@@ -23,7 +23,12 @@ if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o
 ROOT=/scratch/gpfs/GROUP/USER/marin_store_big/speedrun
 B130="SIZE=130m NUM_GPUS=8 PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=1 PLS_OPT_SPLIT=1 PLS_FUT=1 TOTAL_STEPS=2000"
 LAD="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=8"   # PDP 8: 24 probe heads keep every layer's output (the pls OOMs at 520m, 1_2b)
-LAD12="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=2"   # 1_2b: PDP 8 asked 60 GiB in one op in jit__train_step (smokes of 15760472, 15779949)
+# 1_2b: 31 probe heads of 128256x2048. XLA's scheduler runs all 31 head backward loops before any gradient
+# reduce-scatter, so 31 full f32 dW (1 GiB each) and 31 all-gathered bf16 heads (0.5 GiB each) live together:
+# PDP 8 needed 70.2 GiB of a 71 GiB pool (60.09 GiB temp, smoke 15760472); PDP 2 is worse (121 GiB, 15832439).
+# A tighter scheduler memory limit (slop 70% of 80 GB) makes it reduce-scatter each dW early: 68.2 -> 61.1 GiB at
+# PDP 8 in a deviceless H100x8 compile of this train step (2026-10-20). Same probes, data and batch.
+LAD12="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=8 XLA_FLAGS=--xla_gpu_memory_limit_slop_factor=70"
 case $NAME in
   mtpl-probe-130m-ntp) S="$B130 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-fut/2026.09.13/checkpoints/step-4958";;
   mtpl-probe-130m-mtp) S="$B130 PLS_MTP_W=0.3 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut/2026.09.13/checkpoints/step-4958";;
