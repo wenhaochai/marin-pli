@@ -75,15 +75,12 @@ RUNS = [
           ("NTP + MTP", "130m", 6, 15591509, "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958"),
           ("NTP", "300m", 12, 15714847, "300m-della8xh100-pls0-noev-probes2000at11443"),
           ("NTP + MTP", "300m", 12, 15690439, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
-          ("NTP", "520m", 24, [15716064, 15738658], "520m-della8xh100-pls0-noev-probes1000at9917"),
-          ("NTP + MTP", "520m", 24, [15699612, 15738657], "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917"),
+          # 520m: the first probe runs (15716064 -> 15738658, 15699612 -> 15738657) read the frozen head at 9.8 nats under
+          # FSDP (2026-10-21); their jobs are other compute, and the reruns keep every layer whole on each GPU (-vs)
+          ("NTP", "520m", 24, 15952439, "520m-della8xh100-pls0-noev-vs-probes1000at9917"),
+          ("NTP + MTP", "520m", 24, 15952440, "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917"),
           ("NTP", "1_2b", 16, [15760472, 15760473, 15832439, 15907475], "1_2b-della8xh100-pls0-noev-probes1000at22887"),
           ("NTP + MTP", "1_2b", 16, [15779949, 15779950, 15832441, 15907476, 15907916], "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
-    # the 520m probes above read the frozen head at 9.8 nats under FSDP (2026-10-21); rerun with every layer whole on each GPU
-    *[(S(f"Probes on the finished {a} model, rerun with whole layers on each GPU", f"在训练完的 {a} 模型上加探针，重跑（每块 GPU 放完整的层）"), "520m", 24, 1.0, 8,
-       ("slurm", jid, rid), "21")
-      for a, jid, rid in [("NTP", 15952439, "520m-della8xh100-pls0-noev-vs-probes1000at9917"),
-                          ("NTP + MTP", 15952440, "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917")]],
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "12"),
