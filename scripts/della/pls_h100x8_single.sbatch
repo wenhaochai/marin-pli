@@ -154,7 +154,7 @@ echo "run $rid exited rc=$rc $(date +%H:%M:%S)"
 if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 143 ]; then echo "job $JID: training rc=$rc" > "$FAILDIR/$rid.fail"; fi
 
 # 3. a finished probe run drops its checkpoints (only this run's own dir, only for a probe run id)
-if [ $rc -eq 0 ] && [[ $rid == *-probes[0-9]*at[0-9]* ]] && [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then
+if [ $rc -eq 0 ] && [[ $rid == *-probes[0-9]*at[0-9]* ]] && [ "${KEEP_PROBE_CKPT:-0}" != 1 ] && [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then
   rm -rf -- "$out"/checkpoints/step-* "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$rid"
   echo "probe run finished: its checkpoints removed"
 fi

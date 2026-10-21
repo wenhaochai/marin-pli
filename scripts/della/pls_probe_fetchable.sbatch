@@ -42,6 +42,9 @@ case $NAME in
   mtpl-probe-520m-mtp) S="SIZE=520m $LAD5 PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-9917";;
   mtpl-probe-1_2b-ntp) S="SIZE=1_2b $LAD12 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev/2026.09.13/checkpoints/step-22887";;
   mtpl-probe-1_2b-mtp) S="SIZE=1_2b $LAD12 PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-22887";;
+  # the same 130m NTP probes again, with their checkpoint kept (KEEP_PROBE_CKPT): the probe weights W_next / W_after of every
+  # layer, for the Lean session's L5 test (owner popup 2026-10-21); RUN_TAG -keep keeps the id apart from the finished run
+  mtpl-probe-130m-ntp-keep) S="$B130 RUN_TAG=-keep PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-fut/2026.09.13/checkpoints/step-4958"; export KEEP_PROBE_CKPT=1;;
   # the 130m separate heads at weight 1 again, for its final checkpoint (the logit lens needs one; owner popup 2026-10-17)
   pls-130m-sep-ckpt) S="SIZE=130m NUM_GPUS=8 PLS_W=1 PLS_SEP=1";;
   *) echo "unknown probe job name '$NAME'"; exit 2;;
