@@ -361,8 +361,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         src = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(PROBE_FROM))))
         want = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags
         # GPU count and -noev do not name the checkpoint's model: the probe model always runs the per-layer eval, and the
-        # job's smoke copy sets PLS_EVAL=1 (a -noev source failed that check, 2026-10-16)
-        same = lambda r: re.sub(r"-della\d+x", "-dellaNx", r).replace("-noev", "")  # noqa: E731
+        # job's smoke copy sets PLS_EVAL=1 (a -noev source failed that check, 2026-10-16). Nor does PARAM_MAP (-vs, -dp): it
+        # only lays the same parameters out differently (the 520m probes run under PARAM_MAP=vocab, 2026-10-21)
+        same = lambda r: re.sub(r"-(vs|dp)(?=-|$)", "", re.sub(r"-della\d+x", "-dellaNx", r).replace("-noev", ""))  # noqa: E731
         if same(src) != same(want):
             raise ValueError(f"PROBE_FROM is a checkpoint of {src!r}, but the knobs name {want!r}")
         variant_tags += f"-probes{TOTAL_STEPS}at{PROBE_STEP}"

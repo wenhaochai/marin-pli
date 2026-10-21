@@ -29,14 +29,17 @@ LAD="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=8"   # PDP 8: 24 probe heads keep every l
 # A tighter scheduler memory limit (slop 70% of 80 GB) makes it reduce-scatter each dW early: 68.2 -> 61.1 GiB at
 # PDP 8 in a deviceless H100x8 compile of this train step (2026-10-20). Same probes, data and batch.
 LAD12="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=8 XLA_FLAGS=--xla_gpu_memory_limit_slop_factor=70"
+# 520m: under FSDP the train step with 24 layers and 47 heads computed wrong layer outputs (frozen head 9.7 nats against
+# eval 3.55; 15738657/8, 2026-10-21), as the 48-layer runs did before PARAM_MAP=vocab (7b02c544f2). Layers whole on each GPU.
+LAD5="$LAD PARAM_MAP=vocab"
 case $NAME in
   mtpl-probe-130m-ntp) S="$B130 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-fut/2026.09.13/checkpoints/step-4958";;
   mtpl-probe-130m-mtp) S="$B130 PLS_MTP_W=0.3 PROBE_FROM=$ROOT/muonh-qwen3-130m-della4xh100-pls1-sep-bbfrozen-os-mtp0.3-fut/2026.09.13/checkpoints/step-4958";;
   mtpl-probe-300m-ntp) S="SIZE=300m $LAD TOTAL_STEPS=2000 PROBE_FROM=$ROOT/muonh-qwen3-300m-della8xh100-pls0-noev/2026.09.13/checkpoints/step-11443";;
   mtpl-probe-300m-mtp) S="SIZE=300m $LAD PLS_MTP_W=0.3 TOTAL_STEPS=2000 PROBE_FROM=$ROOT/muonh-qwen3-300m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-11443";;
   # 520m and 1_2b train at batch 256: 1000 probe steps are the same 1B tokens as 2000 steps at batch 128
-  mtpl-probe-520m-ntp) S="SIZE=520m $LAD TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev/2026.09.13/checkpoints/step-9917";;
-  mtpl-probe-520m-mtp) S="SIZE=520m $LAD PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-9917";;
+  mtpl-probe-520m-ntp) S="SIZE=520m $LAD5 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev/2026.09.13/checkpoints/step-9917";;
+  mtpl-probe-520m-mtp) S="SIZE=520m $LAD5 PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-520m-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-9917";;
   mtpl-probe-1_2b-ntp) S="SIZE=1_2b $LAD12 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev/2026.09.13/checkpoints/step-22887";;
   mtpl-probe-1_2b-mtp) S="SIZE=1_2b $LAD12 PLS_MTP_W=0.3 TOTAL_STEPS=1000 PROBE_FROM=$ROOT/muonh-qwen3-1_2b-della8xh100-pls0-noev-mtp0.3/2026.09.13/checkpoints/step-22887";;
   # the 130m separate heads at weight 1 again, for its final checkpoint (the logit lens needs one; owner popup 2026-10-17)

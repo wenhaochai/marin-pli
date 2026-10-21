@@ -126,6 +126,17 @@ echo "smoke: eval loss ${main:-?}, last readout ${last:-?}, gap $gap"
 if ! awk -v g="$gap" 'BEGIN { exit !(g != "nan" && g <= 0.005) }'; then
   echo "job $JID: smoke gap $gap" > "$FAILDIR/$rid.fail"; echo "last readout differs from the main eval (or is missing): no training"; exit 5
 fi
+# Probe runs: the gap above compares two eval programs. The train step is a third program, and at 520m it read the frozen
+# head at 9.7 nats against eval 3.55 (15738658, 2026-10-21). So the train path's last readout (the frozen own head, on
+# training data, which sits below the eval loss: 1_2b 2.40 vs 3.34) must not exceed the eval loss by 0.5 nats or more.
+if [[ $SINGLE == *PROBE_FROM=* ]]; then
+  wsum=$(ls -td /scratch/gpfs/GROUP/USER/project/marin-pls-mtp/wandb/*-"$smoke_id" /scratch/gpfs/GROUP/USER/wandb-runs/wandb/*-"$smoke_id" 2>/dev/null | head -1)
+  tr_ev=$(python3 -c 'import json, sys; s = json.load(open(sys.argv[1] + "/files/wandb-summary.json")); k = max((k for k in s if k.startswith("train/pls/L")), key=lambda k: int(k[11:])); print(s[k], s["eval/loss"])' "$wsum" 2>/dev/null || true)
+  echo "smoke: train-path last readout and eval loss: ${tr_ev:-missing} ($wsum)"
+  if ! awk -v t="${tr_ev% *}" -v e="${tr_ev#* }" 'BEGIN { exit !(t != "" && e != "" && t - e < 0.5) }'; then
+    echo "job $JID: smoke train-path readout ${tr_ev:-missing}" > "$FAILDIR/$rid.fail"; echo "train-path last readout is off (or missing): no training"; exit 5
+  fi
+fi
 
 # 2. training
 TRAIN_LIMIT=$(( JOB_MIN * 60 - SECONDS - 300 ))s
