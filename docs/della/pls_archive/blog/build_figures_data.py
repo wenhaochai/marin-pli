@@ -509,7 +509,7 @@ LADDER = (("130m", {"en": "130m", "zh": "130m"}), ("300m", {"en": "300m", "zh": 
 LADC = ("#8AB4F8", "#4285F4", "#1967D2", "#174EA6")   # GM2 blue 300, 500, 700, 900: smaller to larger
 DEPTH_X = {"en": "Relative depth (layer / number of layers)", "zh": "相对深度（层号 / 层数）"}
 DELTA = {"en": "Probe loss, NTP + MTP minus NTP (nats)", "zh": "探针损失，NTP + MTP 减 NTP（nats）"}
-dview = dict(xlim=[0.0, 1.04], ylim=[-0.3, 0.15], xticks=lin_ticks(0, 1, 0.25, "{:g}"), yticks=[[t, "0" if t == 0 else f"{t:+.1f}".replace("-", "\u2212")] for t, _ in lin_ticks(-0.3, 0.1, 0.1)], marks=[], empty=MTPL_STATUS)
+dview = dict(xlim=[0.0, 1.04], ylim=[-0.4, 0.2], xticks=lin_ticks(0, 1, 0.25, "{:g}"), yticks=[[t, "0" if t == 0 else f"{t:+.1f}".replace("-", "\u2212")] for t, _ in lin_ticks(-0.4, 0.2, 0.1)], marks=[], empty=MTPL_STATUS)
 def mtpl_marks():
     """fig-mtpl from mtpl.json (fetch_mtpl.py): the main model's held-out next-token loss by parameter count, a line and
     dots per objective over the sizes that have both arms finished; the status word while none has."""
@@ -529,6 +529,7 @@ figs["fig-mtpl"] = dict(title={"en": "Next-token loss by model size, NTP and MTP
                         quantity=CE_EVAL, xlabel={"en": "Parameters", "zh": "参数量"}, height=220,
                         panels=[dict(xlog=True, ylog=True, yoff=YOFF, xlim=[8e7, 2e9], ylim=[3.0, 4.1], xticks=[[1e8, "100M"], [3e8, "300M"], [1e9, "1B"]],
                                      yticks=[[a, f"{a:g}"] for a in (3.2, 3.4, 3.6, 3.8, 4.0)], **mtpl_marks())])
+MTPL_PROBES = json.load(open(HERE / "mtpl.json")) if (HERE / "mtpl.json").exists() else {}
 def depth_panel(target):
     """fig-mtpl-depth from mtpl.json (fetch_mtpl.py): MTP minus NTP of each layer's post-hoc probe loss (target "next" or
     "after") at relative depth k / L, a line and dots per size whose two probe runs have finished; the status word while
@@ -548,7 +549,8 @@ def depth_panel(target):
         d.pop("empty")
     return d
 figs["fig-mtpl-depth"] = dict(title={"en": "Change in probe loss by relative depth, MTP minus NTP", "zh": "按相对深度的探针损失变化，MTP 减 NTP"},
-                              legend=[[lab, c, "line"] for (_, lab), c in zip(LADDER, LADC)],
+                              # sizes with both probe runs in mtpl.json; the 520m probe runs fail fetch_mtpl.py's frozen-head check (2026-10-21)
+                              legend=[[lab, c, "line"] for (key, lab), c in zip(LADDER, LADC) if MTPL_PROBES.get(key, {}).get("probes")],
                               quantity=DELTA, xlabel=DEPTH_X, height=200, cols=1,
                               panels=[dict(**depth_panel("next"), label={"en": "Probes for the next token", "zh": "预测下一个词的探针"}),
                                       dict(**depth_panel("after"), label={"en": "Probes for the token after next", "zh": "预测下下个词的探针"})])

@@ -57,7 +57,12 @@ for size, (ntp, mtp, L) in PROBES.items():
         keys = [f"train/pls/L{k}" for k in range(L)] + [f"train/pls2/L{k}" for k in range(L)]
         h = list(r.scan_history(keys=["_step", *keys], min_step=max(0, n - 200), max_step=n, page_size=1000))
         m = {k: sum(v := [x[k] for x in h if x.get(k) is not None][-50:]) / len(v) for k in keys}
-        got[arm] = {"next": [round(m[f"train/pls/L{k}"], 4) for k in range(L)], "after": [round(m[f"train/pls2/L{k}"], 4) for k in range(L)]}
+        nxt = [round(m[f"train/pls/L{k}"], 4) for k in range(L)]
+        # The last next readout is the checkpoint's own frozen head, so it beats every probe below it. The 520m probe runs
+        # fail this from step 2 (frozen head 9.8 nats against eval 3.34; checked 2026-10-21): their backbone path is broken.
+        if nxt[-1] > min(nxt[:-1]):
+            print(size, arm, "probes: frozen head", nxt[-1], "above the best probe", min(nxt[:-1]), "skipped"); continue
+        got[arm] = {"next": nxt, "after": [round(m[f"train/pls2/L{k}"], 4) for k in range(L)]}
     if len(got) == 2 and size in out:
         out[size]["probes"] = got
         print(size, "probes MTP - NTP next", [round(a - b, 3) for a, b in zip(got["mtp"]["next"], got["ntp"]["next"])],
