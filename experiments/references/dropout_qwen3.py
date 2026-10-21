@@ -100,3 +100,60 @@ class ResidualDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
         embeddings = LlamaEmbedding.init(Vocab, config, key=k_emb)
         lm_head = None if config.tie_word_embeddings else hax.nn.Linear.init(In=config.Embed, Out=Vocab, key=k_emb, use_bias=False, out_first=True)
         return cls(transformer, embeddings, lm_head)
+
+
+@LmConfig.register_subclass("qwen3_input_noise")
+@dataclass(frozen=True)
+class InputNoiseQwen3Config(Qwen3Config):
+    """Input noise in training (goal of 2026-10-21, owner popup, parallel batch C and D): from train step
+    ``noise_from_step`` on, each input position is hit with probability ``noise_p``. ``noise_mode`` "zero" sets its input
+    row to zero and scales the kept rows by 1 / (1 - p) (embedding dropout per position, after AWD-LSTM, Merity et al.
+    2017); "rand" replaces its token by one drawn uniformly from the ordinary tokens (the vocabulary minus the 256
+    specials), the unigram-free form of data noising (Xie et al. 2017). The model, init, evaluation and the steps before
+    are the baseline's exactly; the draw comes from the trainer's per-step, per-microbatch key."""
+
+    noise_p: float = 0.1
+    noise_mode: str = "zero"
+    noise_from_step: int = 0
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not 0 < self.noise_p < 1:
+            raise ValueError(f"noise_p={self.noise_p}: must lie in (0, 1)")
+        if self.noise_mode not in ("zero", "rand"):
+            raise ValueError(f"noise_mode={self.noise_mode!r}: zero or rand")
+        if self.noise_from_step < 0:
+            raise ValueError(f"noise_from_step={self.noise_from_step}: must be 0 or more")
+
+    @property  # type: ignore[override]
+    def model_type(self):  # noqa: D401
+        return InputNoiseQwen3LMHeadModel
+
+
+N_SPECIAL = 256
+
+
+class InputNoiseQwen3LMHeadModel(Qwen3LMHeadModel):
+    @classmethod
+    def init(cls, Vocab: Axis, config: InputNoiseQwen3Config, *, key):  # type: ignore[override]
+        base = Qwen3LMHeadModel.init(Vocab, config, key=key)   # the baseline, bit for bit
+        return cls(base.transformer, base.embeddings, base.lm_head)
+
+    def activations(self, input_ids, attn_mask=None, *, key=None, pos_ids: Optional[NamedArray] = None):  # type: ignore[override]
+        step = current_train_step()
+        if key is None or step is None:   # evaluation, or a caller without a key: the baseline
+            return super().activations(input_ids, attn_mask, key=key, pos_ids=pos_ids)
+        cfg: InputNoiseQwen3Config = self.config  # type: ignore[assignment]
+        k_hit, k_tok, key = jrandom.split(key, 3)
+        ids = input_ids.array
+        hit = jrandom.bernoulli(k_hit, cfg.noise_p, ids.shape) & (jnp.asarray(step) >= cfg.noise_from_step)
+        if cfg.noise_mode == "rand":
+            rand = jrandom.randint(k_tok, ids.shape, 0, self.Vocab.size - N_SPECIAL, dtype=ids.dtype)
+            x = self.embeddings.embed(hax.named(jnp.where(hit, rand, ids), input_ids.axes))
+        else:
+            x = self.embeddings.embed(input_ids)
+            active = jnp.asarray(step) >= cfg.noise_from_step
+            scale = jnp.where(active, 1 / (1 - cfg.noise_p), 1.0).astype(x.dtype)
+            keep = hax.named(~hit, input_ids.axes)
+            x = hax.where(keep, x * scale, hax.zeros_like(x))
+        return self.transformer(x, attn_mask=attn_mask, key=key, pos_ids=pos_ids)
