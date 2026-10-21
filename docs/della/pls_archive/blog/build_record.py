@@ -81,6 +81,12 @@ RUNS = [
           ("NTP + MTP", "520m", 24, 15952440, "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917"),
           ("NTP", "1_2b", 16, [15760472, 15760473, 15832439, 15907475], "1_2b-della8xh100-pls0-noev-probes1000at22887"),
           ("NTP + MTP", "1_2b", 16, [15779949, 15779950, 15832441, 15907476, 15907916], "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
+    # Lean follow-ups at 48 layers (owner popups 2026-10-21): one new arm each beside the -vs-d48-g4 ordinary controls, 8 GPUs
+    *[(S(en, zh), "130m", 48, 2.6, 8, ("chain", jids, f"130m-della8xh100-pls1-sep-bbfrozen-{tag}-vs-d48"), fig) for en, zh, jids, tag, fig in [
+        ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", [15954024, 15954025], "apreln-gilns", "36"),
+        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", [15954026, 15954027], "ahc-rstatic", "37"),
+        ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", [15954028, 15954029, 15954030], "aattnres-rstatic", "37")]],
+    (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("slurm", 15953858, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "12"),
@@ -106,15 +112,15 @@ RUNS = [
         ("Logit lens, 48 layers: Hyper-Connections and mHC, both setups (eval)", "logit lens，48 层：Hyper-Connections 和 mHC 的两种设置（评估）", "130m", 48, 15720394, "lens-48b", "130m-della8xh100-pls1-sep-ahc-vs-d48-lensat4958-g4", "17"),
         ("Logit lens, 48 layers: AttnRes (Full), AttnRes (Block), MoDA, both setups (eval)", "logit lens，48 层：AttnRes (Full)、AttnRes (Block)、MoDA 的两种设置（评估）", "130m", 48, 15795008, "lens-48c", "130m-della8xh100-pls1-sep-aattnres-vs-d48-lensat4958-g4", "17"),
         ("Logit lens of the 300m models and the 300m and 520m NTP / MTP models (eval)", "300m 模型以及 300m、520m NTP / MTP 模型的 logit lens（评估）", "300m", 12, 15720395, "lens-300m", "300m-della8xh100-pls1-sep-lensat11443", "16"),
-        ("Kimi K3 logit lens (eval, 64 x 1,024 tokens)", "Kimi K3 的 logit lens（评估，64 x 1,024 个 token）", "K3", 93, 15736820, "k3-lens", "", "22"),
-        ("Kimi K3 AttnRes check-up: smoke (eval)", "Kimi K3 AttnRes 体检：冒烟测试（评估）", "K3", 93, 15817062, "k3-checkup-smoke", "", "23-28"),
-        ("Kimi K3 AttnRes check-up (eval, Paloma C4, 64 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检（评估，Paloma C4，64 x 1,024 个 token，12 种消融）", "K3", 93, 15817869, "k3-checkup", "", "23-28"),
-        ("Kimi K3 AttnRes check-up v2: smoke, one read per layer (eval)", "Kimi K3 AttnRes 体检 v2：冒烟测试，每层只读一次（评估）", "K3", 93, 15844464, "k3-checkup-v2-smoke", "", "23-29"),
-        ("Kimi K3 AttnRes check-up v2 (eval, Paloma C4, 128 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检 v2（评估，Paloma C4，128 x 1,024 个 token，12 种消融）", "K3", 93, 15844650, "k3-checkup-v2", "", "23-29"),
-        ("Kimi K3 embedding split (eval, Paloma C4, 128 x 1,024 tokens, 11 variants)", "Kimi K3 embedding 拆分（评估，Paloma C4，128 x 1,024 个 token，11 种变体）", "K3", 93, 15855315, "k3-checkup-v3", "", "29"),
-        ("48 layers, ten designs: internal check-up (eval, Paloma C4)", "48 层十种结构：内部体检（评估，Paloma C4）", "130m", 48, 15844436, "depthmed", "", "30-34"),
-        ("48 layers, AttnRes (Full): internal check-up (eval)", "48 层 AttnRes (Full)：内部体检（评估）", "130m", 48, 15849760, "depthmed-attnres", "", "30-34"),
-        ("48 layers, ten designs: true layer deletion (eval)", "48 层十种结构：真正删层（评估）", "130m", 48, 15855981, "depthmed-delete", "", "30")]],
+        ("Kimi K3 logit lens (eval, 64 x 1,024 tokens)", "Kimi K3 的 logit lens（评估，64 x 1,024 个 token）", "K3", 93, 15736820, "k3-lens", "", "23"),
+        ("Kimi K3 AttnRes check-up: smoke (eval)", "Kimi K3 AttnRes 体检：冒烟测试（评估）", "K3", 93, 15817062, "k3-checkup-smoke", "", "24-29"),
+        ("Kimi K3 AttnRes check-up (eval, Paloma C4, 64 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检（评估，Paloma C4，64 x 1,024 个 token，12 种消融）", "K3", 93, 15817869, "k3-checkup", "", "24-29"),
+        ("Kimi K3 AttnRes check-up v2: smoke, one read per layer (eval)", "Kimi K3 AttnRes 体检 v2：冒烟测试，每层只读一次（评估）", "K3", 93, 15844464, "k3-checkup-v2-smoke", "", "24-30"),
+        ("Kimi K3 AttnRes check-up v2 (eval, Paloma C4, 128 x 1,024 tokens, 12 ablations)", "Kimi K3 AttnRes 体检 v2（评估，Paloma C4，128 x 1,024 个 token，12 种消融）", "K3", 93, 15844650, "k3-checkup-v2", "", "24-30"),
+        ("Kimi K3 embedding split (eval, Paloma C4, 128 x 1,024 tokens, 11 variants)", "Kimi K3 embedding 拆分（评估，Paloma C4，128 x 1,024 个 token，11 种变体）", "K3", 93, 15855315, "k3-checkup-v3", "", "30"),
+        ("48 layers, ten designs: internal check-up (eval, Paloma C4)", "48 层十种结构：内部体检（评估，Paloma C4）", "130m", 48, 15844436, "depthmed", "", "31-35"),
+        ("48 layers, AttnRes (Full): internal check-up (eval)", "48 层 AttnRes (Full)：内部体检（评估）", "130m", 48, 15849760, "depthmed-attnres", "", "31-35"),
+        ("48 layers, ten designs: true layer deletion (eval)", "48 层十种结构：真正删层（评估）", "130m", 48, 15855981, "depthmed-delete", "", "31")]],
     # ten more attempts at the last-layer cost (Figure 15; owner popup 2026-10-16), branch pls-auto10: two 130m runs per
     # 8-GPU pair job (pls_auto10_pair.sbatch, fetchable); the job ids join as the pairs are submitted
     *[(S(en, zh), "130m", 6, 2.6, 4, ("chain", jid, rid) if isinstance(jid, list) else ("slurm", jid, rid) if jid else ("planned", None, rid), "15") for en, zh, jid, rid in [
