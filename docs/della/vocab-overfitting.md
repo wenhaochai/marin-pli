@@ -161,3 +161,5 @@ exact, loss x T / (ln2 x B) per subset (tmp_plots/vocab/bpb_exact_tables.json); 
 ran ~0.004 high for BPE vocabularies and ~0.0004 for bytes; costs moved < 7e-4 and every claim still holds. Numbers in
 this doc written before 2026-10-11 use the old metric (e.g. 300m 128K full 1.3867 is 1.3828 exact). To do: packed_job hardening (Slurm stop drops ledger lines, denylist env isolation, plan parser edge cases,
 job_tmpdir EXIT trap under set -e) for new submissions only.
+
+Survey (2026-10-21, owner): docs/della/vocab_survey/reports/重复数据词表过拟合补救调研.md ranks the next experiments toward the Q11 goal from this project's record, kexue.fm and the literature; notes in docs/della/vocab_survey/research_notes/.
