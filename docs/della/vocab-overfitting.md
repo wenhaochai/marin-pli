@@ -44,8 +44,8 @@ more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) cappe
 
 | Bytes | Does the trend hold at the byte extreme? (owner, 2026-10-08) | K=256 (the 256 byte tokens, no merges; 4.74x the 128K tokens, so 4.74x the steps): 300m and 130m, window 4096, full + 8 passes; 520m too (owner, 2026-10-09; 47014 steps, ~82 h per run, 4 segments bytes-520m-seg1..4, jobs 15283034-37, ~620 H100h); window 16384 at batch 32 (same tokens per step) at 130m and 300m; Q4-Q6 grouped analyses on the 300m pair. Added to fig-vocab-final, fig-vocab, fig-sizes, fig-freq-in, fig-freq-out, fig-window (popup-approved captions). RESULT 520m (2026-10-15, exact bpb): full 1.2581, 8 passes 1.2855, cost 0.027 (8K 0.039, 128K 0.095): the smallest vocabulary has the smallest cost at 520m too | bytes-300m-seg{1,2}, bytes-130m(-seg2), bytes-300m-sl16384-seg{1..4}; ~600-720 H100h. 300m bytes at 2.4 passes added 2026-10-16 (owner popup; fig-vocab-final's 2.4-pass panel had no bytes point): bytes-300m-rep2.4 15715263; RESULT (2026-10-19, exact bpb): 2.4 passes 1.3671 (full 1.3695, 8 passes 1.3736; 128K at 2.4 passes 1.3905): bytes end lowest in all three panels and lose nothing at 2.4 passes. Seed 1 at 300m, full + 8 passes (owner popup 2026-10-19): tests whether the bytes' 8-pass result below the Figure 1 goal (s0 1.3736 < 1.3856) holds; bytes-300m-s1 15832611 (8-GPU 24 h host job) |
 
-Not done (owner): reasons 4 (Adam on rare rows), 6 (shorter token strings), 7 (weaker model), 8 (composing words), the
-parameter-count control (low-rank tables).
+Not done (owner): reasons 4 (Adam on rare rows), 6 (shorter token strings), 7 (weaker model), 8 (composing words). The
+parameter-count control (low-rank tables, Q9) ran on 2026-10-12: cost 0.036 with a unique-token fit worse than 8K, inconclusive.
 
 ## Spec checklist (audit 2026-10-07): decision -> implementation -> check
 
