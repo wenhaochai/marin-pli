@@ -108,7 +108,7 @@ for key, col, name, c in MODES:
     marks.append(line(thin(xs, ys), c, 1.4, 0.85)); ends.append((xs[-1], ys[-1], c))
 marks += [dots([[x, y]], c) for x, y, c in ends]
 v = view([x for x, _, _ in ends], [y for _, y, _ in ends], x_hi_mul=1.25)
-figs["fig-modes"] = dict(title={"en": "Final-layer training loss by gradient and parameter mode, 130m", "zh": "不同梯度与参数模式下的最终层训练损失，130m"},
+figs["fig-modes"] = dict(title={"en": "Last-layer training loss of the four setups, 130m", "zh": "四种设置的最后一层训练损失，130m"},
                          legend=[[n, c, "line"] for _, _, n, c in MODES], quantity=CE, xlabel=XL, height=300, panels=[dict(**v, marks=marks)])
 print("modes finals", [round(y, 4) for _, y, _ in ends])
 
@@ -134,7 +134,7 @@ SETS = [(Z["-pls1-sep/final"], {"en": "Separate heads", "zh": "独立头"}, BLUE
         (Z["-pls1-sep-bbfrozen/final"], {"en": "Probes only", "zh": "只加探针"}, RED, pchip), (cy, {"en": "Baseline by depth", "zh": "各深度的基线"}, GREY, fit)]
 marks = sum(([line(f(x6, y), c), dots(pts(x6, y), c)] for y, _, c, f in SETS), [])
 v = view(np.tile(x6, len(SETS)), np.concatenate([y for y, _, _, _ in SETS]), endpoints_only=True)
-figs["fig-heads"] = dict(title={"en": "Final training loss by layer and setup, 130m", "zh": "按层和做法的最终训练损失，130m"},
+figs["fig-heads"] = dict(title={"en": "Final training loss of each setup, 130m", "zh": "各设置的最终训练损失，130m"},
                          legend=[[n, c, "line"] for _, n, c, _ in SETS], quantity=CE, xlabel=XL, height=320, panels=[dict(**v, marks=marks)])
 
 # Placeholders for runs in progress or planned: axes from the planned shapes, no marks
@@ -173,7 +173,7 @@ sets3 = [(S3["sep"], {"en": "Separate heads", "zh": "独立头"}, BLUE7, fit), (
 b3 = float(S3["baseline"])
 v5 = view(np.tile(x3, len(sets3)), np.r_[np.concatenate([y for y, _, _, _ in sets3]), b3], endpoints_only=True)
 marks5 = [line([[v5["xlim"][0], b3], [v5["xlim"][1], b3]], GREY)] + sum(([line(f(x3, y), c), dots(pts(x3, y), c)] for y, _, c, f in sets3), [])
-figs["fig-heads-300m"] = dict(title={"en": "Final training loss by layer and setup, 300m", "zh": "按层和做法的最终训练损失，300m"},
+figs["fig-heads-300m"] = dict(title={"en": "Final training loss of each setup, 300m", "zh": "各设置的最终训练损失，300m"},
                               legend=[[n, c, "line"] for _, n, c, _ in sets3] + [[{"en": "Baseline", "zh": "基线"}, GREY, "line"]], quantity=CE, xlabel=XL, height=320, panels=[dict(**v5, marks=marks5)])
 
 # Figures 6 and 7: the -vs-d48-g4 runs (d48g4.npz, fetch_d48g4.py; finished runs only). A design is drawn once both its
@@ -229,10 +229,10 @@ p48 = panel48("")
 if REF48 and p48.get("marks") is not None and not p48.get("empty"):
     xr = x48("")
     p48 = dict(p48, marks=p48["marks"] + [dots(pts([xr[d - 1] for d in sorted(REF48)], [REF48[d]["train"] for d in sorted(REF48)]), GREY)])
-figs["fig-d48"] = dict(title={"en": "Final training loss by layer, 48 layers of width 512", "zh": "按层的最终训练损失，48 层、宽 512 的网络"},
+figs["fig-d48"] = dict(title={"en": "Final training loss, 48 layers of width 512", "zh": "最终训练损失，48 层、宽 512"},
                        legend=LEG48 + ([[{"en": "Ordinary models by depth", "zh": "各深度的普通模型"}, GREY, "dot"]] if REF48 else []),
                        quantity=CE, xlabel=XL, height=320, panels=[p48])
-figs["fig-d48-arch"] = dict(title={"en": "Final training loss by layer and architecture, 48 layers of width 512", "zh": "按层和架构的最终训练损失，48 层、宽 512 的网络"},
+figs["fig-d48-arch"] = dict(title={"en": "Final training loss under nine more designs, 48 layers", "zh": "另外九种结构的最终训练损失，48 层"},
                             legend=LEG48,
                             quantity=CE, xlabel=XL, height=200, cols=1,   # one column, each panel the full 640 canvas (owner, 2026-10-11: three columns too small; trying one)
                             panels=[dict(**panel48(k, ys=(3, 3.5, 4, 5)), label={"en": n, "zh": n}) for k, n in ARCH])
@@ -248,12 +248,12 @@ def lin_ticks(lo, hi, step, fmt="{:.1f}"):
     v = np.arange(np.floor(lo / step) * step, hi + step / 2, step); return [[round(float(t), 6), fmt.format(t)] for t in v]
 k48 = np.arange(1, 49)
 gaps = {a: done48[a][0] - done48[a][1] for a, _ in drawn}
-figs["fig-d48-gap"] = dict(title={"en": "Separate heads minus probes by layer and design, 48 layers", "zh": "按层和设计的独立头减只加探针，48 层"},
+figs["fig-d48-gap"] = dict(title={"en": "Separate heads minus probes for each design, 48 layers", "zh": "各结构的独立头减只加探针，48 层"},
                            legend=[[{"en": n, "zh": n}, DCOL[a], "line"] for a, n in drawn],
                            quantity={"en": "Training loss difference (nats)", "zh": "训练损失之差（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=340,
                            panels=[dict(xlim=[-3, 49], ylim=[-2.5, 0.5], xticks=LX, yticks=lin_ticks(-2.5, 0.5, 0.5),
                                         marks=[line([[0, 0], [49, 0]], GREY, 1.0)] + [line(pts(k48, gaps[a]), DCOL[a], 1.8) for a, _ in drawn])])
-figs["fig-d48-abs"] = dict(title={"en": "Final training loss by layer and design, 48 layers", "zh": "按层和设计的最终训练损失，48 层"},
+figs["fig-d48-abs"] = dict(title={"en": "Final training loss of each design, 48 layers", "zh": "各结构的最终训练损失，48 层"},
                            legend=figs["fig-d48-gap"]["legend"],
                            quantity={"en": "Training loss (nats)", "zh": "训练损失（nats）"}, xlabel={"en": "Layer", "zh": "层"}, height=300, cols=1,
                            panels=[dict(xlim=[-3, 49], ylim=[2.75, 5.85], xticks=LX, yticks=lin_ticks(3.0, 5.5, 0.5), label=lab,
@@ -272,7 +272,7 @@ if g4("hc_pos") is not None:
     w48["hc_pos"] = g4("hc_pos")
 wval = [round(float(w48[a][0][-1] - w48[a][1][-1]), 4) if a in w48 else None for a, _, _ in WSET]
 wcats = [{"en": n, "zh": n} if n else ({"en": "HC, w > 0", "zh": "HC，w > 0"} if a in w48 else HCPOS_STATUS) for a, n, _ in WSET]   # the legend names the colour
-figs["fig-hc-write"] = dict(title={"en": "Last-layer cost of separate heads by design, 48 layers", "zh": "各设计下独立头在最后一层的代价，48 层"},
+figs["fig-hc-write"] = dict(title={"en": "Last-layer cost of separate heads for each design, 48 layers", "zh": "各结构中独立头的最后一层代价，48 层"},
                             legend=[[{"en": "One residual stream", "zh": "单个残差流"}, GREY, "box"], [{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, DCOL["hc"], "box"],
                                     [{"en": "mHC", "zh": "mHC"}, DCOL["mhc"], "box"], [{"en": "HC with positive writes", "zh": "写入为正的 HC"}, CYAN3, "box"]],
                             quantity={"en": "Layer-48 training loss, separate heads minus probes (nats)", "zh": "第 48 层训练损失，独立头减只加探针（nats）"}, height=240,
@@ -298,7 +298,7 @@ def seed_panel(sfx, word, label):
     return dict(SV, marks=marks, label=label)
 SV = dict(ylog=True, yoff=YOFF, xlim=[0, 5100], ylim=[2.9, 16], xticks=[[v, f"{v:,}"] for v in range(0, 5001, 1000)],
           yticks=[[a, f"{a:g}"] for a in (3, 3.5, 4, 5, 6, 8)])
-figs["fig-attnres-seed"] = dict(title={"en": "AttnRes (Full) layer-48 training loss by init seed, 48 layers", "zh": "AttnRes (Full) 第 48 层的训练损失，按初始化种子，48 层"},
+figs["fig-attnres-seed"] = dict(title={"en": "AttnRes (Full) layer-48 training loss, two seeds, 48 layers", "zh": "AttnRes (Full) 第 48 层训练损失，两个种子，48 层"},
                                 legend=figs["fig-d48"]["legend"], quantity={"en": "Training loss (nats, log scale)", "zh": "训练损失（nats，对数坐标）"},
                                 xlabel={"en": "Step", "zh": "步数"}, height=200, cols=1,
                                 panels=[seed_panel("", None, {"en": "Seed 0", "zh": "种子 0"}), seed_panel("-s1", SEED1_STATUS, {"en": "Seed 1", "zh": "种子 1"})])
@@ -320,7 +320,7 @@ for tag, nm, col in (("-pls0.1-sep", {"en": "Layer-loss weight 0.1", "zh": "逐�
         SETS8.insert(2 + sum(1 for q in SETS8 if q[1]['en'].startswith('Layer-loss weight')), (FX[tag + "/final"], nm, col, fit))
 marks8 = sum(([line(f(x6, y), c), dots(pts(x6, y), c)] for y, _, c, f in SETS8), [])
 v8 = view(np.tile(x6, len(SETS8)), np.concatenate([y for y, _, _, _ in SETS8]), endpoints_only=True)
-figs["fig-fix"] = dict(title={"en": "Final training loss by layer, gradient routing and layer-loss weight, 130m", "zh": "按梯度去向和逐层损失权重的各层最终训练损失，130m"},
+figs["fig-fix"] = dict(title={"en": "Layer-loss weight and gradient reach, 130m", "zh": "层损失权重与梯度范围，130m"},
                        legend=[[n, c, "line"] for _, n, c, _ in SETS8], quantity=CE, xlabel=XL, height=320, panels=[dict(**v8, marks=marks8)])
 print("fig-fix last layer", {n["en"]: round(float(y[-1]), 3) for y, n, _, _ in SETS8})
 
@@ -338,7 +338,7 @@ if len(done9) > 3:   # some Figure 9 run has finished: draw the finished ones, t
     p9 = dict(**v9, marks=marks9)
 else:
     p9 = empty_view(list(x6), 2.9, 5.0, QUEUED)
-figs["fig-mix"] = dict(title={"en": "Final training loss by layer, weight shape and gradient surgery, 130m", "zh": "按权重形状和梯度冲突处理的各层最终训练损失，130m"},
+figs["fig-mix"] = dict(title={"en": "Weight shape and gradient surgery, 130m", "zh": "权重形状与梯度手术，130m"},
                        legend=legend9, quantity=CE, xlabel=XL, height=320, panels=[p9])
 
 # Figure 11 (placeholder until the runs finish; owner-approved popup 2026-10-07): late start. Separate heads at weight 1 whose
@@ -354,7 +354,7 @@ if len(done11) > 3:   # a late-start run has finished
     p11 = dict(**v11, marks=marks11)
 else:
     p11 = empty_view(list(x6), 2.9, 5.0, QUEUED)
-figs["fig-late"] = dict(title={"en": "Final training loss by layer and the step separate heads start, 130m", "zh": "按独立头开始步数的各层最终训练损失，130m"},
+figs["fig-late"] = dict(title={"en": "Separate heads switched on late, 130m", "zh": "晚启用的独立头，130m"},
                         legend=legend11, quantity=CE, xlabel=XL, height=320, panels=[p11])
 
 # Figure after fig-late (placeholder; owner popup 2026-10-16): ten more attempts at the last-layer cost, 130m, branch
@@ -435,7 +435,7 @@ def lens_panel(key, xs, label):
     v["yticks"] = [[a, f"{a:g}"] for a in (4, 5, 6, 8, 12) if v["ylim"][0] <= a <= v["ylim"][1]]
     print("fig-lens", key, {k: {kk: [vv[0], vv[-1]] for kk, vv in d.items()} for k, d in P_.items()})
     return dict(**v, marks=marks, label=label)
-figs["fig-lens"] = dict(title={"en": "Held-out loss by layer through each layer's own readout and through the final head", "zh": "按层的留出损失：经各层自己的读出头与经最终输出头"},
+figs["fig-lens"] = dict(title={"en": "Logit lens and per-layer readouts", "zh": "logit lens 与每层读出"},
                         legend=[[{"en": "Ordinary model, probes", "zh": "普通模型，探针"}, RED, "line"], [{"en": "Ordinary model, logit lens", "zh": "普通模型，logit lens"}, "#F28B82", "line"],
                                 [{"en": "Separate heads, own heads", "zh": "独立头，自己的头"}, BLUE7, "line"], [{"en": "Separate heads, logit lens", "zh": "独立头，logit lens"}, "#8AB4F8", "line"]],
                         quantity={"en": "Held-out cross-entropy (nats, log scale)", "zh": "留出数据上的交叉熵（nats，对数坐标）"}, xlabel=XL, height=220, cols=1,
@@ -465,7 +465,7 @@ figs["fig-lens"]["panels"].append(depth_panel())
 figs["fig-lens"]["legend"] += [[n, c, "line"] for _, c, n in DEPTH_COL]
 # Figure 17 (owner popup 2026-10-18): fig-lens for the other nine 48-layer designs, one column as fig-d48-arch; lens.json
 # "d48-<arch>"; a design whose lens runs have not finished shows the status word (AttnRes, AttnRes block, MoDA: lens-48c)
-figs["fig-lens-arch"] = dict(title={"en": "Held-out loss by layer through each layer's own readout and through the final head, nine more designs", "zh": "按层的留出损失：经各层自己的读出头与经最终输出头，另外九种架构"},
+figs["fig-lens-arch"] = dict(title={"en": "Logit lens and per-layer readouts, nine more designs", "zh": "logit lens 与每层读出，另外九种结构"},
                              legend=figs["fig-lens"]["legend"][:4], quantity=figs["fig-lens"]["quantity"], xlabel=XL, height=200, cols=1,
                              panels=[lens_panel(f"d48-{k}", np.asarray(x48(k)), {"en": n, "zh": n}) for k, n in ARCH])
 
@@ -484,7 +484,7 @@ v10["yticks"] = [[a, f"{a:g}"] for a in (3.5, 4, 4.5, 5, 6, 7) if v10["ylim"][0]
 # grey dots on the x_{t+1} panel. Filled once the two runs finish.
 MTP_STATUS = QUEUED
 MTPC = "#1E8E3E"   # GM2 green 600: NTP + MTP (red stays the probes of the ordinary NTP model, as on the rest of the page)
-figs["fig-mtp"] = dict(title={"en": "Final probe loss by layer, NTP and MTP, 130m", "zh": "按层的探针最终损失，NTP 与 MTP，130m"},
+figs["fig-mtp"] = dict(title={"en": "Final probe loss, NTP and MTP, 130m", "zh": "最终探针损失，NTP 与 MTP，130m"},
                        legend=[[{"en": "NTP", "zh": "NTP"}, RED, "line"], [{"en": "NTP + MTP", "zh": "NTP + MTP"}, MTPC, "line"],
                                [{"en": "Ordinary models by depth", "zh": "各深度的普通模型"}, GREY, "dot"]],
                        quantity=CE, xlabel=XL, height=220, cols=1,
@@ -524,7 +524,7 @@ def mtpl_marks():
     assert all(3.0 <= d[a_] <= 4.1 for d in done for a_ in ("ntp", "mtp")), "fig-mtpl: a point outside the y range"
     print("fig-mtpl", {f"{d['params']:.3g}": (d["ntp"], d["mtp"]) for d in done})
     return dict(marks=marks)
-figs["fig-mtpl"] = dict(title={"en": "Next-token loss by model size, NTP and MTP", "zh": "按模型尺度的下一个词损失，NTP 与 MTP"},
+figs["fig-mtpl"] = dict(title={"en": "Next-token loss, NTP and MTP, four sizes", "zh": "下一个词损失，NTP 与 MTP，四个尺度"},
                         legend=[[{"en": "NTP", "zh": "NTP"}, RED, "line"], [{"en": "NTP + MTP", "zh": "NTP + MTP"}, MTPC, "line"]],
                         quantity=CE_EVAL, xlabel={"en": "Parameters", "zh": "参数量"}, height=220,
                         panels=[dict(xlog=True, ylog=True, yoff=YOFF, xlim=[8e7, 2e9], ylim=[3.0, 4.1], xticks=[[1e8, "100M"], [3e8, "300M"], [1e9, "1B"]],
@@ -548,7 +548,7 @@ def depth_panel(target):
     if marks:
         d.pop("empty")
     return d
-figs["fig-mtpl-depth"] = dict(title={"en": "Change in probe loss by relative depth, MTP minus NTP", "zh": "按相对深度的探针损失变化，MTP 减 NTP"},
+figs["fig-mtpl-depth"] = dict(title={"en": "Change in probe loss, MTP minus NTP", "zh": "探针损失的变化，MTP 减 NTP"},
                               # sizes with both probe runs in mtpl.json; the 520m probe runs fail fetch_mtpl.py's frozen-head check (2026-10-21)
                               legend=[[lab, c, "line"] for (key, lab), c in zip(LADDER, LADC) if MTPL_PROBES.get(key, {}).get("probes")],
                               quantity=DELTA, xlabel=DEPTH_X, height=200, cols=1,
@@ -586,7 +586,7 @@ else:
     for vals, col in ((emb, GREEN), (fin, PURPLE), (cur, YELLOW9)):
         K3P[1]["marks"].append(dict(type="line", color=col, pts=[[x, round(max(v, 0.0), 4)] for x, v in zip(xs, vals)]))
     print("fig-k3lens next/exit/sum at 93", [round(K3[-1][k], 3) for k in ("next_ce", "exit_ce", "sum_ce")], "top-1", round(K3[-1]["next_acc"], 3))
-figs["fig-k3lens"] = dict(title={"en": "Logit lens of Kimi K3 by layer", "zh": "Kimi K3 按层的 logit lens"},
+figs["fig-k3lens"] = dict(title={"en": "Logit lens of Kimi K3", "zh": "Kimi K3 的 logit lens"},
                           legend=[[{"en": "Next layer's input", "zh": "下一层的输入"}, BLUE7, "line"], [{"en": "Output mix, stopped here", "zh": "在此停下的输出混合"}, RED, "line"],
                                   [{"en": "Plain sum of the blocks", "zh": "各块直接相加"}, GREY, "line"],
                                   [{"en": "Weight: embedding", "zh": "权重：embedding"}, GREEN, "line"], [{"en": "Weight: finished blocks", "zh": "权重：已完成的块"}, PURPLE, "line"],
@@ -692,11 +692,11 @@ def ck_write(d):
 
 W4 = [[{"en": "Embedding", "zh": "embedding"}, GRN, "line"], [{"en": "Older blocks", "zh": "更早的块"}, PUR, "line"],
       [{"en": "Last finished block", "zh": "刚完成的块"}, PINK, "line"], [{"en": "Current block", "zh": "当前块"}, ORA, "line"]]
-figs["fig-ck-lens"] = dict(title={"en": "AttnRes check-up: logit lens by layer", "zh": "AttnRes 体检：按层的 logit lens"},
+figs["fig-ck-lens"] = dict(title={"en": "AttnRes check-up: logit lens", "zh": "AttnRes 体检：logit lens"},
                            legend=[[{"en": "Next layer's input", "zh": "下一层的输入"}, BLUE7, "line"], [{"en": "Output mix, stopped here", "zh": "在此停下的输出混合"}, RED, "line"],
                                    [{"en": "Plain sum of the sources", "zh": "各来源直接相加"}, GREY, "line"], [{"en": "The layer's own readout (probe or separate head)", "zh": "该层自己的读出头（探针或独立头）"}, GREEN, "line"]],
                            quantity=CE, xlabel={"en": "Layer", "zh": "层"}, height=200, cols=1, panels=ck_panels(1.5, 40.0, True, (2, 4, 8, 16), ck_lens))
-figs["fig-ck-mix"] = dict(title={"en": "AttnRes check-up: output-mix weights by layer", "zh": "AttnRes 体检：按层的输出混合权重"}, legend=W4,
+figs["fig-ck-mix"] = dict(title={"en": "AttnRes check-up: output-mix weights", "zh": "AttnRes 体检：输出混合权重"}, legend=W4,
                           quantity={"en": "Weight (mean over tokens)", "zh": "权重（token 平均）"}, xlabel={"en": "Layer", "zh": "层"}, height=170, cols=1,
                           panels=ck_panels(0, 1.25, False, (0, 0.25, 0.5, 0.75, 1), ck_weights("exit_probs")))
 figs["fig-ck-read"] = dict(title={"en": "AttnRes check-up: where each layer's attention reads from", "zh": "AttnRes 体检：每层的注意力从哪里读"}, legend=W4,
@@ -769,7 +769,7 @@ def dm_fig(fid, title, quantity, lo, hi, yt, ylog, series, legend, height=150):
 DM_LEG = [[{"en": "Ordinary model", "zh": "普通模型"}, RED, "line"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"]]
 DM_LEG4 = [[{"en": "Ordinary, attention", "zh": "普通模型，注意力"}, RED, "line"], [{"en": "Ordinary, MLP", "zh": "普通模型，MLP"}, RED3, "line"],
            [{"en": "Separate heads, attention", "zh": "独立头，注意力"}, BLUE7, "line"], [{"en": "Separate heads, MLP", "zh": "独立头，MLP"}, BLUE3, "line"]]
-dm_fig("fig-dm-skip", {"en": "Loss when one layer is removed, 48 layers", "zh": "删掉一层后的损失，48 层"},
+dm_fig("fig-dm-skip", {"en": "Loss when one layer is deleted, 48 layers", "zh": "删掉一层后的损失，48 层"},
        {"en": "Increase in next-token loss (nats, log scale)", "zh": "下一个词损失的增加（nats，对数坐标）"}, 0.001, 300, (0.001, 0.01, 0.1, 1, 10), True,
        [(st, (lambda r, st=st, a=None: None), c) for st, c in ()], DM_LEG)
 dm_fig("fig-dm-write", {"en": "Write size relative to the stream, 48 layers", "zh": "写入相对残差流的大小，48 层"},
@@ -831,6 +831,32 @@ figs["fig-lens"]["panels"][1].update(xlim=[0.5, 12.5], xticks=[[k, str(k)] for k
 for _p in figs["fig-lens"]["panels"][2:]:
     _p.update(xlim=[0.5, 48.5], xticks=[[k, str(k)] for k in (1, 12, 24, 36, 48)])
 to_layers("fig-lens-arch", [x48(k)[0] for k, _ in ARCH], 48)
+
+# The Lean session's follow-ups (owner popups 2026-10-21; placeholders until the runs finish). L1 and L2: 48-layer ordinary
+# models with probes, one new arm each (pls_arch2_fetchable.sbatch), beside the -vs-d48-g4 controls. L5: the 130m NTP
+# probes again with their weights kept (pls-mtp, mtpl-probe-130m-ntp-keep).
+ARCH2_STATUS = QUEUED
+L48T = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
+LOSS48 = {"en": "Layer-48 training loss (nats)", "zh": "第 48 层训练损失（nats）"}
+figs["fig-arch-gain"] = dict(title={"en": "Pre-norm scales, 48 layers", "zh": "pre-norm 增益，48 层"},
+                             legend=[[{"en": "Pre-LN", "zh": "Pre-LN"}, RED, "line"], [{"en": "LayerNorm Scaling, converted", "zh": "LayerNorm Scaling（换算后）"}, BLUE7, "line"],
+                                     [{"en": "Pre-LN, scales start at 1/\u221a\u2113", "zh": "Pre-LN，增益初始化为 1/\u221a\u2113"}, GREEN, "line"]],
+                             quantity={"en": "Pre-norm scale relative to Pre-LN's", "zh": "pre-norm 增益相对 Pre-LN 的比值"}, xlabel=LAYER_X, height=200, cols=1,
+                             panels=[dict(xlim=[0.5, 48.5], ylim=[0.0, 1.2], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (0, 0.4, 0.8, 1.2)], marks=[], empty=ARCH2_STATUS,
+                                          label={"en": "Mean pre-norm scale by layer", "zh": "每层 pre-norm 增益的均值"}),
+                                     dict(xlim=[0.5, 48.5], ylim=[3.0, 3.6], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (3.0, 3.2, 3.4, 3.6)], marks=[], empty=ARCH2_STATUS,
+                                          label={"en": "Layer-48 final training loss", "zh": "第 48 层最终训练损失"})])
+figs["fig-arch-route"] = dict(title={"en": "Training loss with dynamic and static routing, 48 layers", "zh": "动态路由与静态路由的训练损失，48 层"},
+                              legend=[[{"en": "Dynamic routing", "zh": "动态路由"}, BLUE7, "line"], [{"en": "Static routing", "zh": "静态路由"}, GREEN, "line"], [{"en": "Pre-LN", "zh": "Pre-LN"}, GREY, "line"]],
+                              quantity=LOSS48, xlabel={"en": "Training step", "zh": "训练步数"}, height=200,
+                              panels=[dict(xlim=[0, 5000], ylim=[3.0, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (3.0, 3.5, 4.0)], marks=[], empty=ARCH2_STATUS,
+                                           label={"en": "Hyper-Connections", "zh": "Hyper-Connections"}),
+                                      dict(xlim=[0, 5000], ylim=[3.0, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (3.0, 3.5, 4.0)], marks=[], empty=ARCH2_STATUS,
+                                           label={"en": "AttnRes (Full)", "zh": "AttnRes (Full)"})])
+figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
+                            legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
+                            quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,
+                            panels=[dict(xlim=[0.5, 6.5], ylim=[0.0, 1.0], xticks=[[k, str(k)] for k in range(1, 7)], yticks=[[t, f"{t:g}"] for t in (0, 0.5, 1.0)], marks=[], empty=ARCH2_STATUS)])
 
 OUT.write_text("/* Generated by build_figures_data.py (pls branch, docs/della/pls_archive/blog); regenerate rather than hand-edit. */\nwindow.PLC_FIGS = " + json.dumps(figs, ensure_ascii=False, separators=(",", ":")) + ";\n")
 print("N per layer", NL, "| x of layer 2..6 at the end", [f"{v:.3g}" for v in x6], "| wrote", OUT, OUT.stat().st_size, "bytes")
