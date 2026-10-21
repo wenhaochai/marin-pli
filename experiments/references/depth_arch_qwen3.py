@@ -39,6 +39,14 @@ and mhc, j = 0 attention, 1 MLP), L the number of layers, RN an RMSNorm with a l
                    query is rotated.
                    The last layer's MLP entry is never read.
 
+Two variants (config fields, default off; tests: scripts/della/depth_arch_variant_test.py):
+    depth_route="static"   hc: read / mixing / write keep only their static part (the dynamic s * tanh(...) terms are
+                           dropped); attnres: every sublayer's (and the head's) mix is softmax_i(sqrt(d) theta_i) over
+                           the sources so far, theta a learned vector per sublayer (init 0, the same uniform mean as
+                           attnres's init), with no dependence on the token. Both equal their dynamic design at init.
+    depth_gain_init="lns"  preln with the pre-norm scales of layer l (1-based) initialised to 1/sqrt(l): lns's function
+                           at init, with Pre-LN's parametrisation (each Adam step on a scale is not divided by sqrt(l)).
+
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
 the sum of the streams for hc and mhc; for attnres the mix the next layer's attention reads (after the last layer, the
 head's mix). Every design stores its layers stacked on the layer axis (Stacked), as the baseline does, so MuonH's
@@ -179,6 +187,7 @@ class DepthArchLayer(eqx.Module):
     hyper: Optional[tuple] = None  # hc: (HyperParams, HyperParams); mhc: (MhcParams, MhcParams), one per sublayer
     query: Optional[NamedArray] = None  # attnres*: (sub=2, embed) pseudo-queries of the two sublayers
     key_gain: Optional[NamedArray] = None  # attnres*: (sub=2, embed) key gains of the two sublayers
+    src_logit: Optional[NamedArray] = None  # attnres with depth_route="static": (sub=2, src=2L+1) source logits / sqrt(d)
     kv_k: Optional[hnn.Linear] = None  # moda: the MLP input's depth key, Embed -> (kv_head, head_size)
     kv_v: Optional[hnn.Linear] = None  # moda: the MLP input's depth value
 
@@ -209,8 +218,10 @@ class DepthArchLayer(eqx.Module):
         else:
             post = (None, None)
         attnres = arch.startswith("attnres")
-        query = hax.zeros((Axis("sub", 2), config.Embed)) if attnres else None
-        key_gain = hax.ones((Axis("sub", 2), config.Embed)) if attnres else None
+        static = attnres and _static(config)
+        query = hax.zeros((Axis("sub", 2), config.Embed)) if attnres and not static else None
+        key_gain = hax.ones((Axis("sub", 2), config.Embed)) if attnres and not static else None
+        src_logit = hax.zeros((Axis("sub", 2), Axis("src", 2 * config.num_layers + 1))) if static else None
         kv_k = kv_v = None
         if arch == "moda":
             acfg = config.attention_config()
@@ -218,7 +229,7 @@ class DepthArchLayer(eqx.Module):
             kv_k = hnn.Linear.init(In=config.Embed, Out=(acfg.KVHeads, acfg.HeadSize), key=kk, use_bias=config.use_bias, out_first=True)
             kv_v = hnn.Linear.init(In=config.Embed, Out=(acfg.KVHeads, acfg.HeadSize), key=kv, use_bias=config.use_bias, out_first=True)
         return DepthArchLayer(config=config, arch=arch, self_attn=attn, mlp=mlp, ln_1=config.mk_LayerNorm(config.Embed), ln_2=config.mk_LayerNorm(config.Embed),
-                              post_1=post[0], post_2=post[1], hyper=hyper, query=query, key_gain=key_gain, kv_k=kv_k, kv_v=kv_v)
+                              post_1=post[0], post_2=post[1], hyper=hyper, query=query, key_gain=key_gain, src_logit=src_logit, kv_k=kv_k, kv_v=kv_v)
 
     # ---- the two branches ------------------------------------------------------------------------------------------
     def branch(self, j: int, x: NamedArray, mask, *, key, pos_ids, layer=None) -> NamedArray:
@@ -275,9 +286,12 @@ class DepthArchLayer(eqx.Module):
             d_read = hax.dot(Hn, f32(p.w_read), axis=Embed)  # (..., stream)
             d_res = hax.dot(Hn, f32(p.w_res), axis=Embed)  # (..., stream, stream_out)
             d_write = hax.dot(Hn, f32(p.w_write), axis=Embed).rename({"stream": "stream_out"})
-            read = c_read + f32(p.read) + s_rr * hax.tanh(d_read)
-            res = c_res + f32(p.res) + s_rr * hax.tanh(d_res)
-            write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
+            if _static(self.config):  # static HC: the learned constants alone, the same for every token
+                read, res, write = c_read + f32(p.read), c_res + f32(p.res), c_write + f32(p.write)
+            else:
+                read = c_read + f32(p.read) + s_rr * hax.tanh(d_read)
+                res = c_res + f32(p.res) + s_rr * hax.tanh(d_res)
+                write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
@@ -328,6 +342,21 @@ class DepthArchLayer(eqx.Module):
         xf = self.ln_2(h)
         kf, vf = self.ffn_depth_kv(xf)
         return h + self.mlp(xf, key=k2), (ka, va), (kf, vf)
+
+
+def _static(config) -> bool:
+    route = getattr(config, "depth_route", "dynamic")
+    if route not in ("dynamic", "static"):
+        raise ValueError(f"depth_route must be 'dynamic' or 'static', got {route!r}")
+    return route == "static"
+
+
+def _static_weights(theta: NamedArray, n, d: int) -> NamedArray:
+    """Static attnres weights over the first n sources: softmax_i(sqrt(d) theta_i), float32, later slots 0. sqrt(d) puts
+    a unit step of theta on the logit scale of a pseudo-query step against an RMS-normalised key."""
+    Src = theta.resolve_axis("src")
+    logits = theta.astype(jnp.float32) * math.sqrt(d)
+    return hax.nn.softmax(hax.where(hax.arange(Src) < n, logits, -1e30), axis=Src)
 
 
 def _mix(query: NamedArray, values: list, keys: list) -> NamedArray:
@@ -410,6 +439,7 @@ class DepthArchTransformer(eqx.Module):
     norm: hnn.RmsNorm
     final_query: Optional[NamedArray] = None  # attnres*: the head's mix
     final_key_gain: Optional[NamedArray] = None
+    final_src_logit: Optional[NamedArray] = None  # attnres with depth_route="static": the head's source logits / sqrt(d)
 
     @staticmethod
     def init(config: LlamaConfig, arch: str, *, key) -> "DepthArchTransformer":
@@ -420,8 +450,20 @@ class DepthArchTransformer(eqx.Module):
         attnres = arch.startswith("attnres")
         is_named = lambda x: isinstance(x, NamedArray)  # noqa: E731
         stacked = jax.tree_util.tree_map(lambda *xs: hax.stack(config.Layers, xs), *blocks, is_leaf=is_named)
+        gain_init = getattr(config, "depth_gain_init", "one")
+        if gain_init not in ("one", "lns") or (gain_init == "lns" and arch != "preln"):
+            raise ValueError(f"depth_gain_init must be 'one', or 'lns' with preln; got {gain_init!r} with {arch!r}")
+        if gain_init == "lns":  # layer l (1-based) starts at lns's 1/sqrt(l), in both pre-norm scales
+            f = hax.named(1.0 / jnp.sqrt(jnp.arange(1, config.num_layers + 1, dtype=jnp.float32)), config.Layers)
+            stacked = eqx.tree_at(lambda b: (b.ln_1.weight, b.ln_2.weight), stacked, (stacked.ln_1.weight * f, stacked.ln_2.weight * f))
+        static = attnres and _static(config)
+        if static and arch != "attnres":
+            raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
+        if _static(config) and arch not in ("hc", "attnres"):
+            raise ValueError(f"depth_route='static' needs hc or attnres, got {arch!r}")
         layers = Stacked(stacked, config.Layers, ScanCheckpointPolicy._mk(config.gradient_checkpointing))
-        return DepthArchTransformer(config, arch, layers, config.mk_LayerNorm(config.Embed), hax.zeros(config.Embed) if attnres else None, hax.ones(config.Embed) if attnres else None)
+        return DepthArchTransformer(config, arch, layers, config.mk_LayerNorm(config.Embed), hax.zeros(config.Embed) if attnres and not static else None,
+                                    hax.ones(config.Embed) if attnres and not static else None, hax.zeros(Axis("src", 2 * config.num_layers + 1)) if static else None)
 
     def layer(self, i: int) -> "DepthArchLayer":
         """Layer i, sliced out of the stack (the loop designs)."""
@@ -497,17 +539,30 @@ class DepthArchTransformer(eqx.Module):
         V = hax.zeros((Axis("src", 2 * L + 1),) + x.axes, dtype=x.dtype)
         R = hax.zeros((Axis("src", 2 * L + 1),) + tuple(a for a in x.axes if a.name != Embed.name), dtype=jnp.float32)
         V, R = _put(V, R, 0, x, Embed)
-        q_eff = cast(NamedArray, stacked.query).astype(jnp.float32) * cast(NamedArray, stacked.key_gain).astype(jnp.float32)  # (layer, sub, embed)
-        nxt = hax.concatenate(cfg.Layers.name, [q_eff[Sub, 0][cfg.Layers.name, 1:], self._final_query().broadcast_axis(cfg.Layers.resize(1))])
+        static = _static(cfg)
+        if static:  # the next read's static logits per layer: layer i+1's attention, after the last layer the head's
+            th = cast(NamedArray, stacked.src_logit)
+            nxt = hax.concatenate(cfg.Layers.name, [th[Sub, 0][cfg.Layers.name, 1:], cast(NamedArray, self.final_src_logit).broadcast_axis(cfg.Layers.resize(1))])
+        else:
+            q_eff = cast(NamedArray, stacked.query).astype(jnp.float32) * cast(NamedArray, stacked.key_gain).astype(jnp.float32)  # (layer, sub, embed)
+            nxt = hax.concatenate(cfg.Layers.name, [q_eff[Sub, 0][cfg.Layers.name, 1:], self._final_query().broadcast_axis(cfg.Layers.resize(1))])
+
+        def mix(q, V, R, n):
+            if static:
+                return hax.dot(_static_weights(q, n, Embed.size).astype(V.dtype), V, axis="src", preferred_element_type=jnp.float32).astype(V.dtype)
+            return _mix_buf(q, V, R, n)
 
         def step(layer, carry, i, q_next, *, key):
             h_in, V, R = carry
             n = i.array if isinstance(i, NamedArray) else i
             k1, k2 = maybe_rng_split(key, 2)
             V, R = _put(V, R, 2 * n + 1, layer.branch(0, h_in, attn_mask, key=k1, pos_ids=pos_ids), Embed)
-            q1 = cast(NamedArray, layer.query)[Sub, 1].astype(jnp.float32) * cast(NamedArray, layer.key_gain)[Sub, 1].astype(jnp.float32)
-            V, R = _put(V, R, 2 * n + 2, layer.branch(1, _mix_buf(q1, V, R, 2 * n + 2), attn_mask, key=k2, pos_ids=pos_ids), Embed)
-            out = _mix_buf(q_next, V, R, 2 * n + 3)
+            if static:
+                q1 = cast(NamedArray, layer.src_logit)[Sub, 1]
+            else:
+                q1 = cast(NamedArray, layer.query)[Sub, 1].astype(jnp.float32) * cast(NamedArray, layer.key_gain)[Sub, 1].astype(jnp.float32)
+            V, R = _put(V, R, 2 * n + 2, layer.branch(1, mix(q1, V, R, 2 * n + 2), attn_mask, key=k2, pos_ids=pos_ids), Embed)
+            out = mix(q_next, V, R, 2 * n + 3)
             return (out, V, R), out
 
         _, outs = self._two_level_scan(step, (x, V, R), hax.arange(cfg.Layers), nxt, key=key)
@@ -576,9 +631,22 @@ class DepthArchTransformer(eqx.Module):
                 return values + [partial], rkeys + [_rms(partial, Embed)]
             return values, rkeys
 
+        static = _static(cfg)
+
         def query(i: int, j: int) -> NamedArray:
             lay = blocks[i]
+            if static:
+                return cast(NamedArray, lay.src_logit)[Sub, j]
             return cast(NamedArray, lay.query)[Sub, j].astype(jnp.float32) * cast(NamedArray, lay.key_gain)[Sub, j].astype(jnp.float32)
+
+        def _mixq(q: NamedArray, vals: list, rk: list) -> NamedArray:
+            if not static:
+                return _mix(q, vals, rk)
+            w = _static_weights(q, len(vals), Embed.size)
+            out = vals[0] * w["src", 0].astype(vals[0].dtype)
+            for t in range(1, len(vals)):
+                out = out + vals[t] * w["src", t].astype(vals[t].dtype)
+            return out
 
         for i, layer in enumerate(blocks):
             ks = maybe_rng_split(keys[i], 2)
@@ -586,7 +654,7 @@ class DepthArchTransformer(eqx.Module):
                 vals, rk = sources()
 
                 def sub(layer, q, vals, rk, k, j=j):
-                    return layer.branch(j, _mix(q, vals, rk), attn_mask, key=k, pos_ids=pos_ids)
+                    return layer.branch(j, _mixq(q, vals, rk), attn_mask, key=k, pos_ids=pos_ids)
 
                 f = eqx.filter_checkpoint(sub)(layer, query(i, j), vals, rk, ks[j])
                 if block:
@@ -598,21 +666,22 @@ class DepthArchTransformer(eqx.Module):
                 else:
                     values, rkeys = values + [f], rkeys + [_rms(f, Embed)]
             vals, rk = sources()
-            outs.append(_mix(query(i + 1, 0) if i + 1 < L else self._final_query(), vals, rk))
+            final = cast(NamedArray, self.final_src_logit) if static else self._final_query()
+            outs.append(_mixq(query(i + 1, 0) if i + 1 < L else final, vals, rk))
         return outs
 
     def __call__(self, x: NamedArray, attn_mask, *, key=None, pos_ids: NamedArray | None = None) -> NamedArray:
         return self.norm(self.outputs(x, attn_mask, key=key, pos_ids=pos_ids)[self.config.Layers.name, -1])
 
 
-_NEW_PARAMS = ("hyper", "query", "key_gain")  # path fragments of the parameters the designs add
+_NEW_PARAMS = ("hyper", "query", "key_gain", "src_logit")  # path fragments of the parameters the designs add
 
 
 @OptimizerConfig.register_subclass("muonH_depth_arch")
 @dataclass(frozen=True)
 class DepthArchMuonHConfig(MuonHConfig):
     """MuonH exactly as the baseline for the baseline's parameters; the parameters a design adds (paths containing
-    "hyper", "query" or "key_gain") get their own Adam with ``new_param_epsilon`` (see the module docstring for why)."""
+    "hyper", "query", "key_gain" or "src_logit") get their own Adam with ``new_param_epsilon`` (see the module docstring for why)."""
 
     new_param_epsilon: float = 1e-8
 

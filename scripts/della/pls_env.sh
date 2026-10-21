@@ -13,17 +13,20 @@ unset _pp d
 # the node (rule of 2026-10-08). Python's tempfile, XLA, ptxas and the compilers read TMPDIR. Removed when the job's
 # shell exits; an EXIT trap the job script set before sourcing this file still runs first. A script that sets its own
 # EXIT trap after sourcing calls pls_tmp_cleanup in it.
+# The dir is keyed on this job's own id: FETCHED_JOB_ID when a host job runs it through tools/fetch_pending.sh (SLURM_JOB_ID
+# is then the host's, whose dir must survive), else SLURM_JOB_ID (owner, 2026-10-16).
+PLS_TMP_JID=${FETCHED_JOB_ID:-${SLURM_JOB_ID:-}}
 pls_tmp_cleanup() {  # only this job's own dir; a no-op outside a job. Never fails: under set -e a failing cleanup in the
   # EXIT trap would turn a good job's exit code into 1 (audit 2026-10-11)
-  if [ -n "${SLURM_JOB_ID:-}" ] && [ "${PLS_JOB_TMPDIR:-}" = "/scratch/gpfs/GROUP/USER/tmp/job/$SLURM_JOB_ID" ]; then
+  if [ -n "${PLS_TMP_JID:-}" ] && [ "${PLS_JOB_TMPDIR:-}" = "/scratch/gpfs/GROUP/USER/tmp/job/$PLS_TMP_JID" ]; then
     rm -rf -- "$PLS_JOB_TMPDIR" || true
   fi
   return 0
 }
 # A PLS_JOB_TMPDIR inherited from the submit shell (another job's dir) is replaced, not used and later deleted (audit
 # 2026-10-11); a second source inside the same job sees its own dir and does nothing.
-if [ -n "${SLURM_JOB_ID:-}" ] && [ "${PLS_JOB_TMPDIR:-}" != "/scratch/gpfs/GROUP/USER/tmp/job/$SLURM_JOB_ID" ]; then
-  export PLS_JOB_TMPDIR=/scratch/gpfs/GROUP/USER/tmp/job/$SLURM_JOB_ID
+if [ -n "${PLS_TMP_JID:-}" ] && [ "${PLS_JOB_TMPDIR:-}" != "/scratch/gpfs/GROUP/USER/tmp/job/$PLS_TMP_JID" ]; then
+  export PLS_JOB_TMPDIR=/scratch/gpfs/GROUP/USER/tmp/job/$PLS_TMP_JID
   mkdir -p "$PLS_JOB_TMPDIR"
   export TMPDIR=$PLS_JOB_TMPDIR TMP=$PLS_JOB_TMPDIR TEMP=$PLS_JOB_TMPDIR APPTAINERENV_TMPDIR=$PLS_JOB_TMPDIR
   _pls_prev_exit_trap() { eval "set -- $(trap -p EXIT)"; printf '%s' "${3:-}"; }

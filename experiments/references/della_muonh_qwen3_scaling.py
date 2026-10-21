@@ -77,7 +77,9 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
 
 VERSION = "2026.09.13"
-NUM_GPUS = 4
+# NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the
+# microbatch, stay the size's. Run ids carry della{NUM_GPUS}x. (Ported from pls-mtp for the 8-GPU L1 / L2 runs.)
+NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | ov | ovss | pls | twin | sr | twinsr | ...
@@ -234,6 +236,13 @@ if PLS_OPT_SPLIT and not (VARIANT == "pls" and PLS_SEP):
 # ARCH=<name> (VARIANT=pls): the residual design of every layer, one of depth_arch_qwen3.ARCHS (DepthBench, arXiv
 # 2609.32534); empty = the baseline (hybrid_norm, i.e. Sandwich-LN, on the Stacked transformer). Tag -a{ARCH}.
 ARCH = os.environ.get("ARCH", "")
+# ROUTE=static (ARCH=hc or attnres): routing by learned constants only, no dependence on the token. Tag -rstatic.
+# GAIN_INIT=lns (ARCH=preln): the pre-norm scales of layer l start at 1/sqrt(l), lns's function at init. Tag -gilns.
+# Both: depth_arch_qwen3 docstring; the Lean session's L1 / L2 follow-ups (owner popup 2026-10-21).
+ROUTE = os.environ.get("ROUTE", "dynamic")
+GAIN_INIT = os.environ.get("GAIN_INIT", "one")
+if ROUTE not in ("dynamic", "static") or GAIN_INIT not in ("one", "lns") or (ROUTE != "dynamic" and ARCH not in ("hc", "attnres")) or (GAIN_INIT != "one" and ARCH != "preln"):
+    raise ValueError(f"ROUTE=static needs ARCH hc or attnres, GAIN_INIT=lns needs ARCH preln; got ROUTE={ROUTE} GAIN_INIT={GAIN_INIT} ARCH={ARCH}")
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "pls", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -295,7 +304,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-os" if PLS_OPT_SPLIT else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + ("-gilns" if GAIN_INIT == "lns" else "") + ("-os" if PLS_OPT_SPLIT else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -322,7 +331,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-wu{WARMUP}"
     if HEADS_FROM:
         variant_tags += f"-headft{TOTAL_STEPS}"
-    run_id = f"muonh-qwen3-{size}-della4x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
+    run_id = f"muonh-qwen3-{size}-della{NUM_GPUS}x{DEVICE_TAG}" + variant_tags + CPT_TAG + RUN_TAG + (f"-smoke{SMOKE_STEPS}" if SMOKE_STEPS else "")
     train = {fineweb_edu_10B_dataset(): 1.0}
     validation = list(paloma_datasets(tokenizer=marin_tokenizer).values())
     if VARIANT == "fbt":
@@ -387,7 +396,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", **({"scan_layers": False} if ARCH else {}))
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, **({"scan_layers": False} if ARCH else {}))
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
@@ -447,7 +456,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in ("ov", "ovss") else "muonh-qwen3-pls-della" if VARIANT == "pls" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della4x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,

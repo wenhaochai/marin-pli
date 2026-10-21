@@ -233,6 +233,8 @@ class PerLayerQwen3Config(Qwen3Config):
     hc_streams: int = 4  # hc, mhc: residual streams
     attnres_blocks: int = 8  # attnres_block: blocks
     moda_chunk: int = 1024  # moda: query positions per attention chunk
+    depth_route: str = "dynamic"  # "static": hc and attnres route with learned constants only (depth_arch_qwen3 docstring)
+    depth_gain_init: str = "one"  # "lns": preln's pre-norm scales start at lns's 1/sqrt(l) (depth_arch_qwen3 docstring)
 
     def __post_init__(self):
         super().__post_init__()
@@ -250,6 +252,10 @@ class PerLayerQwen3Config(Qwen3Config):
 
         if self.depth_arch != "baseline" and self.depth_arch not in ARCHS:
             raise ValueError(f"depth_arch must be 'baseline' or one of {ARCHS}, got {self.depth_arch!r}")
+        if self.depth_route != "dynamic" and self.depth_arch not in ("hc", "attnres"):
+            raise ValueError(f"depth_route={self.depth_route!r} needs depth_arch hc or attnres, got {self.depth_arch!r}")
+        if self.depth_gain_init != "one" and self.depth_arch != "preln":
+            raise ValueError(f"depth_gain_init={self.depth_gain_init!r} needs depth_arch preln, got {self.depth_arch!r}")
         if self.pls_separate_heads and self.pls_weight <= 0:
             raise ValueError("pls_separate_heads needs pls_weight > 0: with weight 0 the per-layer heads would never train")
         if self.pls_local_heads and (not self.pls_separate_heads or self.pls_detach_backbone or self.depth_arch != "baseline" or self.pls_probe or self.pls_off_end):
