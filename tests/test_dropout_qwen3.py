@@ -51,3 +51,23 @@ def loss(m, s):
 g = eqx.filter_grad(loss)(md, jnp.asarray(7))
 assert all(bool(jnp.isfinite(x).all()) for x in jax.tree_util.tree_leaves(eqx.filter(g, eqx.is_array))); print("grads finite")
 print("ALL OK")
+# input noise (C, D)
+from experiments.references.dropout_qwen3 import InputNoiseQwen3Config
+for mode in ("zero", "rand"):
+    cfg = InputNoiseQwen3Config(**kw, noise_p=0.1, noise_mode=mode, noise_from_step=5)
+    mn = cfg.build(V, key=key)
+    ln = jax.tree_util.tree_leaves(eqx.filter(mn, eqx.is_array))
+    assert all(np.array_equal(a, b) for a, b in zip(lb, ln)), "init differs"
+    def actn(step, k):
+        tok = T._TRACED_TRAIN_STEP.set(step)
+        try:
+            return mn.activations(ids, mask, key=k).array
+        finally:
+            T._TRACED_TRAIN_STEP.reset(tok)
+    assert np.array_equal(mn.activations(ids, mask, key=jr.PRNGKey(2)).array, ref)
+    assert np.allclose(actn(jnp.asarray(3), jr.PRNGKey(2)), ref, atol=1e-6)
+    a7n, b7n = actn(jnp.asarray(7), jr.PRNGKey(2)), actn(jnp.asarray(7), jr.PRNGKey(3))
+    assert not np.allclose(a7n, ref) and not np.allclose(a7n, b7n)
+    g = eqx.filter_grad(lambda m: (actn(jnp.asarray(7), jr.PRNGKey(2)) ** 2).mean())(mn)
+    print(mode, "ok: init, eval, before start identical; differs after; diff", float(jnp.abs(a7n - ref).max()))
+print("NOISE OK")

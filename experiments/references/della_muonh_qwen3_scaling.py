@@ -66,7 +66,7 @@ from experiments.references.full_bandwidth_qwen3 import FullBandwidthQwen3Config
 from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
-from experiments.references.dropout_qwen3 import ResidualDropoutQwen3Config
+from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
 from experiments.references.table_variants_qwen3 import (ComposedBothResidualQwen3Config, ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
                                                          LowRankQwen3Config, RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
@@ -302,6 +302,12 @@ CVD_MODE = os.environ.get("CVD_MODE", "pieces")
 # of repeated pass p of 8, so the full-data point is the tokenizer's own. Works with any VOCAB_K. Tag -drop<p>[-fp<pass>].
 DROP_P = float(os.environ.get("DROP_P", "0.1"))
 DROP_FROM_PASS = int(os.environ.get("DROP_FROM_PASS", "0"))
+# VARIANT=inoise (goal of 2026-10-21, owner popup, parallel batch C and D): input noise in training (InputNoiseQwen3Config):
+# each input position with probability INOISE_P gets a zero row (INOISE_MODE=zero, embedding dropout) or a uniformly random
+# ordinary token (rand), from the first update of repeated pass INOISE_FROM_PASS. Any VOCAB_K. Tag -in<mode><p>[-fp<pass>].
+INOISE_P = float(os.environ.get("INOISE_P", "0.1"))
+INOISE_MODE = os.environ.get("INOISE_MODE", "zero")
+INOISE_FROM_PASS = int(os.environ.get("INOISE_FROM_PASS", "0"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
 if PASS_DATA and not (PASS_DATA == "rs" or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
@@ -371,7 +377,7 @@ def _small_vocab_data(k: int, train_names, validation_names):
                         cache_dir=None, shuffle=True, permutation_type="linear")
 if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -448,6 +454,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "") + (f"-oslow{CVR_OUT_SLOW:g}" if CVR_OUT_SLOW else "")
     if VARIANT == "cvd":
         variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
+    if VARIANT == "inoise":
+        variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
@@ -569,6 +577,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
         model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", cvd_p=CVD_P, cvd_seed=SEED, cvd_mode=CVD_MODE,
                                                        cvd_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (CVD_FROM_PASS - 1) if CVD_FROM_PASS else 0)
+    elif VARIANT == "inoise":
+        model_cls, model_extra = InputNoiseQwen3Config, dict(noise_p=INOISE_P, noise_mode=INOISE_MODE,
+                                                             noise_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (INOISE_FROM_PASS - 1) if INOISE_FROM_PASS else 0)
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)
@@ -615,6 +626,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         raise ValueError("CVR_RES_FREEZE=1: only with VARIANT=cvr")
     if CVD_MODE != "pieces" and VARIANT != "cvd":
         raise ValueError(f"CVD_MODE={CVD_MODE}: only with VARIANT=cvd")
+    if INOISE_FROM_PASS and not (VARIANT == "inoise" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= INOISE_FROM_PASS <= 7):
+        raise ValueError(f"INOISE_FROM_PASS={INOISE_FROM_PASS}: 2..7, only with VARIANT=inoise, DATA_EPOCHS=8 and equal passes (not bpd)")
     if DROP_FROM_PASS and not (VARIANT == "drop" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= DROP_FROM_PASS <= 7):
         raise ValueError(f"DROP_FROM_PASS={DROP_FROM_PASS}: 2..7, only with VARIANT=drop, DATA_EPOCHS=8 and equal passes (not bpd); the full-data point is the tokenizer's own")
     if CVD_FROM_PASS and not (VARIANT == "cvd" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= CVD_FROM_PASS <= 7):
