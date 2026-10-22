@@ -173,3 +173,8 @@ Bytes seed 1 (2026-10-21, 15832611, exact bpb): full 1.3712, rep8 1.3677 (seed 0
 1.3704, rep8 1.3707: cost +0.0003 while the per-seed cost runs -0.0035 to +0.0041. Under the Q11 goal of 2026-10-21 (each
 tokenizer's 8 passes reach its own unique-token result) the byte vocabulary meets it with plain repetition, within seed
 noise. The 128K..8K tokenizers do not: best gaps 0.053 (128K), 0.019 (8K); 64K/32K/16K have no setup yet.
+
+Batch of 2026-10-21 (owner "再交一点job", popup A B C; code 0526109cc4, tests ok, check_plans ok), all from pass 2, in wq:
+w23 lrx15-fp2 and w24 lrx2-fp2 (main lr x1.5 / x2, 128K and 8K; survey idea 10), w25 cvd-rc-fp2-rs (cvd fp2 + rs with
+rate 0.5 min(1, C / subset count), C 1000 / 10000; idea 4), w26 dtp-fp2 (rare input rows decay toward their pieces' mean,
+lambda 0.35 / 1; idea 7). Flooding (idea 13) was offered and not chosen.
