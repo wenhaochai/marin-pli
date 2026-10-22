@@ -9,6 +9,8 @@ A run counts as complete only when W&B says finished AND its history reaches ste
 that crashes early can also end as 'finished' (the hc run that died at step 259, audit 2026-10-11). An incomplete run's
 old keys are removed, so a design never mixes an old half with a new one. History is read in 1000-step windows: one
 scan over the whole run drops and repeats a row at each page boundary (audit 2026-10-11).
+The Lean L1 / L2 arms (pls_arch2_fetchable.sbatch, wq w15 w27 w28) are probes only, -vs-d48 with no -g4, on 8 or 4 GPUs:
+name them arch2:<tag> (arch2:preln-gilns, arch2:hc-rstatic, arch2:attnres-rstatic; not in the default set).
 Usage: python fetch_d48g4.py [--partial] [arch[@seed] ...] ('' or sandwich = Sandwich-LN; attnres@s1 = the seed-1 pair; default: all ten). --partial prints
 running runs too and writes nothing. Exits 2 if a W&B call failed (the other results are still written)."""
 import sys, numpy as np, wandb
@@ -19,7 +21,8 @@ partial = "--partial" in sys.argv
 args = [a for a in sys.argv[1:] if a != "--partial"]
 archs = [("" if a == "sandwich" else a) for a in args] or ARCHS
 api = wandb.Api(timeout=300)
-P = "reself/marin-della/muonh-qwen3-130m-della4xh100-pls1"
+P = "reself/marin-della/muonh-qwen3-130m-della{}xh100-pls1"
+ARCH2_GPUS = {"preln-gilns": 8, "hc-rstatic": 4, "attnres-rstatic": 4}
 keys = [f"train/pls/L{k}" for k in range(48)]
 out = dict(np.load(OUT, allow_pickle=True)) if OUT.exists() else {}
 errors = 0
@@ -38,11 +41,12 @@ def history(r, last):
     return by
 
 for arch in archs:
-    for setup in ("-sep", "-sep-bbfrozen"):
+    arch2 = arch.removeprefix("arch2:") if arch.startswith("arch2:") else None
+    for setup in (("-sep-bbfrozen",) if arch2 else ("-sep", "-sep-bbfrozen")):
         a_, _, seed = arch.partition("@")   # "attnres@s1": the seed-1 copy (-vs-d48-s1-g4; Figure 8)
-        tag = setup + (f"-a{a_}" if a_ else "") + "-vs-d48" + (f"-{seed}" if seed else "") + "-g4"
+        tag = f"{setup}-a{arch2}-vs-d48" if arch2 else setup + (f"-a{a_}" if a_ else "") + "-vs-d48" + (f"-{seed}" if seed else "") + "-g4"
         try:
-            r = api.run(P + tag)
+            r = api.run(P.format(ARCH2_GPUS[arch2] if arch2 else 4) + tag)
         except Exception as e:
             if "not found" in str(e).lower() or "could not find" in str(e).lower():
                 print(tag, "not on W&B")
