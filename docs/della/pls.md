@@ -440,3 +440,21 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    Probes at 48 layers: no gradient reaches the backbone, but the 47 probe heads share the output head's gradient
    clipping group (MuonH adamh group, clip 1.0): the output head's gradient is scaled by 0.6-0.8 on most steps; the loss
    effect is unmeasured (audit 2026-10-11; PLS_OPT_SPLIT=1 separates them).
+
+## L6：优化器的实际设置（2026-10-22，Lean 跟进，不用 GPU）
+
+脚本：`scripts/della/pls_opt_effective.py`（CPU，构建真实的优化器类，常数取自 -vs-d48-g4 run 的 W&B config）和
+`docs/della/pls_archive/blog/opt_clip_groups.py`（读本地 W&B 文件里每 10 步记录的原始梯度范数）。
+
+1. weight_decay = 0.1 写在 config 里，但没有任何组用到它：0.1 和 0.0 的一步更新逐位相同。
+2. AdamH 组（lm_head 和全部探针/独立头）用 MuonH 的学习率 0.02，不用 adam_lr 0.008。Adam 组（embedding、所有 norm
+   增益、探针 norm）和 adam_new（HC/AttnRes 的路由参数）用 adam_lr。48 层：不 warmup，前 20% 恒定，后 80% 线性降到 0。
+3. 每组按自己的全局范数裁剪（阈值 1.0）。探针和 lm_head 同在 AdamH 组，探针 norm 和最终 norm 同在 Adam 组。
+   MuonH 层和路由参数不受探针梯度影响。eps = 1e-20 时，各步相同的裁剪系数在 Adam 里抵消，只有随步变化的系数起作用。
+4. 48 层探针 run（-sep-bbfrozen）：AdamH 组在 86–97% 的记录步上裁剪，不算探针时只有 0.2–1.2%。探针把主 lm_head
+   的裁剪系数乘上中位数 0.72–0.76（最小 0.06–0.11）。Adam、MuonH、adam_new 组几乎不变（≤ 1.8% 的步）。
+   所以"普通模型 + 探针"的主干只在 lm_head 的步长权重上和普通模型不同。6 层上这个差别使最终 eval loss 从 3.9686
+   变为 3.9704（+0.002 nats，单种子，在噪声内）。-os（PLS_OPT_SPLIT）去掉这个耦合；48 层探针 run 和新的
+   arch2 run 都没有用 -os，所以它们之间可以直接比较。
+5. 48 层独立头 run：HC 的路由参数（adam_new）每一步都裁剪（100%），探针 run 里 0%；Full AttnRes 72% 对 1.4%。
+   独立头损失给路由参数的梯度比主损失大得多。
