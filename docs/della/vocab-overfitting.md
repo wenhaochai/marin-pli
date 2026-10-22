@@ -168,3 +168,8 @@ Survey (2026-10-21, owner): docs/della/vocab_survey/reports/重复数据词表�
 
 
 Queue (2026-10-21, owner rule now in CLAUDE.md): GPU jobs go to the owner's queue wq (tools/wq), run by pilot hosts. The 11 pending jobs moved: drop-fp2 w1, drop02-fp2 w2, drop-fp2-rs w3, inzero-fp2 w4, inrand-fp2 w5, rs-mid w6, rs-v16k w7, cvd-trunc-mid w8, cvd-trunc-v16k w9, lazy-fp2 w10, repack w11; logs logs/slurm/<name>_w<n>.out. The 4-GPU plans no longer set CUDA_VISIBLE_DEVICES (a wq host assigns the GPUs). build_vocab_record.py reads wq ids through `wq show`.
+
+Bytes seed 1 (2026-10-21, 15832611, exact bpb): full 1.3712, rep8 1.3677 (seed 0: 1.3695 / 1.3736). Two-seed means full
+1.3704, rep8 1.3707: cost +0.0003 while the per-seed cost runs -0.0035 to +0.0041. Under the Q11 goal of 2026-10-21 (each
+tokenizer's 8 passes reach its own unique-token result) the byte vocabulary meets it with plain repetition, within seed
+noise. The 128K..8K tokenizers do not: best gaps 0.053 (128K), 0.019 (8K); 64K/32K/16K have no setup yet.
