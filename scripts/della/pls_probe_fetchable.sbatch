@@ -19,7 +19,7 @@
 # Fetched, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: the name comes from sacct.
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls-mtp
-if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' '); else NAME=$SLURM_JOB_NAME; fi
+if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=${FETCHED_JOB_NAME:-$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' ')}; else NAME=$SLURM_JOB_NAME; fi   # wq jobs: the host passes the name
 ROOT=/scratch/gpfs/GROUP/USER/marin_store_big/speedrun
 B130="SIZE=130m NUM_GPUS=8 PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=1 PLS_OPT_SPLIT=1 PLS_FUT=1 TOTAL_STEPS=2000"
 LAD="NUM_GPUS=8 PLS_W=0 PLS_EVAL=0 PDP=8"   # PDP 8: 24 probe heads keep every layer's output (the pls OOMs at 520m, 1_2b)
