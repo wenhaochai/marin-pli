@@ -68,6 +68,8 @@ for mode in ("zero", "rand"):
     assert np.allclose(actn(jnp.asarray(3), jr.PRNGKey(2)), ref, atol=1e-6)
     a7n, b7n = actn(jnp.asarray(7), jr.PRNGKey(2)), actn(jnp.asarray(7), jr.PRNGKey(3))
     assert not np.allclose(a7n, ref) and not np.allclose(a7n, b7n)
-    g = eqx.filter_grad(lambda m: (actn(jnp.asarray(7), jr.PRNGKey(2)) ** 2).mean())(mn)
+    g = eqx.filter_grad(loss)(mn, jnp.asarray(7))   # the model is the argument (the closure over mn checked nothing, 2026-10-22)
+    gl = jax.tree_util.tree_leaves(eqx.filter(g, eqx.is_array))
+    assert all(bool(jnp.isfinite(x).all()) for x in gl) and any(float(jnp.abs(x).max()) > 0 for x in gl), f"{mode}: grads not finite or all zero"
     print(mode, "ok: init, eval, before start identical; differs after; diff", float(jnp.abs(a7n - ref).max()))
 print("NOISE OK")
