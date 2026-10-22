@@ -74,7 +74,10 @@ export PACKED_LEDGER_DIR=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/packed
 
 [ -n "${SINGLE:-}" ] || { echo "set SINGLE"; exit 2; }
 for kv in $SINGLE; do [[ $kv =~ ^[A-Z_][A-Z0-9_]*=[^[:space:]]*$ ]] || { echo "bad assignment '$kv'"; exit 2; }; done
-[[ " $SINGLE " == *" SIZE="* && " $SINGLE " == *" NUM_GPUS=8 "* ]] || { echo "SINGLE needs SIZE and NUM_GPUS=8: '$SINGLE'"; exit 2; }
+# NUM_GPUS=4 for designs whose 8-GPU program stalls (HC and Full AttnRes under PARAM_MAP=vocab: a device thread misses
+# the first AllToAll rendezvous for 40 s and XLA aborts, wq w16/w17 2026-10-22); a 4-GPU job runs beside another on a host.
+[[ " $SINGLE " == *" SIZE="* && " $SINGLE " =~ \ NUM_GPUS=([48])\  ]] || { echo "SINGLE needs SIZE and NUM_GPUS=4 or 8: '$SINGLE'"; exit 2; }
+NG=${BASH_REMATCH[1]}
 nvidia-smi -L || true
 mkdir -p "$PACKED_LEDGER_DIR"; ledger=$PACKED_LEDGER_DIR/$SLURM_JOB_ID.tsv
 [[ -s $ledger ]] || printf 'task\trun\tkind\tgpus\tstart\tend\texit\n' > "$ledger"
@@ -120,7 +123,7 @@ if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then echo
 slog=logs/slurm/${JNAME}_${JID}_smoke.log
 r=0
 # shellcheck disable=SC2086
-env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s bash $PT smoke - other 8 $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
 echo "smoke $smoke_id exited rc=$r $(date +%H:%M:%S)"
 if [[ $smoke_id == *-j${JID}s-smoke$SMOKE ]]; then
   rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
@@ -153,7 +156,7 @@ TRAIN_LIMIT=$(( JOB_MIN * 60 - SECONDS - 300 ))s
 echo "training limit $TRAIN_LIMIT"
 log=logs/slurm/${JNAME}_${JID}_train.log
 # shellcheck disable=SC2086
-setsid env $SINGLE bash $PT train "${rid#muonh-qwen3-}" main 8 "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
+setsid env $SINGLE bash $PT train "${rid#muonh-qwen3-}" main $NG "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
 pid=$!
 watchdog "$pid" "$log" & dog=$!
 echo "run $rid [$SINGLE]: pid $pid $(date +%H:%M:%S)"
