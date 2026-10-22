@@ -396,6 +396,8 @@ EMBED_WD_PERIOD = float(os.environ.get("EMBED_WD_PERIOD", "0"))
 EMBED_WD_FROM_PASS = int(os.environ.get("EMBED_WD_FROM_PASS", "0"))
 # LR_MULT=m with LR_MULT_FROM_PASS=p (survey idea 10, owner popup 2026-10-21): from the first update of repeated pass p,
 # the main learning rate (MuonH linears and AdamH head; not adam_lr) times m, cosine shape kept (LrMultMuonHConfig). Tag -lrx<m>-fp<p>.
+# On a unique-token run (DATA_EPOCHS unset; owner popup 2026-10-22, the control for the 8K x2 result) the change starts at
+# the same step, total steps / 8 * (p - 1), where pass p would start in the 8-pass run.
 LR_MULT = float(os.environ.get("LR_MULT", "0"))
 LR_MULT_FROM_PASS = int(os.environ.get("LR_MULT_FROM_PASS", "0"))
 # CVD_RATE_COUNT=C (survey idea 4, owner popup 2026-10-21): with VARIANT=cvd on the Marin tokenizer at 300m, a rare token
@@ -711,8 +713,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if CVD_RATE_COUNT and not (VARIANT == "cvd" and not VOCAB_K and CVD_RATE_COUNT > 0 and size == "300m"):
         raise ValueError(f"CVD_RATE_COUNT={CVD_RATE_COUNT}: > 0, only with VARIANT=cvd on the Marin tokenizer at 300m (the subset counts)")
     if LR_MULT:
-        if not (VARIANT == "baseline" and DATA_EPOCHS == 8 and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= LR_MULT_FROM_PASS <= 7 and LR_MULT > 0):
-            raise ValueError(f"LR_MULT={LR_MULT}, LR_MULT_FROM_PASS={LR_MULT_FROM_PASS}: factor > 0 and pass 2..7, only with VARIANT=baseline, DATA_EPOCHS=8 and equal passes")
+        if not (VARIANT == "baseline" and DATA_EPOCHS in (0, 8) and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= LR_MULT_FROM_PASS <= 7 and LR_MULT > 0):
+            raise ValueError(f"LR_MULT={LR_MULT}, LR_MULT_FROM_PASS={LR_MULT_FROM_PASS}: factor > 0 and pass 2..7, only with VARIANT=baseline, unique tokens or DATA_EPOCHS=8 with equal passes")
         opt_cls, opt_extra = LrMultMuonHConfig, dict(lr_mult=LR_MULT, lr_mult_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (LR_MULT_FROM_PASS - 1))
     if DTP:
         if not (VARIANT == "baseline" and not VOCAB_K and DATA_EPOCHS == 8 and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= DTP_FROM_PASS <= 7 and DTP > 0):
