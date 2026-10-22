@@ -67,6 +67,7 @@ from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
+from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
 from experiments.references.table_variants_qwen3 import (ComposedBothResidualQwen3Config, ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
                                                          LowRankQwen3Config, RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
@@ -309,7 +310,7 @@ INOISE_P = float(os.environ.get("INOISE_P", "0.1"))
 INOISE_MODE = os.environ.get("INOISE_MODE", "zero")
 INOISE_FROM_PASS = int(os.environ.get("INOISE_FROM_PASS", "0"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
-if PASS_DATA and not (PASS_DATA == "rs" or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
+if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
@@ -375,8 +376,16 @@ def _small_vocab_data(k: int, train_names, validation_names):
         components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
-if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd") and VOCAB_K:
+if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
+# VARIANT=cvd on a truncation (survey idea 1, owner popup 2026-10-21): the 64K, 32K and 16K tokenizers are prefixes of the
+# Marin tokenizer, so their rare tokens (ids CV_K and up) are replaced by the 8K pieces through the cut map expand_v<K>k.npz
+# (vocab_cut_expand_map.py)
+if VARIANT == "cvd" and VOCAB_K not in (0, 16000, 32000, 64000):
+    raise ValueError(f"VARIANT=cvd with VOCAB_K={VOCAB_K}: the Marin tokenizer or its 64K, 32K or 16K truncation")
+# LAZY_EMBED_FROM_PASS=p (survey idea 6, owner popup 2026-10-21): from the first update of repeated pass p of 8, input
+# embedding rows of tokens absent from the batch get no update (LazyEmbedMuonHConfig; Adam moments decay as before). Tag -lazyfp<p>.
+LAZY_EMBED_FROM_PASS = int(os.environ.get("LAZY_EMBED_FROM_PASS", "0"))
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -454,6 +463,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "") + (f"-oslow{CVR_OUT_SLOW:g}" if CVR_OUT_SLOW else "")
     if VARIANT == "cvd":
         variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
+    if LAZY_EMBED_FROM_PASS:
+        variant_tags += f"-lazyfp{LAZY_EMBED_FROM_PASS}"
     if VARIANT == "inoise":
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "drop":
@@ -575,7 +586,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "cvd":
         if TIE:
             raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
-        model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", cvd_p=CVD_P, cvd_seed=SEED, cvd_mode=CVD_MODE,
+        model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/" + (f"expand_v{VOCAB_K // 1000}k.npz" if VOCAB_K else "expand_full.npz"), cvd_p=CVD_P, cvd_seed=SEED, cvd_mode=CVD_MODE,
                                                        cvd_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (CVD_FROM_PASS - 1) if CVD_FROM_PASS else 0)
     elif VARIANT == "inoise":
         model_cls, model_extra = InputNoiseQwen3Config, dict(noise_p=INOISE_P, noise_mode=INOISE_MODE,
@@ -657,6 +668,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if CVR_OUT_SLOW:   # the rare output rows of the cvr model, slowed as in G
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=FO_K, freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (FOP_FROM_PASS - 1),
                                                          freeze_block_norm=True, freeze_rare_scale=CVR_OUT_SLOW)
+    if LAZY_EMBED_FROM_PASS:
+        if not (VARIANT == "baseline" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= LAZY_EMBED_FROM_PASS <= 7):
+            raise ValueError(f"LAZY_EMBED_FROM_PASS={LAZY_EMBED_FROM_PASS}: 2..7, only with VARIANT=baseline, DATA_EPOCHS=8 and equal passes")
+        opt_cls, opt_extra = LazyEmbedMuonHConfig, dict(lazy_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (LAZY_EMBED_FROM_PASS - 1))
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(

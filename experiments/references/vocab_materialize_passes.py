@@ -10,11 +10,15 @@ config: same caches, linear permutation, data seed, max_train_batches) and write
   passes 2-8 (MODE=rs): the same sequences, each pass in a new random order (seed 10000 + pass);
   passes 2-8 (MODE=bpd): each pass in the same new order as rs, every sequence re-segmented with BPE-dropout P (the
            Marin tokenizer with ignore_merges off, so a word in the vocabulary can split too); the re-segmented text is
-           concatenated and cut into SEQ_LEN windows again (more tokens than the original, so more windows).
+           concatenated and cut into SEQ_LEN windows again (more tokens than the original, so more windows);
+  passes 2-8 (MODE=repack, survey idea 5, owner popup 2026-10-21): the subset's windows are cut into pieces before every
+           BOS token (a window edge also ends a piece, since neighbouring windows are not neighbouring text), the pieces
+           of each pass are shuffled (seed 20000 + pass) and packed into SEQ_LEN windows again, so the documents meet new
+           neighbours and new window edges; a pass has exactly the subset's tokens and windows.
 Each written document is one SEQ_LEN window, so Levanter's token dataset reads them back window for window. The training
 run (della_muonh_qwen3_scaling.py PASS_DATA=rs | bpd<P>) reads this cache in order with no shuffle.
 
-    SIZE=300m [VOCAB_K=8000] MODE=rs|bpd [P=0.1] python -m experiments.references.vocab_materialize_passes
+    SIZE=300m [VOCAB_K=8000] MODE=rs|repack|bpd [P=0.1] python -m experiments.references.vocab_materialize_passes
 Writes MARIN_PREFIX/materialized/<size>[-v<K>k|-bytes]-rep8-<rs|bpd<P>>/{train,meta.json}. Checks at the end: pass 1 equals the
 subset; every rs pass is a permutation of it; a sample of bpd windows decodes to the original text (window edges aside).
 """
@@ -33,9 +37,10 @@ P = float(os.environ.get("P", "0.1"))
 SIZE = os.environ.get("SIZE", "300m")
 K = int(os.environ.get("VOCAB_K", "0"))
 PASSES, SEQ = 8, 4096
-if MODE not in ("rs", "bpd") or (MODE == "bpd" and (K or not 0 < P < 1)):
-    raise ValueError("MODE=rs (any vocabulary) or MODE=bpd with 0 < P < 1 (the Marin tokenizer)")
-TAG = "rs" if MODE == "rs" else f"bpd{P:g}"
+if MODE not in ("rs", "bpd", "repack") or (MODE == "bpd" and (K or not 0 < P < 1)):
+    raise ValueError("MODE=rs or repack (any vocabulary) or MODE=bpd with 0 < P < 1 (the Marin tokenizer)")
+TAG = MODE if MODE in ("rs", "repack") else f"bpd{P:g}"
+BOS = (K or 128000) if K != 256 else 256   # the first special of each tokenizer opens a document (checked in the subset)
 # the run's own data config, without PASS_DATA (that is what reads this cache)
 for k in ("PASS_DATA", "VARIANT", "SMOKE_STEPS", "TOTAL_STEPS", "SEQ_LEN", "BATCH", "TPP", "SEED"):
     os.environ.pop(k, None)
@@ -79,6 +84,24 @@ def subset():
 
 def order(e, n):
     return np.arange(n) if e == 1 else np.random.default_rng(10000 + e).permutation(n)
+
+
+def repack(rows, e):
+    """The windows ``rows`` [n, SEQ] cut before every BOS, the pieces shuffled with seed 20000 + e and packed into n
+    windows again (the same tokens, new neighbours and new window edges)."""
+    n = len(rows)
+    flat = rows.reshape(-1)
+    starts = np.union1d(np.flatnonzero(flat == BOS), np.arange(0, n * SEQ, SEQ))
+    ends = np.append(starts[1:], n * SEQ)
+    perm = np.random.default_rng(20000 + e).permutation(len(starts))
+    out = np.empty_like(flat)
+    pos = 0
+    for i in perm:
+        a, b = starts[i], ends[i]
+        out[pos:pos + b - a] = flat[a:b]
+        pos += b - a
+    assert pos == n * SEQ
+    return out.reshape(n, SEQ), len(starts)
 
 
 def bpd_tools():
@@ -151,6 +174,14 @@ def main():
                     w.write_batch([{"input_ids": r} for r in sub[o[a:a + 8192]]])
                 meta["pass_sequences"].append(n)
                 continue
+            if MODE == "repack":
+                rp, pieces = repack(sub, e)
+                for a in range(0, n, 8192):
+                    w.write_batch([{"input_ids": r} for r in rp[a:a + 8192]])
+                meta["pass_sequences"].append(n)
+                meta.setdefault("pieces", []).append(pieces)
+                print(f"pass {e}: {pieces} pieces repacked, {time.time() - t0:.0f}s", flush=True)
+                continue
             written = 0
             for a in range(0, n, 8192):   # windows of the re-segmented stream; a pass's tail carries into the next chunk
                 stream, bad = resegment(sub[o[a:a + 8192]], *tools)
@@ -170,7 +201,15 @@ def main():
     idx = np.random.default_rng(0).choice(n, 64, replace=False)
     got = np.stack([np.asarray(x["input_ids"]) for x in c.get_batch_sync(idx.tolist())])
     assert np.array_equal(got, sub[idx]), "pass 1 differs from the subset"
-    if MODE == "rs":
+    if MODE == "repack":
+        assert int((sub == BOS).sum()) > n // 4, f"BOS={BOS} is rare in the subset: wrong document separator"
+        for e in (2, PASSES):
+            start = (e - 1) * n
+            got = np.stack([np.asarray(x["input_ids"]) for x in c.get_batch_sync(list(range(start, start + n)))])
+            assert np.array_equal(np.bincount(got.reshape(-1), minlength=int(sub.max()) + 1), np.bincount(sub.reshape(-1), minlength=int(sub.max()) + 1)), f"pass {e} has other tokens than the subset"
+            assert not np.array_equal(got[:64], sub[:64]), f"pass {e} starts like the subset: no repacking"
+        meta["check_token_counts_equal"] = True
+    elif MODE == "rs":
         for e in (2, PASSES):
             o = order(e, n); start = (e - 1) * n
             got = np.stack([np.asarray(x["input_ids"]) for x in c.get_batch_sync([start + int(i) for i in idx])])
