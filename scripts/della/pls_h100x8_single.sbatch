@@ -54,8 +54,10 @@ SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # stops it at that --time); the ledger stays the host's.
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 if [ -n "${FETCHED_JOB_ID:-}" ]; then
-  lim=$(sacct -X -n -j "$FETCHED_JOB_ID" -o Timelimit | head -1 | tr -d ' ')
-  JNAME=$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' ')
+  # wq jobs (w<n>, owner 2026-10-21) are not in sacct: the host passes the name and the end time, Slurm guests too
+  JNAME=${FETCHED_JOB_NAME:-$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' ')}
+  if [[ ${SLURM_JOB_END_TIME:-} =~ ^[0-9]+$ ]]; then lim=$(( (SLURM_JOB_END_TIME - $(date +%s)) / 60 ))
+  else lim=$(sacct -X -n -j "$FETCHED_JOB_ID" -o Timelimit | head -1 | tr -d ' '); fi
 else
   lim=$(squeue -h -j "$SLURM_JOB_ID" -o %l); JNAME=$SLURM_JOB_NAME   # the job's own --time: [D-]HH:MM:SS
 fi
