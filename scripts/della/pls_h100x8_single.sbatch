@@ -111,7 +111,7 @@ watchdog() {
 smoke_id=$(run_id "PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s")
 [[ $smoke_id == *-j${JID}s-smoke$SMOKE ]] || { echo "bad smoke run id '$smoke_id'"; exit 2; }
 rid=$(run_id)
-[[ $rid == muonh-qwen3-*-della8xh100-* ]] || { echo "bad run id '$rid'"; exit 2; }
+[[ $rid == muonh-qwen3-*-della${NG}xh100-* ]] || { echo "bad run id '$rid'"; exit 2; }
 out=$MARIN_PREFIX/speedrun/$rid/2026.09.13
 FAILDIR=logs/pair_failed; mkdir -p "$FAILDIR"
 [ ! -e "$FAILDIR/$rid.fail" ] || { echo "an earlier job of this run failed its smoke: $(cat "$FAILDIR/$rid.fail"); not running"; exit 6; }
