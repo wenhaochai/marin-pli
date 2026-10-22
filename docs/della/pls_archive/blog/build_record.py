@@ -81,11 +81,12 @@ RUNS = [
           ("NTP + MTP", "520m", 24, "w13", "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917"),   # wq (was 15952440)
           ("NTP", "1_2b", 16, [15760472, 15760473, 15832439, 15907475], "1_2b-della8xh100-pls0-noev-probes1000at22887"),
           ("NTP + MTP", "1_2b", 16, [15779949, 15779950, 15832441, 15907476, 15907916], "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
-    # Lean follow-ups at 48 layers (owner popups 2026-10-21): one new arm each beside the -vs-d48-g4 ordinary controls, 8 GPUs
-    *[(S(en, zh), "130m", 48, 2.6, 8, ("wq", jids, f"130m-della8xh100-pls1-sep-bbfrozen-{tag}-vs-d48"), fig) for en, zh, jids, tag, fig in [
-        ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", "w15", "apreln-gilns", "36"),
-        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", "w16", "ahc-rstatic", "37"),
-        ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", "w17", "aattnres-rstatic", "37")]],
+    # Lean follow-ups at 48 layers (owner popups 2026-10-21): one new arm each beside the -vs-d48-g4 ordinary controls.
+    # hc and attnres run on 4 GPUs like their controls: on 8 their first step aborted in XLA (w16, w17, other compute).
+    *[(S(en, zh), "130m", 48, 2.6, g, ("wq", jids, f"130m-della{g}xh100-pls1-sep-bbfrozen-{tag}-vs-d48"), fig) for en, zh, g, jids, tag, fig in [
+        ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", 8, "w15", "apreln-gilns", "36"),
+        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", 4, "w27", "ahc-rstatic", "37"),
+        ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", 4, "w28", "aattnres-rstatic", "37")]],
     (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("wq", "w14", "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
