@@ -185,3 +185,9 @@ RESULT lrx 8K (w49, w51; 2026-10-22, exact bpb, seed 0, rep8): main lr x1.5 from
 against plain 1.4769 and unique 1.4539. The 8K cost falls 0.0230 -> 0.0181 (x1.5) -> 0.0080 (x2), the best 8K setup so
 far and the first to remove most of the 8K cost. Open: the unique-token run at the same lr x2 from the same step (if a
 larger late lr also helps unique tokens, the cost is not what fell); x3; 128K halves w48/w50 still queued.
+Follow-ups queued 2026-10-22 (owner popup): w54 8K unique tokens lr x2 from total/8 (the control), w55 8K lr x3,
+w56/w57/w58 16K/32K/64K lr x2; code 310c596088 lets LR_MULT run on unique tokens.
+
+RESULT 16K (w7 rs, w9 cvd fp2 + rs; 2026-10-22, exact bpb, seed 0, rep8; plain 1.4665, unique 1.4229): rs 1.4532 (cost
+0.0436 -> 0.0303), cvd fp2 + rs 1.4435 (cost 0.0206, best 16K). Same pattern as 64K and 32K: rs helps, random replacement
+with rs helps more, about half the cost stays.
