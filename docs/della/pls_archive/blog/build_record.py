@@ -69,7 +69,7 @@ RUNS = [
     # post-hoc probes of the finished models (Figure 18): fresh next-token and x_{t+2} heads on the frozen final checkpoint,
     # 1B tokens each. The 520m and 1_2b probes are submitted when their training runs finish.
     *[(S(f"Probes on the finished {a} model", f"在训练完的 {a} 模型上加探针"), size, layers, 1.0, 8,
-       ("chain", jid, rid) if isinstance(jid, list) else ("slurm", jid, rid) if jid else ("planned", None, rid), "21")
+       ("chain", jid, rid) if isinstance(jid, list) else ("wq", jid, rid) if str(jid).startswith("w") else ("slurm", jid, rid) if jid else ("planned", None, rid), "21")
       for a, size, layers, jid, rid in [
           ("NTP", "130m", 6, 15591508, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958"),
           ("NTP + MTP", "130m", 6, 15591509, "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958"),
@@ -77,16 +77,16 @@ RUNS = [
           ("NTP + MTP", "300m", 12, 15690439, "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443"),
           # 520m: the first probe runs (15716064 -> 15738658, 15699612 -> 15738657) read the frozen head at 9.8 nats under
           # FSDP (2026-10-21); their jobs are other compute, and the reruns keep every layer whole on each GPU (-vs)
-          ("NTP", "520m", 24, 15952439, "520m-della8xh100-pls0-noev-vs-probes1000at9917"),
-          ("NTP + MTP", "520m", 24, 15952440, "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917"),
+          ("NTP", "520m", 24, "w12", "520m-della8xh100-pls0-noev-vs-probes1000at9917"),   # wq (was Slurm 15952439)
+          ("NTP + MTP", "520m", 24, "w13", "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917"),   # wq (was 15952440)
           ("NTP", "1_2b", 16, [15760472, 15760473, 15832439, 15907475], "1_2b-della8xh100-pls0-noev-probes1000at22887"),
           ("NTP + MTP", "1_2b", 16, [15779949, 15779950, 15832441, 15907476, 15907916], "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887")]],
     # Lean follow-ups at 48 layers (owner popups 2026-10-21): one new arm each beside the -vs-d48-g4 ordinary controls, 8 GPUs
-    *[(S(en, zh), "130m", 48, 2.6, 8, ("chain", jids, f"130m-della8xh100-pls1-sep-bbfrozen-{tag}-vs-d48"), fig) for en, zh, jids, tag, fig in [
-        ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", [15954024, 15954025], "apreln-gilns", "36"),
-        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", [15954026, 15954027], "ahc-rstatic", "37"),
-        ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", [15954028, 15954029, 15954030], "aattnres-rstatic", "37")]],
-    (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("slurm", 15953858, "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
+    *[(S(en, zh), "130m", 48, 2.6, 8, ("wq", jids, f"130m-della8xh100-pls1-sep-bbfrozen-{tag}-vs-d48"), fig) for en, zh, jids, tag, fig in [
+        ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", "w15", "apreln-gilns", "36"),
+        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", "w16", "ahc-rstatic", "37"),
+        ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", "w17", "aattnres-rstatic", "37")]],
+    (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("wq", "w14", "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
     (S("Separate heads, both", "独立头，两者都用"), "130m", 6, 2.6, 4, ("slurm", 14998753, "130m-della4xh100-pls0.2-sep-local"), "12"),
@@ -156,6 +156,19 @@ STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), 
          "PAUSED": S("Paused, resume queued", "暂停，续跑已排队"), "PARTLY": S("Partly done", "部分完成")}
 OK_EXIT = {"0", "124", "143"}   # training-task exits that count for the run (see the docstring)
 api = wandb.Api(timeout=300)
+
+
+WQ = "/scratch/gpfs/GROUP/USER/tools/wq/wq"   # GPU jobs go to wq since 2026-10-21 (owner): ids w<n>, not in sacct
+
+
+def wq_state(wid):
+    """A wq job's state as the Slurm word this file uses (queued -> PENDING, running -> RUNNING, done -> COMPLETED; failed,
+    cancelled or lost -> failed); fails loudly when wq gives nothing."""
+    res = subprocess.run([WQ, "state", str(wid)], capture_output=True, text=True, timeout=120)
+    st = res.stdout.strip()
+    if res.returncode != 0 or not st:
+        raise RuntimeError(f"wq gave nothing for job {wid}: rc={res.returncode} stderr={res.stderr.strip()[:200]}")
+    return {"queued": "PENDING", "running": "RUNNING", "done": "COMPLETED"}.get(st, "failed")
 
 
 def sacct(jid):
@@ -298,6 +311,11 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
         state = st if st in ("COMPLETED", "RUNNING", "PENDING") else ("PARTLY" if ok else "failed")
         run = wandb_run(src[3]) if src[3] and ok else None
         rid = src[3] or rid
+    elif kind == "wq":   # a wq job (run by a pilot host): its training tasks sit in the host's ledger under the run id
+        state = wq_state(ref)
+        hours = sum(int(t["end"]) - int(t["start"]) for t in TASKS if t["run"] == rid and t["kind"] == "main" and t["exit"] in OK_EXIT) / 3600
+        if state == "failed":
+            state, hours, run = "planned", 0.0, None
     elif kind == "slurm" and str(ref) in FETCH:   # run by a host job (fetch_pending.sh)
         F = FETCH[str(ref)]
         state = "COMPLETED" if F["exit"] == "0" else "planned"
