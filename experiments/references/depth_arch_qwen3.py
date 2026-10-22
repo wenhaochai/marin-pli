@@ -46,6 +46,14 @@ Two variants (config fields, default off; tests: scripts/della/depth_arch_varian
                            attnres's init), with no dependence on the token. Both equal their dynamic design at init.
     depth_gain_init="lns"  preln with the pre-norm scales of layer l (1-based) initialised to 1/sqrt(l): lns's function
                            at init, with Pre-LN's parametrisation (each Adam step on a scale is not divided by sqrt(l)).
+    depth_gain_init="lns_bf16"  the same with the factor lns multiplies by in the forward, bf16(1/sqrt(l)) (lns casts it to
+                           the compute dtype), so that the scales start exactly where lns's converted scales start.
+    LnsStepMuonHConfig     MuonH whose two pre-norm scales of layer l take lns's steps: their gradient is multiplied by
+                           c_l = bf16(1/sqrt(l)) before the Adam group's clip and Adam, and their update by c_l after. With
+                           depth_gain_init="lns_bf16" this is lns written in Pre-LN's parameters (g' = c_l g): the same
+                           function, the same clip factor (the clip sees lns's gradients), the same Adam direction (Adam is
+                           scale-free per coordinate up to eps 1e-20), so the same trajectory up to rounding (Lean
+                           ArchLean.PracTrain; tests: scripts/della/lns_equiv_test.py).
 
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
 the sum of the streams for hc and mhc; for attnres the mix the next layer's attention reads (after the last layer, the
@@ -451,10 +459,11 @@ class DepthArchTransformer(eqx.Module):
         is_named = lambda x: isinstance(x, NamedArray)  # noqa: E731
         stacked = jax.tree_util.tree_map(lambda *xs: hax.stack(config.Layers, xs), *blocks, is_leaf=is_named)
         gain_init = getattr(config, "depth_gain_init", "one")
-        if gain_init not in ("one", "lns") or (gain_init == "lns" and arch != "preln"):
-            raise ValueError(f"depth_gain_init must be 'one', or 'lns' with preln; got {gain_init!r} with {arch!r}")
-        if gain_init == "lns":  # layer l (1-based) starts at lns's 1/sqrt(l), in both pre-norm scales
-            f = hax.named(1.0 / jnp.sqrt(jnp.arange(1, config.num_layers + 1, dtype=jnp.float32)), config.Layers)
+        if gain_init not in ("one", "lns", "lns_bf16") or (gain_init != "one" and arch != "preln"):
+            raise ValueError(f"depth_gain_init must be 'one', or 'lns' / 'lns_bf16' with preln; got {gain_init!r} with {arch!r}")
+        if gain_init != "one":  # layer l (1-based) starts at lns's 1/sqrt(l), in both pre-norm scales
+            f = 1.0 / jnp.sqrt(jnp.arange(1, config.num_layers + 1, dtype=jnp.float32))
+            f = hax.named(lns_factor(config.num_layers, jnp.bfloat16) if gain_init == "lns_bf16" else f, config.Layers)
             stacked = eqx.tree_at(lambda b: (b.ln_1.weight, b.ln_2.weight), stacked, (stacked.ln_1.weight * f, stacked.ln_2.weight * f))
         static = attnres and _static(config)
         if static and arch != "attnres":
@@ -717,6 +726,60 @@ class DepthArchMuonHConfig(MuonHConfig):
             return "adam_new" if label == "adam" and any(f in path_str for f in _NEW_PARAMS) else label
 
         return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
+
+
+def lns_factor(n, dtype):
+    """lns's forward factor of layers 1..n as the forward applies it: rsqrt(layer + 1) (0-based layer) in float32, cast to
+    the compute dtype (DepthArchLayer.branch), returned in float32."""
+    return jax.lax.rsqrt(jnp.arange(n, dtype=jnp.float32) + 1.0).astype(dtype).astype(jnp.float32)
+
+
+def _is_prenorm_scale(path) -> bool:
+    k = jax.tree_util.keystr(path)
+    return ".layers" in k and ".stacked" in k and (".ln_1" in k or ".ln_2" in k) and ".weight" in k
+
+
+def scale_prenorm_scales(dtype):
+    """Multiplies the stacked pre-norm scales' entries of layer l (leading axis) by lns_factor; everything else passes."""
+
+    def f(tree):
+        def one(path, x):
+            if x is None or not hasattr(x, "shape") or not _is_prenorm_scale(path):
+                return x
+            c = lns_factor(x.shape[0], dtype).astype(x.dtype)
+            return x * c.reshape((-1,) + (1,) * (x.ndim - 1))
+
+        return jax.tree_util.tree_map_with_path(one, tree)
+
+    return optax.GradientTransformation(lambda params: optax.EmptyState(), lambda updates, state, params=None: (f(updates), state))
+
+
+@OptimizerConfig.register_subclass("muonH_lns_step")
+@dataclass(frozen=True)
+class LnsStepMuonHConfig(MuonHConfig):
+    """MuonHConfig, except that the two pre-norm scales of layer l take lns's steps (module docstring): gradient times c_l
+    before the groups' clips, update times c_l after. Only the pre-norm scales change; every group keeps MuonHConfig's
+    transforms. lns_step_dtype: the dtype lns's factor is cast to in the forward (the compute dtype)."""
+
+    lns_step_dtype: str = "bfloat16"
+
+    def build(self, num_train_steps):
+        learning_rate_schedule = self.lr_scheduler(num_train_steps)
+        adam_lr_schedule = self.lr_scheduler(num_train_steps, override_lr=self.adam_lr)
+        dt = jnp.dtype(self.lns_step_dtype)
+
+        def optimizer(learning_rate, adam_lr):
+            def clip():
+                return [optax.clip_by_global_norm(self.max_grad_norm)] if self.max_grad_norm else []
+
+            transformations = {
+                "muonh": optax.chain(*clip(), scale_with_muonh(self.momentum, self.nesterov, self.backend_steps, self.muon_epsilon, learning_rate, self.coefficient_type)),
+                "adamh": optax.chain(*clip(), scale_by_adamh(self.beta1, self.beta2, self.epsilon, learning_rate)),
+                "adam": optax.chain(*clip(), optax.scale_by_adam(self.beta1, self.beta2, self.epsilon), optax.scale(-adam_lr)),
+            }
+            return optax.chain(scale_prenorm_scales(dt), optax.multi_transform(transformations, self.create_mask), scale_prenorm_scales(dt))
+
+        return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
 
 
 @OptimizerConfig.register_subclass("muonH_depth_arch_split")

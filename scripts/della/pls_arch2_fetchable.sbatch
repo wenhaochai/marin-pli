@@ -19,6 +19,9 @@
 #   arch2-preln-gilns     Pre-LN whose pre-norm scales start at lns's 1/sqrt(l)   (L1; controls: -apreln-, -alns-)
 #   arch2-hc-static       HC with the dynamic terms dropped                      (L2; control: -ahc-)
 #   arch2-attnres-static  Full AttnRes with per-sublayer source logits            (L2; control: -aattnres-)
+#   arch2-preln-lnsequiv  Pre-LN with lns's start, steps and clip: lns in Pre-LN's parameters (L1 completed; owner
+#                         2026-10-22 "做到和理论一样"; theory: the same trajectory as -alns- up to rounding)
+#   arch2-preln-slns      Pre-LN with lns's steps and clip, scales start at 1 (L1: the step's share measured directly)
 # Resumable: submit each as an afterany chain with --comment=fetchable-partial; a later job of a finished run exits at
 # once. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run; ledger, SUCCESS skip, crash marker).
 set -euo pipefail
@@ -29,6 +32,8 @@ D48="SIZE=130m LAYERS=48 PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=1 PARAM_MAP=vocab"
 # first AllToAll rendezvous for 40 s, wq w16 and w17 on two nodes, 2026-10-22). 4 GPUs is also their controls' layout.
 case $NAME in
   arch2-preln-gilns) S="$D48 NUM_GPUS=8 PDP=4 ARCH=preln GAIN_INIT=lns";;
+  arch2-preln-lnsequiv) S="$D48 NUM_GPUS=8 PDP=4 ARCH=preln GAIN_INIT=lns_bf16 GAIN_STEP=lns";;
+  arch2-preln-slns) S="$D48 NUM_GPUS=8 PDP=4 ARCH=preln GAIN_STEP=lns";;
   arch2-hc-static) S="$D48 NUM_GPUS=4 PDP=4 ARCH=hc ROUTE=static";;          # PARAM_MAP runs hc at microbatch 1, as its control
   arch2-attnres-static) S="$D48 NUM_GPUS=4 PDP=2 ARCH=attnres ROUTE=static";;  # likewise attnres
   *) echo "unknown arch2 job name '$NAME'"; exit 2;;

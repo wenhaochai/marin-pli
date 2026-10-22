@@ -238,11 +238,15 @@ if PLS_OPT_SPLIT and not (VARIANT == "pls" and PLS_SEP):
 ARCH = os.environ.get("ARCH", "")
 # ROUTE=static (ARCH=hc or attnres): routing by learned constants only, no dependence on the token. Tag -rstatic.
 # GAIN_INIT=lns (ARCH=preln): the pre-norm scales of layer l start at 1/sqrt(l), lns's function at init. Tag -gilns.
-# Both: depth_arch_qwen3 docstring; the Lean session's L1 / L2 follow-ups (owner popup 2026-10-21).
+# GAIN_INIT=lns_bf16: the same factor as lns's forward applies it, bf16(1/sqrt(l)). Tag -gilnsbf.
+# GAIN_STEP=lns (ARCH=preln): the pre-norm scales take lns's steps and lns's clip (depth_arch_qwen3.LnsStepMuonHConfig).
+# Tag -slns. GAIN_INIT=lns_bf16 with GAIN_STEP=lns is lns in Pre-LN's parameters (owner 2026-10-22: "做到和理论一样").
+# All: depth_arch_qwen3 docstring; the Lean session's L1 / L2 follow-ups (owner popup 2026-10-21).
 ROUTE = os.environ.get("ROUTE", "dynamic")
 GAIN_INIT = os.environ.get("GAIN_INIT", "one")
-if ROUTE not in ("dynamic", "static") or GAIN_INIT not in ("one", "lns") or (ROUTE != "dynamic" and ARCH not in ("hc", "attnres")) or (GAIN_INIT != "one" and ARCH != "preln"):
-    raise ValueError(f"ROUTE=static needs ARCH hc or attnres, GAIN_INIT=lns needs ARCH preln; got ROUTE={ROUTE} GAIN_INIT={GAIN_INIT} ARCH={ARCH}")
+GAIN_STEP = os.environ.get("GAIN_STEP", "one")
+if ROUTE not in ("dynamic", "static") or GAIN_INIT not in ("one", "lns", "lns_bf16") or GAIN_STEP not in ("one", "lns") or (ROUTE != "dynamic" and ARCH not in ("hc", "attnres")) or ((GAIN_INIT != "one" or GAIN_STEP != "one") and ARCH != "preln"):
+    raise ValueError(f"ROUTE=static needs ARCH hc or attnres, GAIN_INIT / GAIN_STEP need ARCH preln; got ROUTE={ROUTE} GAIN_INIT={GAIN_INIT} GAIN_STEP={GAIN_STEP} ARCH={ARCH}")
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "pls", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -304,7 +308,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + ("-gilns" if GAIN_INIT == "lns" else "") + ("-os" if PLS_OPT_SPLIT else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-os" if PLS_OPT_SPLIT else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -415,7 +419,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
     # every other run, the baseline included, keeps MuonHConfig exactly.
-    if ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
+    if GAIN_STEP == "lns" and (PLS_OPT_SPLIT or HEADS_FROM):
+        raise ValueError("GAIN_STEP=lns has its own optimizer; not with PLS_OPT_SPLIT or HEADS_FROM")
+    if GAIN_STEP == "lns":
+        from experiments.references.depth_arch_qwen3 import LnsStepMuonHConfig as _Opt
+    elif ARCH in ("hc", "mhc", "attnres", "attnres_block") and PLS_OPT_SPLIT:
         from experiments.references.depth_arch_qwen3 import DepthArchSplitAuxMuonHConfig as _Opt
     elif ARCH in ("hc", "mhc", "attnres", "attnres_block"):
         from experiments.references.depth_arch_qwen3 import DepthArchMuonHConfig as _Opt
