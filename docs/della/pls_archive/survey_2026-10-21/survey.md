@@ -160,6 +160,8 @@
 
 ## 5. 研究者标出的差异与注意事项
 
+> 2026-10-22 更正（A1 已做，见 pls.md "A1" 一节）：C1、C2 和第 0 节第 3 条比较的是 query 长度 |w|，没有乘 √H。打分尺度是 s = |w|·√H（H：我们 512，K3 7168）。按 s 算，K3（中位数 17.7）比我们的模型（8.5–12.2）更大，读法也更锐；"K3 query 短所以读法软"不成立。"尺度决定锐度"在用 s 时成立（块源模型 Spearman −0.80）。
+
 ### 5.1 项目内部
 
 - **第 44 层的数字有四个版本。** 只从第 48 层 MLP 的读取中移除该源：8.95 nats。删除第 44 层：8.99 nats。DEPTHMED 中删除后的绝对 CE：12.34（约等于基线 + 8.99，隐含基线约 3.35）。Lean 引用 12.43 与 12.44 nats，看起来是绝对 CE，不是增量，尚不确定（[DEPTHMED](/scratch/gpfs/GROUP/USER/tmp/pls_blog/depthmed/attnres-ord.json)；[LEAN](/scratch/gpfs/GROUP/USER/project/resnext-lean/README.md)）。写作前需统一定义。
