@@ -69,6 +69,8 @@ from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
 from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
 from experiments.references.embed_wd_muonh import EmbedWDMuonHConfig
+from experiments.references.lr_mult_muonh import LrMultMuonHConfig
+from experiments.references.decay_to_pieces_muonh import DecayToPiecesMuonHConfig
 from experiments.references.table_variants_qwen3 import (ComposedBothResidualQwen3Config, ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
                                                          LowRankQwen3Config, RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
@@ -392,6 +394,19 @@ LAZY_EMBED_FROM_PASS = int(os.environ.get("LAZY_EMBED_FROM_PASS", "0"))
 # a row keeps about T passes of updates at the peak learning rate (kexue.fm/archives/11459). Tag -ewd<T>-fp<p>.
 EMBED_WD_PERIOD = float(os.environ.get("EMBED_WD_PERIOD", "0"))
 EMBED_WD_FROM_PASS = int(os.environ.get("EMBED_WD_FROM_PASS", "0"))
+# LR_MULT=m with LR_MULT_FROM_PASS=p (survey idea 10, owner popup 2026-10-21): from the first update of repeated pass p,
+# the main learning rate (MuonH linears and AdamH head; not adam_lr) times m, cosine shape kept (LrMultMuonHConfig). Tag -lrx<m>-fp<p>.
+LR_MULT = float(os.environ.get("LR_MULT", "0"))
+LR_MULT_FROM_PASS = int(os.environ.get("LR_MULT_FROM_PASS", "0"))
+# CVD_RATE_COUNT=C (survey idea 4, owner popup 2026-10-21): with VARIANT=cvd on the Marin tokenizer at 300m, a rare token
+# with c occurrences in the 1/8 subset is replaced with probability CVD_P * min(1, C / c) (subset_counts_300m_v128k.npy,
+# pass 1 of the rs cache). Tag -rc<C> after -p<CVD_P>.
+CVD_RATE_COUNT = int(os.environ.get("CVD_RATE_COUNT", "0"))
+# DTP=lambda with DTP_FROM_PASS=p (survey idea 7, owner popup 2026-10-21): from the first update of repeated pass p, the
+# rare input rows (ids CV_K .. V-257) decay toward the mean of their CV_K-token pieces' rows at rate adam_lr * lambda
+# (DecayToPiecesMuonHConfig). Tag -dtp<lambda>-fp<p>.
+DTP = float(os.environ.get("DTP", "0"))
+DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -468,11 +483,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "cvr":
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "") + (f"-oslow{CVR_OUT_SLOW:g}" if CVR_OUT_SLOW else "")
     if VARIANT == "cvd":
-        variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
+        variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-rc{CVD_RATE_COUNT}" if CVD_RATE_COUNT else "") + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
     if LAZY_EMBED_FROM_PASS:
         variant_tags += f"-lazyfp{LAZY_EMBED_FROM_PASS}"
     if EMBED_WD_PERIOD:
         variant_tags += f"-ewd{EMBED_WD_PERIOD:g}-fp{EMBED_WD_FROM_PASS}"
+    if LR_MULT:
+        variant_tags += f"-lrx{LR_MULT:g}-fp{LR_MULT_FROM_PASS}"
+    if DTP:
+        variant_tags += f"-dtp{DTP:g}-fp{DTP_FROM_PASS}"
     if VARIANT == "inoise":
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "drop":
@@ -595,6 +614,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if TIE:
             raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
         model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/" + (f"expand_v{VOCAB_K // 1000}k.npz" if VOCAB_K else "expand_full.npz"), cvd_p=CVD_P, cvd_seed=SEED, cvd_mode=CVD_MODE,
+                                                       **(dict(cvd_rate_count=CVD_RATE_COUNT, cvd_counts=f"{_PREFIX}/tokenizers/marin-small/subset_counts_{size}_v128k.npy") if CVD_RATE_COUNT else {}),
                                                        cvd_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (CVD_FROM_PASS - 1) if CVD_FROM_PASS else 0)
     elif VARIANT == "inoise":
         model_cls, model_extra = InputNoiseQwen3Config, dict(noise_p=INOISE_P, noise_mode=INOISE_MODE,
@@ -685,6 +705,20 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError(f"EMBED_WD_PERIOD={EMBED_WD_PERIOD}, EMBED_WD_FROM_PASS={EMBED_WD_FROM_PASS}: period > 0 and pass 2..7, only with VARIANT=baseline, DATA_EPOCHS=8, equal passes, no lazy embedding")
         per_pass = round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8)
         opt_cls, opt_extra = EmbedWDMuonHConfig, dict(ewd=1 / (s["adam_lr"] * per_pass * EMBED_WD_PERIOD), ewd_from_step=per_pass * (EMBED_WD_FROM_PASS - 1))
+    one_of = [n for n, v in (("LAZY_EMBED_FROM_PASS", LAZY_EMBED_FROM_PASS), ("EMBED_WD_PERIOD", EMBED_WD_PERIOD), ("LR_MULT", LR_MULT), ("DTP", DTP)) if v]
+    if len(one_of) > 1:
+        raise ValueError(f"{one_of}: one optimizer change at a time")
+    if CVD_RATE_COUNT and not (VARIANT == "cvd" and not VOCAB_K and CVD_RATE_COUNT > 0 and size == "300m"):
+        raise ValueError(f"CVD_RATE_COUNT={CVD_RATE_COUNT}: > 0, only with VARIANT=cvd on the Marin tokenizer at 300m (the subset counts)")
+    if LR_MULT:
+        if not (VARIANT == "baseline" and DATA_EPOCHS == 8 and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= LR_MULT_FROM_PASS <= 7 and LR_MULT > 0):
+            raise ValueError(f"LR_MULT={LR_MULT}, LR_MULT_FROM_PASS={LR_MULT_FROM_PASS}: factor > 0 and pass 2..7, only with VARIANT=baseline, DATA_EPOCHS=8 and equal passes")
+        opt_cls, opt_extra = LrMultMuonHConfig, dict(lr_mult=LR_MULT, lr_mult_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (LR_MULT_FROM_PASS - 1))
+    if DTP:
+        if not (VARIANT == "baseline" and not VOCAB_K and DATA_EPOCHS == 8 and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= DTP_FROM_PASS <= 7 and DTP > 0):
+            raise ValueError(f"DTP={DTP}, DTP_FROM_PASS={DTP_FROM_PASS}: rate > 0 and pass 2..7, only with VARIANT=baseline on the Marin tokenizer, DATA_EPOCHS=8 and equal passes")
+        opt_cls, opt_extra = DecayToPiecesMuonHConfig, dict(dtp_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", dtp=DTP,
+                                                            dtp_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DTP_FROM_PASS - 1))
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
