@@ -143,7 +143,7 @@ fi
 # scratch, the train loss at step 30 may sit a little above the eval, hence a 1.0-nat margin there.
 GATE=; [[ $SINGLE == *PROBE_FROM=* ]] && GATE=0.5; [[ " $SINGLE " == *" LAYERS=48 "* ]] && GATE=${GATE:-1.0}
 if [ -n "$GATE" ]; then
-  wsum=$(ls -td "$PWD"/wandb/*-"$smoke_id" /scratch/gpfs/GROUP/USER/wandb-runs/wandb/*-"$smoke_id" 2>/dev/null | head -1)
+  wsum=$(ls -td "$PWD"/wandb/*-"$smoke_id" /scratch/gpfs/GROUP/USER/wandb-runs/wandb/*-"$smoke_id" 2>/dev/null | head -1 || true)   # ls exits 1 when one of the two globs matches nothing (w15 died here silently)
   tr_ev=$(python3 -c 'import json, sys; s = json.load(open(sys.argv[1] + "/files/wandb-summary.json")); k = max((k for k in s if k.startswith("train/pls/L")), key=lambda k: int(k[11:])); print(s[k], s["eval/loss"])' "$wsum" 2>/dev/null || true)
   echo "smoke: train-path last readout and eval loss: ${tr_ev:-missing} ($wsum)"
   if ! awk -v t="${tr_ev% *}" -v e="${tr_ev#* }" -v g="$GATE" 'BEGIN { exit !(t != "" && e != "" && t - e < g) }'; then
