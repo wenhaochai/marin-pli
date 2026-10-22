@@ -68,6 +68,7 @@ from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
 from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
+from experiments.references.embed_wd_muonh import EmbedWDMuonHConfig
 from experiments.references.table_variants_qwen3 import (ComposedBothResidualQwen3Config, ComposedDropoutQwen3Config, ComposedResidualQwen3Config, FrozenOutQwen3Config,
                                                          LowRankQwen3Config, RareTargetMaskQwen3Config)
 from experiments.references.focal_qwen3 import FocalQwen3Config
@@ -310,7 +311,7 @@ INOISE_P = float(os.environ.get("INOISE_P", "0.1"))
 INOISE_MODE = os.environ.get("INOISE_MODE", "zero")
 INOISE_FROM_PASS = int(os.environ.get("INOISE_FROM_PASS", "0"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
-if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1)):
+if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1) or (PASS_DATA.startswith("rsplit") and 0 < float(PASS_DATA[6:]) <= 1)):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
@@ -386,6 +387,11 @@ if VARIANT == "cvd" and VOCAB_K not in (0, 16000, 32000, 64000):
 # LAZY_EMBED_FROM_PASS=p (survey idea 6, owner popup 2026-10-21): from the first update of repeated pass p of 8, input
 # embedding rows of tokens absent from the batch get no update (LazyEmbedMuonHConfig; Adam moments decay as before). Tag -lazyfp<p>.
 LAZY_EMBED_FROM_PASS = int(os.environ.get("LAZY_EMBED_FROM_PASS", "0"))
+# EMBED_WD_PERIOD=T with EMBED_WD_FROM_PASS=p (survey idea 9, owner popup 2026-10-21): from the first update of repeated pass
+# p, decoupled weight decay on the input embedding (EmbedWDMuonHConfig) with wd = 1 / (adam_lr * steps per pass * T), so
+# a row keeps about T passes of updates at the peak learning rate (kexue.fm/archives/11459). Tag -ewd<T>-fp<p>.
+EMBED_WD_PERIOD = float(os.environ.get("EMBED_WD_PERIOD", "0"))
+EMBED_WD_FROM_PASS = int(os.environ.get("EMBED_WD_FROM_PASS", "0"))
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
@@ -465,6 +471,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
     if LAZY_EMBED_FROM_PASS:
         variant_tags += f"-lazyfp{LAZY_EMBED_FROM_PASS}"
+    if EMBED_WD_PERIOD:
+        variant_tags += f"-ewd{EMBED_WD_PERIOD:g}-fp{EMBED_WD_FROM_PASS}"
     if VARIANT == "inoise":
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "drop":
@@ -493,7 +501,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if DATA_EPOCHS != 8:
             raise ValueError("PASS_DATA builds the 8 passes of DATA_EPOCHS=8")
         variant_tags += f"-{PASS_DATA}"
-        if PASS_DATA.startswith("bpd") and not SMOKE_STEPS:   # every pass of text: the cache's sequences in steps of batch
+        if PASS_DATA.startswith(("bpd", "rsplit")) and not SMOKE_STEPS:   # every pass of text: the cache's sequences in steps of batch
             s = dict(s, steps=_pass_data_meta(size)["sequences"] // s["batch"])
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
@@ -672,6 +680,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if not (VARIANT == "baseline" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= LAZY_EMBED_FROM_PASS <= 7):
             raise ValueError(f"LAZY_EMBED_FROM_PASS={LAZY_EMBED_FROM_PASS}: 2..7, only with VARIANT=baseline, DATA_EPOCHS=8 and equal passes")
         opt_cls, opt_extra = LazyEmbedMuonHConfig, dict(lazy_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (LAZY_EMBED_FROM_PASS - 1))
+    if EMBED_WD_PERIOD:
+        if not (VARIANT == "baseline" and DATA_EPOCHS == 8 and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= EMBED_WD_FROM_PASS <= 7 and EMBED_WD_PERIOD > 0 and not LAZY_EMBED_FROM_PASS):
+            raise ValueError(f"EMBED_WD_PERIOD={EMBED_WD_PERIOD}, EMBED_WD_FROM_PASS={EMBED_WD_FROM_PASS}: period > 0 and pass 2..7, only with VARIANT=baseline, DATA_EPOCHS=8, equal passes, no lazy embedding")
+        per_pass = round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8)
+        opt_cls, opt_extra = EmbedWDMuonHConfig, dict(ewd=1 / (s["adam_lr"] * per_pass * EMBED_WD_PERIOD), ewd_from_step=per_pass * (EMBED_WD_FROM_PASS - 1))
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(

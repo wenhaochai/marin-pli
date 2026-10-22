@@ -14,11 +14,15 @@ config: same caches, linear permutation, data seed, max_train_batches) and write
   passes 2-8 (MODE=repack, survey idea 5, owner popup 2026-10-21): the subset's windows are cut into pieces before every
            BOS token (a window edge also ends a piece, since neighbouring windows are not neighbouring text), the pieces
            of each pass are shuffled (seed 20000 + pass) and packed into SEQ_LEN windows again, so the documents meet new
-           neighbours and new window edges; a pass has exactly the subset's tokens and windows.
+           neighbours and new window edges; a pass has exactly the subset's tokens and windows;
+  passes 2-8 (MODE=rsplit, survey idea 3, owner popup 2026-10-21): in the same new order as rs, every rare token (ids
+           8000 and up, specials excluded) is replaced with probability P by the sequence of its 8K pieces (the 8K map
+           of the tokenizer, marin-small/v8000/expand_full.npz or expand_v<K>k.npz), so inputs and targets change
+           together; the longer stream is cut into SEQ_LEN windows again (more windows, as bpd).
 Each written document is one SEQ_LEN window, so Levanter's token dataset reads them back window for window. The training
 run (della_muonh_qwen3_scaling.py PASS_DATA=rs | bpd<P>) reads this cache in order with no shuffle.
 
-    SIZE=300m [VOCAB_K=8000] MODE=rs|repack|bpd [P=0.1] python -m experiments.references.vocab_materialize_passes
+    SIZE=300m [VOCAB_K=8000] MODE=rs|repack|bpd|rsplit [P=0.1] python -m experiments.references.vocab_materialize_passes
 Writes MARIN_PREFIX/materialized/<size>[-v<K>k|-bytes]-rep8-<rs|bpd<P>>/{train,meta.json}. Checks at the end: pass 1 equals the
 subset; every rs pass is a permutation of it; a sample of bpd windows decodes to the original text (window edges aside).
 """
@@ -37,9 +41,9 @@ P = float(os.environ.get("P", "0.1"))
 SIZE = os.environ.get("SIZE", "300m")
 K = int(os.environ.get("VOCAB_K", "0"))
 PASSES, SEQ = 8, 4096
-if MODE not in ("rs", "bpd", "repack") or (MODE == "bpd" and (K or not 0 < P < 1)):
-    raise ValueError("MODE=rs or repack (any vocabulary) or MODE=bpd with 0 < P < 1 (the Marin tokenizer)")
-TAG = MODE if MODE in ("rs", "repack") else f"bpd{P:g}"
+if MODE not in ("rs", "bpd", "repack", "rsplit") or (MODE == "bpd" and (K or not 0 < P < 1)) or (MODE == "rsplit" and (K not in (0, 16000, 32000, 64000) or not 0 < P <= 1)):
+    raise ValueError("MODE=rs or repack (any vocabulary), MODE=bpd with 0 < P < 1 (the Marin tokenizer), MODE=rsplit with 0 < P <= 1 (Marin or its 64K/32K/16K truncation)")
+TAG = MODE if MODE in ("rs", "repack") else f"{MODE}{P:g}"
 BOS = (K or 128000) if K != 256 else 256   # the first special of each tokenizer opens a document (checked in the subset)
 # the run's own data config, without PASS_DATA (that is what reads this cache)
 for k in ("PASS_DATA", "VARIANT", "SMOKE_STEPS", "TOTAL_STEPS", "SEQ_LEN", "BATCH", "TPP", "SEED"):
@@ -104,6 +108,29 @@ def repack(rows, e):
     return out.reshape(n, SEQ), len(starts)
 
 
+def rsplit_tools():
+    """(flat, offs, counts, V) of the 8K map of this tokenizer: token t's pieces are flat[offs[t]:offs[t + 1]]."""
+    path = f"{PREFIX}/tokenizers/marin-small/v8000/" + (f"expand_v{K // 1000}k.npz" if K else "expand_full.npz")
+    z = np.load(path)
+    flat, offs = z["flat"].astype(np.int32), z["offs"].astype(np.int64)
+    return flat, offs, np.diff(offs), len(offs) - 1
+
+
+def rsplit(rows, e, a, tools):
+    """The windows ``rows`` with each rare token replaced, with probability P, by its 8K pieces; one id stream.
+    The draw is a fixed function of (pass, chunk start)."""
+    flat, offs, counts, V = tools
+    x = rows.reshape(-1).astype(np.int64)
+    rare = (x >= 8000) & (x < V - 256)
+    split = rare & (np.random.default_rng([30000 + e, a]).random(len(x)) < P)
+    lengths = np.where(split, counts[x], 1)
+    starts = np.concatenate([[0], np.cumsum(lengths)[:-1]])
+    tok = np.repeat(np.arange(len(x)), lengths)
+    within = np.arange(int(lengths.sum())) - starts[tok]
+    out = np.where(split[tok], flat[np.minimum(offs[x[tok]] + within, len(flat) - 1)], x[tok])
+    return out.astype(np.int32), int(split.sum())
+
+
 def bpd_tools():
     """(dropout tokenizer, id -> bytes, special ids) for the Marin tokenizer."""
     import glob
@@ -164,7 +191,7 @@ def main():
     print(f"subset: {n} sequences of {SEQ} ({n * SEQ / 1e9:.3f}B tokens), {time.time() - t0:.0f}s", flush=True)
     os.makedirs(OUT, exist_ok=True)
     meta = dict(size=SIZE, vocab_k=K, mode=MODE, p=P if MODE == "bpd" else None, subset_sequences=n, seq_len=SEQ, pass_sequences=[], replaced_chars=0)
-    tools = bpd_tools() if MODE == "bpd" else None
+    tools = bpd_tools() if MODE == "bpd" else rsplit_tools() if MODE == "rsplit" else None
     carry = np.zeros(0, np.int32)
     with SerialCacheWriter(f"{OUT}/train", EX, metadata=CacheMetadata.empty()) as w:
         for e in range(1, PASSES + 1):
@@ -184,8 +211,12 @@ def main():
                 continue
             written = 0
             for a in range(0, n, 8192):   # windows of the re-segmented stream; a pass's tail carries into the next chunk
-                stream, bad = resegment(sub[o[a:a + 8192]], *tools)
-                meta["replaced_chars"] += bad
+                if MODE == "rsplit":
+                    stream, nsplit = rsplit(sub[o[a:a + 8192]], e, a, tools)
+                    meta["split_tokens"] = meta.get("split_tokens", 0) + nsplit
+                else:
+                    stream, bad = resegment(sub[o[a:a + 8192]], *tools)
+                    meta["replaced_chars"] += bad
                 stream = np.concatenate([carry, stream])
                 k = len(stream) // SEQ
                 w.write_batch([{"input_ids": r} for r in stream[:k * SEQ].reshape(k, SEQ)])
@@ -214,6 +245,15 @@ def main():
             o = order(e, n); start = (e - 1) * n
             got = np.stack([np.asarray(x["input_ids"]) for x in c.get_batch_sync([start + int(i) for i in idx])])
             assert np.array_equal(got, sub[o[idx]]), f"pass {e} is not the subset in its order"
+    elif MODE == "rsplit":   # the first pass-2 windows equal the subset in rs order with the drawn rare tokens expanded
+        o = order(2, n)
+        want, _ = rsplit(sub[o[:8192]], 2, 0, tools)
+        got = np.concatenate([np.asarray(x["input_ids"]) for x in c.get_batch_sync(list(range(n, n + 64)))])
+        assert np.array_equal(got, want[:len(got)]), "pass 2 is not the expanded subset"
+        flat, offs, counts, V = tools
+        r0 = int(((sub >= 8000) & (sub < V - 256)).sum()); r2 = int(((want >= 8000) & (want < V - 256)).sum())
+        meta["rare_share_pass1"], meta["check_expanded"] = r0 / sub.size, True
+        print(f"rare tokens: pass 1 {r0 / sub.size:.4f} of positions; pass 2 first chunk keeps {r2 / max(1, int(((sub[o[:8192]] >= 8000) & (sub[o[:8192]] < V - 256)).sum())):.3f} of them", flush=True)
     else:
         tok, idb, special = tools
         o = order(2, n); start = n
