@@ -222,14 +222,32 @@ def fetched():
         cols = line.split("\t")
         if not line.strip():
             continue
-        if len(cols) != 5 or not all(c.lstrip("-").isdigit() for c in cols):
+        if len(cols) != 5 or not all(c.lstrip("-").isdigit() for c in cols[1:]) or not re.fullmatch(r"w?\d+", cols[0]):
             raise RuntimeError(f"{f} line {n} is not a fetched line: {line!r}")
+        if cols[0].startswith("w"):   # wq jobs: WQ_FETCH below
+            continue
         fid, host, start, end, ex = cols
         out[fid] = dict(host=host, start=int(start), end=int(end), exit=ex)
     return out
 
 
 FETCH = fetched()
+# wq jobs (w<n>): fetch_pending.sh writes each run of one (a job can run several times) to fetched.tsv under the job's
+# working directory, which was /home/USER for w15-w17. Every run of a wq job of project pls, from both files; the GPU
+# count comes from its wq spec (no sacct for wq ids).
+WQJOBS = Path("/scratch/gpfs/GROUP/USER/wq/jobs")
+def wq_fetched():
+    seen = []
+    for f in (PACKED / "fetched.tsv", Path("/home/USER/logs/packed/fetched.tsv")):
+        for line in (f.read_text().splitlines() if f.exists() else []):
+            cols = line.split("\t")
+            if len(cols) == 5 and re.fullmatch(r"w\d+", cols[0]) and line not in seen:
+                spec = json.loads((WQJOBS / cols[0][1:] / "spec.json").read_text())
+                if spec.get("project") == "pls":
+                    seen.append(line)
+    return [dict(fid=c[0], host=c[1], start=int(c[2]), end=int(c[3]), exit=c[4], gpus=int(json.loads((WQJOBS / c[0][1:] / "spec.json").read_text())["gpus"]))
+            for c in (l.split("\t") for l in seen)]
+WQ_FETCH = wq_fetched()
 LOCKS = Path("/scratch/gpfs/GROUP/USER/tmp/fetch_locks")
 
 
@@ -429,6 +447,14 @@ for fid, F in sorted(FETCH.items()):
     hours["main"] += main_gh; hours["other"] += gh - main_gh; ext += gh
     njobs["main" if main_gh > 0 else "other"] += 1
     print(f"fetched job {fid} in host {F['host']} (another project), exit {F['exit']}: {gh:.3f} GPU-h -> main {main_gh:.3f}, other {gh - main_gh:.3f}")
+for F in WQ_FETCH:   # every run of a wq job; the hosts are pilots, never this project's jobs; its tasks sit in logs/packed/w<n>.tsv
+    gh = F["gpus"] * (F["end"] - F["start"]) / 3600
+    main_gh = sum(int(t["gpus"]) * (int(t["end"]) - int(t["start"])) / 3600 for t in TASKS if t["jid"] in (F["host"], F["fid"]) and t["kind"] == "main" and t["exit"] in OK_EXIT
+                  and t["run"] in ROWRUNS and F["start"] <= int(t["start"]) and int(t["end"]) <= F["end"] + 60)
+    main_gh = min(main_gh, gh)
+    hours["main"] += main_gh; hours["other"] += gh - main_gh; ext += gh
+    njobs["main" if main_gh > 0 else "other"] += 1
+    print(f"wq job {F['fid']} run in host {F['host']}, exit {F['exit']}: {F['gpus']} GPUs, {gh:.3f} GPU-h -> main {main_gh:.3f}, other {gh - main_gh:.3f}")
 total += ext
 tot = {k: dict(h100_hours=round(hours[k]), jobs=njobs[k]) for k in ("main", "other")}
 print(f"check: main {hours['main']:.3f} + other {hours['other']:.3f} = {hours["main"] + hours["other"]:.3f} GPU-h = sacct total plus fetched runs in other projects' hosts {total:.3f}")
