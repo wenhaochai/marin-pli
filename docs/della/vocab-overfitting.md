@@ -180,3 +180,8 @@ Batch of 2026-10-21 (owner "再交一点job", popup A B C; code 0526109cc4, test
 w23 lrx15-fp2 and w24 lrx2-fp2 (main lr x1.5 / x2, 128K and 8K; survey idea 10), w25 cvd-rc-fp2-rs (cvd fp2 + rs with
 rate 0.5 min(1, C / subset count), C 1000 / 10000; idea 4), w26 dtp-fp2 (rare input rows decay toward their pieces' mean,
 lambda 0.35 / 1; idea 7). Flooding (idea 13) was offered and not chosen.
+
+RESULT lrx 8K (w49, w51; 2026-10-22, exact bpb, seed 0, rep8): main lr x1.5 from pass 2 gives 1.4720, x2 gives 1.4619,
+against plain 1.4769 and unique 1.4539. The 8K cost falls 0.0230 -> 0.0181 (x1.5) -> 0.0080 (x2), the best 8K setup so
+far and the first to remove most of the 8K cost. Open: the unique-token run at the same lr x2 from the same step (if a
+larger late lr also helps unique tokens, the cost is not what fell); x3; 128K halves w48/w50 still queued.
