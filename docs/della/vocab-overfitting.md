@@ -164,3 +164,6 @@ this doc written before 2026-10-11 use the old metric (e.g. 300m 128K full 1.386
 job_tmpdir EXIT trap under set -e) for new submissions only.
 
 Survey (2026-10-21, owner): docs/della/vocab_survey/reports/重复数据词表过拟合补救调研.md ranks the next experiments toward the Q11 goal from this project's record, kexue.fm and the literature; notes in docs/della/vocab_survey/research_notes/.
+
+
+Queue (2026-10-21, owner rule now in CLAUDE.md): GPU jobs go to the owner's queue wq (tools/wq), run by pilot hosts. The 11 pending jobs moved: drop-fp2 w1, drop02-fp2 w2, drop-fp2-rs w3, inzero-fp2 w4, inrand-fp2 w5, rs-mid w6, rs-v16k w7, cvd-trunc-mid w8, cvd-trunc-v16k w9, lazy-fp2 w10, repack w11; logs logs/slurm/<name>_w<n>.out. The 4-GPU plans no longer set CUDA_VISIBLE_DEVICES (a wq host assigns the GPUs). build_vocab_record.py reads wq ids through `wq show`.
