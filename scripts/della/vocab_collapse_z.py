@@ -5,7 +5,7 @@ parameter_count (body + 2 (K+256) d); U = round(steps / R) batches x batch x 409
 import json, math
 from pathlib import Path
 import numpy as np
-HERE = Path(__file__).resolve().parent
+HERE = Path("/scratch/gpfs/GROUP/USER/tmp_plots/vocab")   # the builders' W&B cache and exact byte tables
 TB = {int(k): {int(S): v for S, v in d.items()} for k, d in json.loads((HERE / "bpb_exact_tables.json").read_text()).items()}
 C = json.loads((HERE / "wandb_cache.json").read_text())
 SUBS = sorted(TB[128000][4096])
