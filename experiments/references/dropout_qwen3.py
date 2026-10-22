@@ -151,9 +151,19 @@ class InputNoiseQwen3LMHeadModel(Qwen3LMHeadModel):
             rand = jrandom.randint(k_tok, ids.shape, 0, self.Vocab.size - N_SPECIAL, dtype=ids.dtype)
             x = self.embeddings.embed(hax.named(jnp.where(hit, rand, ids), input_ids.axes))
         else:
+            # The first token of each attention segment attends only to itself: zeroed, its row stays exactly zero through
+            # every layer, and with hybrid_norm each post-norm of that zero vector multiplies the backward pass by
+            # 1/sqrt(eps), so the gradient overflows to NaN at the first noised step (w4, 2026-10-22). It is never hit
+            # and keeps its unscaled row.
             x = self.embeddings.embed(input_ids)
+            Pos = input_ids.resolve_axis(cfg.max_Pos.name)
+            first = hax.arange(Pos) == 0
+            if isinstance(attn_mask, AttentionMask) and attn_mask.segment_ids is not None:
+                seg = attn_mask.segment_ids[0]
+                first = first | (seg != hax.roll(seg, 1, Pos))
+            first = first.broadcast_to(input_ids.axes)
+            hit = hax.named(hit, input_ids.axes) & ~first
             active = jnp.asarray(step) >= cfg.noise_from_step
             scale = jnp.where(active, 1 / (1 - cfg.noise_p), 1.0).astype(x.dtype)
-            keep = hax.named(~hit, input_ids.axes)
-            x = hax.where(keep, x * scale, hax.zeros_like(x))
+            x = hax.where(hit, hax.zeros_like(x), hax.where(first, x, x * scale))
         return self.transformer(x, attn_mask=attn_mask, key=key, pos_ids=pos_ids)
