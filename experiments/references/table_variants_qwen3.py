@@ -48,6 +48,7 @@ from typing import Optional
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import haliax as hax
 from haliax import Axis, NamedArray
@@ -344,6 +345,11 @@ class ComposedDropoutQwen3Config(Qwen3Config):
     # the data, so it learns only here) stands in for every replaced rare token; "detach": the pieces' mean without a
     # gradient into the pieces' rows.
     cvd_mode: str = "pieces"
+    # Frequency-graded rate (survey idea 4, owner popup 2026-10-21): with cvd_rate_count = C > 0, a rare token t with
+    # c_t occurrences in the training subset (cvd_counts, a [V] .npy) is replaced with probability
+    # cvd_p * min(1, C / c_t), so the rarest rows get cvd_p and the commoner ones less (Xie et al. 2017, arXiv 1703.02573).
+    cvd_rate_count: int = 0
+    cvd_counts: str = ""
 
     def __post_init__(self):
         super().__post_init__()
@@ -356,6 +362,8 @@ class ComposedDropoutQwen3Config(Qwen3Config):
             raise ValueError(f"cvd_from_step={self.cvd_from_step}: must be 0 or more")
         if self.cvd_mode not in ("pieces", "grad", "unk", "detach"):
             raise ValueError(f"cvd_mode={self.cvd_mode!r}: pieces, grad, unk or detach")
+        if self.cvd_rate_count < 0 or bool(self.cvd_rate_count) != bool(self.cvd_counts):
+            raise ValueError(f"cvd_rate_count={self.cvd_rate_count}, cvd_counts={self.cvd_counts!r}: both or neither")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -365,6 +373,14 @@ class ComposedDropoutQwen3Config(Qwen3Config):
 def n_small_of(path: str) -> int:
     """Rows of the K-token small table (K ordinary rows plus the 256 specials)."""
     return load_map(path)[3]
+
+
+def graded_rate(path: str, V: int, p: float, c0: int) -> np.ndarray:
+    """[V] float32 replacement probability p * min(1, c0 / count) from the subset counts at ``path`` (count 0 -> p)."""
+    counts = np.load(path)
+    if counts.shape != (V,):
+        raise ValueError(f"{path}: counts of shape {counts.shape}, the vocabulary has {V} entries")
+    return (p * np.minimum(1.0, c0 / np.maximum(counts, 1))).astype(np.float32)
 
 
 class ComposedDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
@@ -390,7 +406,11 @@ class ComposedDropoutQwen3LMHeadModel(Qwen3LMHeadModel):
         k0 = n_small_of(cfg.cvd_map) - N_SPECIAL
         ids = input_ids.array
         rare = (ids >= k0) & (ids < V - N_SPECIAL)
-        draw = jax.random.bernoulli(jax.random.fold_in(jax.random.PRNGKey(cfg.cvd_seed), jnp.asarray(step)), cfg.cvd_p, ids.shape)
+        key = jax.random.fold_in(jax.random.PRNGKey(cfg.cvd_seed), jnp.asarray(step))
+        if cfg.cvd_rate_count:
+            draw = jax.random.uniform(key, ids.shape) < jnp.asarray(graded_rate(cfg.cvd_counts, V, cfg.cvd_p, cfg.cvd_rate_count))[ids]
+        else:
+            draw = jax.random.bernoulli(key, cfg.cvd_p, ids.shape)
         if cfg.cvd_from_step:
             draw = draw & (jnp.asarray(step) >= cfg.cvd_from_step)
         swap = hax.named(rare & draw, input_ids.axes)
