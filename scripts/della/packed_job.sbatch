@@ -22,6 +22,10 @@
 # logs/slurm/<job>_<jobid>-<task>.log. Mode lane=<name>: tasks of one lane run one after another in the background (with
 # the retry), lanes side by side, so a failed run frees its GPUs for the lane's next task; "wait" also starts the lanes.
 # A task with a run (not "-") trains only if the dry run under its own VAR=value gives that run id (run_checked.sh).
+# Resumable (wq --partial, owner via the terminal controller, 2026-10-23): a host may stop the job (timeout exit 124),
+# and the next run of the same wq job starts the plan again; training runs resume from their last temporary checkpoint
+# (every 10 min) and finished runs skip (executor SUCCESS); a smoke that passed in an earlier run of the job is skipped
+# (marker logs/packed/smoked/<wq id>-<task>).
 # Exit code: 0 only if every task passed. No set -e: a failed task is handled here.
 # Fetchable (owner via the controller, 2026-10-16): scripts/della/submit_packed.sh writes a self-contained batch script
 # per job (#FETCHABLE, PLAN and PACKED_NAME set inside) that runs this file, so tools/fetch_pending.sh can run the job
@@ -81,7 +85,10 @@ while read -r mode task run kind gpus limit script vars; do
   else inner=(env PAIR_LOG_TAG="-$task" "${args[@]}" bash "$script"); fi
   cmd=("$PT" "$task" "$run" "$kind" "$gpus" "$limit" -- scripts/della/pgroup.sh bash -c 'exec "$@" >> "$0" 2>&1' "$log" "${inner[@]}")
   case $mode in
-    smoke) "${cmd[@]}"; rc=$?; echo "TASK $task END rc=$rc $(date +%H:%M:%S)"; [ $rc -eq 0 ] || { echo "smoke failed: no training"; exit $rc; } ;;
+    smoke) mark=logs/packed/smoked/${WQ_JOB_ID:-none}-$task
+           if [ -n "${WQ_JOB_ID:-}" ] && [ -f "$mark" ]; then echo "TASK $task skipped: passed in an earlier run of $WQ_JOB_ID"; continue; fi
+           "${cmd[@]}"; rc=$?; echo "TASK $task END rc=$rc $(date +%H:%M:%S)"; [ $rc -eq 0 ] || { echo "smoke failed: no training"; exit $rc; }
+           [ -n "${WQ_JOB_ID:-}" ] && { mkdir -p logs/packed/smoked; touch "$mark"; } ;;
     seq)   "${cmd[@]}"; rc=$?; echo "TASK $task END rc=$rc $(date +%H:%M:%S)"; [ $rc -eq 0 ] || failed+=("$task") ;;
     par)   retry_once "$task" "${cmd[@]}" & bgname[$!]=$task ;;
     lane=*) lanes[${mode#lane=}]+="$(printf '%q ' "$task" "${cmd[@]}")"$'\n' ;;
