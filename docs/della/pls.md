@@ -492,3 +492,28 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    按对数计，起点解释差距的 0.33–0.83，第 25–48 层约一半。所以起点和步长各决定约一半。
 4. 旧数字 “Pre-LN 的增益是 LNS 换算增益的 2.1–3.5 倍” 是逐层中位数（resnext-lean `ArchLean/PracLnsProfile.lean`）。逐层看，普通模型（探针）
    两个增益平均后的比值是 1.2–4.4（第 2 层最低，第 42 层最高）；独立头模型上 ln_1 是 1.7–5.9，ln_2 是 1.2–2.2。Fig 36 图注不再引用这个数字。
+
+### L1 完整版：Pre-LN 精确等价于 LNS（2026-10-22，wq w61、w62，排队中）
+
+起因：所有者说“所以没有完全回答对吧，你得做到和理论一样”。w15 只取了 LNS 的起点。Lean 的精确重参数化（`ArchLean.PracTrain`）还要求步长和
+梯度裁剪也一致。条件：Pre-LN 的增益 g' = c_ℓ·g，c_ℓ = bf16(1/√ℓ)（LNS 前向中的值）。
+
+1. 起点：g' 从 c_ℓ 开始（`GAIN_INIT=lns_bf16`）。
+2. 梯度：进入 adam 组的 clip_by_global_norm 和 Adam 之前，增益梯度乘以 c_ℓ。
+3. 更新：Adam 之后，增益更新再乘以 c_ℓ。Adam ε = 1e-20，所以 Adam 对每个坐标的缩放不变。weight decay 不用于增益。
+
+代码：`LnsStepMuonHConfig`（`depth_arch_qwen3.py`，`GAIN_STEP=lns`），pls dabf9aaff6。CPU 测试 `scripts/della/lns_equiv_test.py`：4 层，宽 48，
+40 步，max_grad_norm 0.05（每组都裁剪）。和 LNS 的最大差值：
+
+| 运行 | float64 loss 差 | float64 参数相对差 | float32 loss 差 |
+|---|---|---|---|
+| 完全等价（起点 + 步长 + 裁剪） | 0 | 4.9e-14 | 2.3e-5 |
+| 只取起点（w15 的设置） | 2.4e-2 | 1.5e-1 | 6.0e-2 |
+| 只取步长和裁剪 | 4.4e-1 | 8.7e-1 | 4.5e-1 |
+| 起点 + 更新乘 c_ℓ，裁剪看 Pre-LN 的梯度 | 3.6e-4 | 1.3e-3 | 1.5e-4 |
+
+float32 下完全等价的运行在前 10 步差值为 0，之后舍入误差开始累积。第一次 float64 运行有部分参数仍是 float32，差值 1.9e-6；全部参数转为
+float64 后差值为 0。裁剪的耦合很小：只差裁剪的运行偏离 3.6e-4，比只取起点小约 70 倍。
+
+GPU 运行（8 GPU，20 h，`--partial`）：w61 `arch2-preln-lnsequiv`（`-apreln-gilnsbf-slns-vs-d48`），预测与 LNS 只差 bf16 舍入的影响，
+即与 LNS 的差在种子噪声内；w62 `arch2-preln-slns`（`-apreln-slns-vs-d48`），直接测量步长的份额。Fig 36 已加占位（所有者弹窗 2026-10-22）。
