@@ -10,7 +10,8 @@ that crashes early can also end as 'finished' (the hc run that died at step 259,
 old keys are removed, so a design never mixes an old half with a new one. History is read in 1000-step windows: one
 scan over the whole run drops and repeats a row at each page boundary (audit 2026-10-11).
 The Lean L1 / L2 arms (pls_arch2_fetchable.sbatch, wq w15 w27 w28) are probes only, -vs-d48 with no -g4, on 8 or 4 GPUs:
-name them arch2:<tag> (arch2:preln-gilns, arch2:hc-rstatic, arch2:attnres-rstatic; not in the default set).
+name them arch2:<tag> (arch2:preln-gilns, arch2:hc-rstatic, arch2:attnres-rstatic,
+arch2:preln-gilnsbf-slns, arch2:preln-slns; not in the default set).
 Usage: python fetch_d48g4.py [--partial] [arch[@seed] ...] ('' or sandwich = Sandwich-LN; attnres@s1 = the seed-1 pair; default: all ten). --partial prints
 running runs too and writes nothing. Exits 2 if a W&B call failed (the other results are still written)."""
 import sys, numpy as np, wandb
@@ -22,7 +23,7 @@ args = [a for a in sys.argv[1:] if a != "--partial"]
 archs = [("" if a == "sandwich" else a) for a in args] or ARCHS
 api = wandb.Api(timeout=300)
 P = "reself/marin-della/muonh-qwen3-130m-della{}xh100-pls1"
-ARCH2_GPUS = {"preln-gilns": 8, "hc-rstatic": 4, "attnres-rstatic": 4}
+ARCH2_GPUS = {"preln-gilns": 8, "hc-rstatic": 4, "attnres-rstatic": 4, "preln-gilnsbf-slns": 8, "preln-slns": 8}
 keys = [f"train/pls/L{k}" for k in range(48)]
 out = dict(np.load(OUT, allow_pickle=True)) if OUT.exists() else {}
 errors = 0

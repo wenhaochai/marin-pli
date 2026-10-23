@@ -840,19 +840,29 @@ L48T = [[k, str(k)] for k in (1, 12, 24, 36, 48)]
 # Figure 36 (L1, wq w15 done 2026-10-22): upper, each run's mean trained pre-norm scale over Pre-LN's (gains.json,
 # fetch_gains.py; LNS converted by 1/sqrt(l)); lower (owner popup 2026-10-22: per-layer differences, not three layer-48
 # values), each run's final probe training loss minus Pre-LN's (d48g4.npz; layer 48 in the caption).
+# w61 and w62 (owner popup 2026-10-22, "做到和理论一样"): Pre-LN with LNS's start, step size and clip (theory: LNS's
+# curve up to rounding; dashed so it shows on top of LNS), and Pre-LN with LNS's step size and clip only. A run not
+# fetched yet keeps its legend entry, marked queued.
+GAIN_RUNS = [("preln", "apreln-vs-d48-g4", RED, None, {"en": "Pre-LN", "zh": "Pre-LN"}),
+             ("lns", "alns-vs-d48-g4", BLUE7, None, {"en": "LayerNorm Scaling, converted", "zh": "LayerNorm Scaling（换算后）"}),
+             ("preln-gilns", "apreln-gilns-vs-d48", GREEN, None, {"en": "Pre-LN, scales start at 1/\u221a\u2113", "zh": "Pre-LN，增益初始化为 1/\u221a\u2113"}),
+             ("preln-lnsequiv", "apreln-gilnsbf-slns-vs-d48", PURPLE, "5 4", {"en": "Pre-LN with LNS's start, step size and clip", "zh": "Pre-LN，取 LNS 的初始值、步长和裁剪"}),
+             ("preln-slns", "apreln-slns-vs-d48", YELLOW9, None, {"en": "Pre-LN with LNS's step size and clip", "zh": "Pre-LN，取 LNS 的步长和裁剪"})]
 GAIN_MARKS = ([], [])
-_gt = {k: f"-sep-bbfrozen-{t}/final" for k, t in (("preln", "apreln-vs-d48-g4"), ("lns", "alns-vs-d48-g4"), ("preln-gilns", "apreln-gilns-vs-d48"))}
-if (HERE / "gains.json").exists() and all(t in G4 for t in _gt.values()):
-    _g = json.loads((HERE / "gains.json").read_text()); _p = np.array(_g["preln"]["mean"])
-    _cols = (("preln", RED), ("lns", BLUE7), ("preln-gilns", GREEN))
-    GAIN_MARKS = ([dict(type="line", color=c, width=1.6, alpha=1.0, pts=[[k + 1, round(float(v), 4)] for k, v in enumerate(np.array(_g[n]["mean"]) / _p)]) for n, c in _cols],
-                  [dict(type="line", color=c, width=1.6, alpha=1.0, pts=[[k + 1, round(float(v), 4)] for k, v in enumerate(G4[_gt[n]] - G4[_gt["preln"]])]) for n, c in _cols])
-    print("Fig 36 layer 48: final probe loss", {n: round(float(G4[t][47]), 3) for n, t in _gt.items()}, "scale ratio range",
-          {n: (round(float(min(np.array(_g[n]["mean"]) / _p)), 2), round(float(max(np.array(_g[n]["mean"]) / _p)), 2)) for n in ("lns", "preln-gilns")})
+_g = json.loads((HERE / "gains.json").read_text()) if (HERE / "gains.json").exists() else {}
+_gt = {n: f"-sep-bbfrozen-{t}/final" for n, t, *_ in GAIN_RUNS}
+_have = {n for n, *_ in GAIN_RUNS if n in _g and _gt[n] in G4}
+if {"preln", "lns"} <= _have:
+    _p = np.array(_g["preln"]["mean"])
+    _ln = lambda c, d: dict(type="line", color=c, width=1.6, alpha=1.0, **({"dash": d} if d else {}))
+    GAIN_MARKS = ([dict(_ln(c, d), pts=[[k + 1, round(float(v), 4)] for k, v in enumerate(np.array(_g[n]["mean"]) / _p)]) for n, t, c, d, _ in GAIN_RUNS if n in _have],
+                  [dict(_ln(c, d), pts=[[k + 1, round(float(v), 4)] for k, v in enumerate(G4[_gt[n]] - G4[_gt["preln"]])]) for n, t, c, d, _ in GAIN_RUNS if n in _have])
+    print("Fig 36 layer 48: final probe loss", {n: round(float(G4[_gt[n]][47]), 3) for n in _have}, "scale ratio range",
+          {n: (round(float(min(np.array(_g[n]["mean"]) / _p)), 2), round(float(max(np.array(_g[n]["mean"]) / _p)), 2)) for n in _have - {"preln"}})
+GAIN_LEGEND = [[lab if n in _have else {k: f"{v} ({QUEUED[k].lower()})" if k == "en" else f"{v}（{QUEUED[k]}）" for k, v in lab.items()}, c, "dash" if d else "line"] for n, t, c, d, lab in GAIN_RUNS]
 LOSS48 = {"en": "Layer-48 training loss (nats)", "zh": "第 48 层训练损失（nats）"}
 figs["fig-arch-gain"] = dict(title={"en": "Pre-norm scales, 48 layers", "zh": "pre-norm 增益，48 层"},
-                             legend=[[{"en": "Pre-LN", "zh": "Pre-LN"}, RED, "line"], [{"en": "LayerNorm Scaling, converted", "zh": "LayerNorm Scaling（换算后）"}, BLUE7, "line"],
-                                     [{"en": "Pre-LN, scales start at 1/\u221a\u2113", "zh": "Pre-LN，增益初始化为 1/\u221a\u2113"}, GREEN, "line"]],
+                             legend=GAIN_LEGEND,
                              quantity={"en": "Pre-norm scale relative to Pre-LN's", "zh": "pre-norm 增益相对 Pre-LN 的比值"}, xlabel=LAYER_X, height=200, cols=1,
                              panels=[dict(xlim=[0.5, 48.5], ylim=[0.0, 1.2], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (0, 0.4, 0.8, 1.2)], marks=GAIN_MARKS[0], empty=None if GAIN_MARKS[0] else ARCH2_STATUS,
                                           label={"en": "Mean pre-norm scale by layer", "zh": "每层 pre-norm 增益的均值"}),
