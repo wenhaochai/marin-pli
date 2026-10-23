@@ -521,7 +521,7 @@ GPU 运行（8 GPU，20 h，`--partial`）：w61 `arch2-preln-lnsequiv`（`-apre
 ## A2：Full AttnRes 最大的源（2026-10-22）
 
 脚本：marin-pls-auto10 `scripts/della/attnres_massive.py`。数据：paloma c4_en validation，文本 A 16×1024 token（计分），文本 B 另 16×1024
-token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,full-sep}.json`，状态图 `pls_archive/blog/a2_massive_plot.py`。
+token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,full-sep,full-sep-s1}.json`，状态图 `pls_archive/blog/a2_massive_plot.py`。
 对每个模型取每 token RMS 均值最大的源（子层输出），在写入时替换它。
 
 | 模型 | 最大的源 | 相对中位数 | 与均值的 cos | RMS 变异系数 | 换成文本 B 均值 | 置零 | 每 token 缩放到平均 RMS |
@@ -529,10 +529,13 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 | 普通模型（探针）seed 0 | L44.mlp | 52,810× | 1.000 | 0.05 | +0.0000 | +8.95 | −0.0000 |
 | 普通模型（探针）seed 1 | L47.mlp | 1,511× | 0.961 | 0.57 | +0.0014 | +0.0018 | +0.0008 |
 | 独立头 seed 0 | L22.mlp | 26× | 0.234 | 2.43 | +0.0080 | +0.0083 | +0.585 |
+| 独立头 seed 1 | L48.mlp | 33× | 0.910 | 11.5 | +0.0000 | +0.0000 | +0.0000 |
 
 1. seed 0 的巨大源是一个常数偏置：每个 token 都写同一个向量，换成均值不改变损失，置零损失增加 8.95 nats。读它的是第 48 层 MLP，
    这一层的输出也是常数（与均值的 cos 1.000）；把 L48.mlp 输出换成均值，损失不变。
 2. 这个源只属于 seed 0。seed 1 最大的源小 35 倍，由输出头读取，置零只增加 0.0018 nats。所以“巨大常数源”不是 Full AttnRes 的结构
    性质，是一个种子学到的偏置通路。
-3. 独立头模型没有巨大源（最大 26×）。它的最大源只在少数 token 上很大（p90 的 cos 0.99，中位数 0.09）：值本身不重要（置零 +0.008），
-   但把每个 token 缩放到平均大小的代价是 0.585 nats，信息在“哪些 token 写得大”里。只有一个独立头种子，所以“独立头去掉巨大源”还不成立。
+3. 独立头模型两个种子都没有巨大源（最大 26× 和 33×）；普通模型两个种子是 52,810× 和 1,511×。所以独立头损失让最大的源小 50 到 2,000 倍
+   （每组两个种子）。seed 0 的最大源只在少数 token 上很大（p90 的 cos 0.99，中位数 0.09）：值本身不重要（置零 +0.008），但把每个
+   token 缩放到平均大小的代价是 0.585 nats，信息在“哪些 token 写得大”里。seed 1 的最大源是 L48.mlp，只由输出头读取，任何替换都不改变
+   损失。

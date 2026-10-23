@@ -1,5 +1,5 @@
 """The largest AttnRes source and what it carries (A2 of the 2026-10-21 survey). Status figure for the owner.
-Data: tmp/pls_status/attnres_massive/{full,full-s1,full-sep}.json (marin-pls-auto10 scripts/della/attnres_massive.py,
+Data: tmp/pls_status/attnres_massive/{full,full-s1,full-sep,full-sep-s1}.json (marin-pls-auto10 scripts/della/attnres_massive.py,
 16 x 1024 paloma c4_en validation tokens, Full AttnRes 48 layers, step-4958): per model the source (sublayer output)
 with the largest mean per-token RMS, divided by the median source's RMS; and the final cross-entropy increase when
 that source is replaced, as it is written, by its mean over a second text (mean_held) or by zero.
@@ -11,7 +11,7 @@ from style import *
 
 apply_style()
 D = Path('/scratch/gpfs/GROUP/USER/tmp/pls_status/attnres_massive')
-M = [('full', 'Ordinary\nseed 0'), ('full-s1', 'Ordinary\nseed 1'), ('full-sep', 'Separate heads\nseed 0')]
+M = [('full', 'Ordinary\nseed 0'), ('full-s1', 'Ordinary\nseed 1'), ('full-sep', 'Separate heads\nseed 0'), ('full-sep-s1', 'Separate heads\nseed 1')]
 r = {k: json.load(open(D / f'{k}.json')) for k, _ in M}
 x = np.arange(len(M))
 fig, axes = canvas(1, 2, width=WIDTH_TEXT, panel_height=2.0, title='Largest AttnRes source, Full AttnRes, 48 layers',
