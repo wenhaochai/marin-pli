@@ -196,6 +196,11 @@ class PerLayerQwen3Config(Qwen3Config):
     # output, so the backbone and the main head train exactly as the baseline (online tuned-lens probes of an
     # undisturbed model).
     pls_detach_backbone: bool = False
+    # With separate heads: every intermediate readout (layers 0..L-2) sees only the first round(pls_visible_frac * hidden)
+    # coordinates of the layer output (the rest are set to 0 before its RMSNorm); the final layer's readout sees all of
+    # them. The hidden coordinates are state the later layers read and no intermediate loss grades (owner popup
+    # 2026-10-23: does the separate-heads cost come from the readouts seeing the whole state?). 1.0: all visible.
+    pls_visible_frac: float = 1.0
     # With separate heads: layer k's loss trains its head and layer k only. Its readout recomputes layer k on the
     # stop-gradient output of layer k-1 (the same values), so no layer loss reaches earlier layers or the embedding;
     # the final loss trains everything as usual. One extra forward of layers 0..L-2 per step.
@@ -265,6 +270,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError("pls_local_heads needs pls_separate_heads, without pls_detach_backbone, pls_probe or a weight schedule, on the baseline transformer")
         if self.pls_heads_only and (not self.pls_separate_heads or self.pls_local_heads or self.pls_probe or self.pls_off_end):
             raise ValueError("pls_heads_only needs pls_separate_heads, without pls_local_heads, pls_probe or a weight schedule")
+        if not 0.0 < self.pls_visible_frac <= 1.0 or (self.pls_visible_frac < 1.0 and not self.pls_separate_heads):
+            raise ValueError(f"pls_visible_frac must be in (0, 1], and below 1 only with pls_separate_heads; got {self.pls_visible_frac}")
         if self.pls_detach_backbone and not self.pls_separate_heads:
             raise ValueError("pls_detach_backbone needs pls_separate_heads: with the shared head the loss would train the baseline's lm_head")
         if self.pls_separate_heads and self.pls_detach_head:
@@ -448,6 +455,9 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         h = outs[self.transformer.layers.Block.name, k]
         if detach_input:  # no gradient from this readout into the backbone
             h = jax.lax.stop_gradient(h)
+        if self._separate(k) and self.config.pls_visible_frac < 1.0:  # the readout sees the first coordinates only
+            n = round(self.config.pls_visible_frac * self.Embed.size)
+            h = h * hax.named((jnp.arange(self.Embed.size) < n).astype(h.dtype), self.Embed)
         return norm(h)
 
     def _head(self, k: int) -> NamedArray:

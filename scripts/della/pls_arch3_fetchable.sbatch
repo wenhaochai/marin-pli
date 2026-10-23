@@ -22,6 +22,10 @@
 #                                                                                binary reads (s >= 40) a temperature effect?)
 #   arch3-hc-d{12,24}-{sep,probes}  HC at 12 / 24 layers                         (48 layers: separate heads pay 0.048 nats
 #                                                                                at the last layer; 6 layers: 0.125)
+#   arch3-preln-vis{50,25}-sep   Pre-LN separate heads whose intermediate readouts see only the first 1/2 or 1/4 of the
+#                                hidden coordinates (PLS_VIS; owner popup 2026-10-23: is the cost the readouts seeing the
+#                                whole state?); control: the -apreln- probes run
+#   arch3-preln-s1-{sep,probes}  Pre-LN seed 1 (seed noise of the separate-heads cost)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -37,6 +41,9 @@ case $DESIGN in
   arch3-arqclip) S="$base LAYERS=48 PDP=2 ARCH=attnres AR_QCLIP=10";;
   arch3-hc-d12) S="$base LAYERS=12 PDP=4 ARCH=hc";;
   arch3-hc-d24) S="$base LAYERS=24 PDP=4 ARCH=hc";;
+  arch3-preln-vis50) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.5";;
+  arch3-preln-vis25) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.25";;
+  arch3-preln-s1) S="$base LAYERS=48 PDP=4 ARCH=preln SEED=1";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40

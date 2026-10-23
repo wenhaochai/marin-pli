@@ -251,6 +251,9 @@ GAIN_STEP = os.environ.get("GAIN_STEP", "one")
 # (A null slot, Softmax_1, was dropped before submission: every attnres read feeds an RMSNorm, which cancels the
 # per-token factor the slot multiplies a read by, so it computes the same function as attnres.)
 MHC_RES = os.environ.get("MHC_RES", "sinkhorn")
+# PLS_VIS=f (VARIANT=pls, PLS_SEP=1): every intermediate readout sees only the first f of the hidden coordinates
+# (PerLayerQwen3Config.pls_visible_frac; owner popup 2026-10-23). Tag -vis{f}.
+PLS_VIS = float(os.environ.get("PLS_VIS", "1"))
 AR_QCLIP = float(os.environ.get("AR_QCLIP", "0"))
 if MHC_RES not in ("sinkhorn", "identity") or (MHC_RES != "sinkhorn" and ARCH != "mhc") or (AR_QCLIP and (ARCH != "attnres" or ROUTE != "dynamic")) or AR_QCLIP < 0:
     raise ValueError(f"MHC_RES=identity needs ARCH mhc, AR_QCLIP > 0 needs ARCH attnres with dynamic routing; got MHC_RES={MHC_RES} AR_QCLIP={AR_QCLIP} ARCH={ARCH} ROUTE={ROUTE}")
@@ -317,7 +320,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-mhcid" if MHC_RES == "identity" else "") + (f"-qclip{AR_QCLIP:g}" if AR_QCLIP else "") + ("-os" if PLS_OPT_SPLIT else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-mhcid" if MHC_RES == "identity" else "") + (f"-vis{PLS_VIS:g}" if PLS_VIS != 1 else "") + (f"-qclip{AR_QCLIP:g}" if AR_QCLIP else "") + ("-os" if PLS_OPT_SPLIT else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -409,7 +412,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, depth_mhc_res=MHC_RES, **({"scan_layers": False} if ARCH else {}))
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, depth_mhc_res=MHC_RES, pls_visible_frac=PLS_VIS, **({"scan_layers": False} if ARCH else {}))
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
