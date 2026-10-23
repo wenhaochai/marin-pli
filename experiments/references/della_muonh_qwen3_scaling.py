@@ -312,6 +312,8 @@ DROP_FROM_PASS = int(os.environ.get("DROP_FROM_PASS", "0"))
 INOISE_P = float(os.environ.get("INOISE_P", "0.1"))
 INOISE_MODE = os.environ.get("INOISE_MODE", "zero")
 INOISE_FROM_PASS = int(os.environ.get("INOISE_FROM_PASS", "0"))
+# INOISE_RAND_MAX=n (owner popup 2026-10-23): rand draws only ids below n (8000: the 8K truncation's tokens). Tag -r<n/1000>k.
+INOISE_RAND_MAX = int(os.environ.get("INOISE_RAND_MAX", "0"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
 if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1) or (PASS_DATA.startswith("rsplit") and 0 < float(PASS_DATA[6:]) <= 1)):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
@@ -495,7 +497,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if DTP:
         variant_tags += f"-dtp{DTP:g}-fp{DTP_FROM_PASS}"
     if VARIANT == "inoise":
-        variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
+        variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-r{INOISE_RAND_MAX // 1000}k" if INOISE_RAND_MAX else "") + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
@@ -619,7 +621,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                                                        **(dict(cvd_rate_count=CVD_RATE_COUNT, cvd_counts=f"{_PREFIX}/tokenizers/marin-small/subset_counts_{size}_v128k.npy") if CVD_RATE_COUNT else {}),
                                                        cvd_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (CVD_FROM_PASS - 1) if CVD_FROM_PASS else 0)
     elif VARIANT == "inoise":
-        model_cls, model_extra = InputNoiseQwen3Config, dict(noise_p=INOISE_P, noise_mode=INOISE_MODE,
+        model_cls, model_extra = InputNoiseQwen3Config, dict(noise_p=INOISE_P, noise_mode=INOISE_MODE, noise_rand_max=INOISE_RAND_MAX,
                                                              noise_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (INOISE_FROM_PASS - 1) if INOISE_FROM_PASS else 0)
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,

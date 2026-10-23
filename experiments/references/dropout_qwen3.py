@@ -110,11 +110,14 @@ class InputNoiseQwen3Config(Qwen3Config):
     row to zero and scales the kept rows by 1 / (1 - p) (embedding dropout per position, after AWD-LSTM, Merity et al.
     2017); "rand" replaces its token by one drawn uniformly from the ordinary tokens (the vocabulary minus the 256
     specials), the unigram-free form of data noising (Xie et al. 2017). The model, init, evaluation and the steps before
-    are the baseline's exactly; the draw comes from the trainer's per-step, per-microbatch key."""
+    are the baseline's exactly; the draw comes from the trainer's per-step, per-microbatch key. ``noise_rand_max`` > 0
+    (owner popup 2026-10-23, why random input tokens help 128K and hurt 8K) draws "rand" tokens from ids below it only:
+    8000 gives the 8K truncation's tokens, the common ones, since the truncations are prefixes of the Marin tokenizer."""
 
     noise_p: float = 0.1
     noise_mode: str = "zero"
     noise_from_step: int = 0
+    noise_rand_max: int = 0
 
     def __post_init__(self):
         super().__post_init__()
@@ -124,6 +127,8 @@ class InputNoiseQwen3Config(Qwen3Config):
             raise ValueError(f"noise_mode={self.noise_mode!r}: zero or rand")
         if self.noise_from_step < 0:
             raise ValueError(f"noise_from_step={self.noise_from_step}: must be 0 or more")
+        if self.noise_rand_max and (self.noise_mode != "rand" or self.noise_rand_max < 0):
+            raise ValueError(f"noise_rand_max={self.noise_rand_max}: a positive id bound, only with noise_mode rand")
 
     @property  # type: ignore[override]
     def model_type(self):  # noqa: D401
@@ -148,7 +153,8 @@ class InputNoiseQwen3LMHeadModel(Qwen3LMHeadModel):
         ids = input_ids.array
         hit = jrandom.bernoulli(k_hit, cfg.noise_p, ids.shape) & (jnp.asarray(step) >= cfg.noise_from_step)
         if cfg.noise_mode == "rand":
-            rand = jrandom.randint(k_tok, ids.shape, 0, self.Vocab.size - N_SPECIAL, dtype=ids.dtype)
+            hi = self.Vocab.size - N_SPECIAL
+            rand = jrandom.randint(k_tok, ids.shape, 0, min(cfg.noise_rand_max, hi) if cfg.noise_rand_max else hi, dtype=ids.dtype)
             x = self.embeddings.embed(hax.named(jnp.where(hit, rand, ids), input_ids.axes))
         else:
             # The first token of each attention segment attends only to itself: zeroed, its row stays exactly zero through
