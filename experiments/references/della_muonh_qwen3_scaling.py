@@ -106,6 +106,12 @@ PDP = int(os.environ["PDP"]) if os.environ.get("PDP") else None
 # scales so a run reads the same tokens (vocabulary Q6: a 3072-token window holds about the bytes of 4096 8K tokens;
 # Q7: batch 96 gives 128K about the 8K run's step count). Run tags -sl<SEQ_LEN>, -b<BATCH>.
 SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
+# JAX flash attention tiles the sequence in 1024-token blocks; the Q12 character windows (owner popup 2026-10-22, SEQ_LEN = 4096
+# x token ratio rounded to 128, e.g. 4480) are not multiples of 1024 (w32-w34 smoke: "q axis size 4480 is not a multiple of
+# 1024", 2026-10-23), so such a window takes the largest power-of-two block that divides it. Same attention, no run tag.
+FLASH_BLOCK = None if SEQ_LEN % 1024 == 0 else next((b for b in (512, 256, 128) if SEQ_LEN % b == 0), None)
+if SEQ_LEN % 1024 and FLASH_BLOCK is None:
+    raise ValueError(f"SEQ_LEN={SEQ_LEN}: a multiple of 128 for the flash-attention blocks")
 BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
@@ -653,6 +659,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         hybrid_norm=True,
         # No Transformer Engine on Della, so the GPU default (NVTE) would fall back to unfused O(S^2) attention.
         attn_backend=AttentionBackend.JAX_FLASH,
+        **({"flash_attention_block_size": FLASH_BLOCK} if FLASH_BLOCK else {}),
         **model_extra,
     )
     if VARIANT == "fip" and TIE:
