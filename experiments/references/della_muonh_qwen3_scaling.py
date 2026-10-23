@@ -715,8 +715,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if CVD_RATE_COUNT and not (VARIANT == "cvd" and not VOCAB_K and CVD_RATE_COUNT > 0 and size == "300m"):
         raise ValueError(f"CVD_RATE_COUNT={CVD_RATE_COUNT}: > 0, only with VARIANT=cvd on the Marin tokenizer at 300m (the subset counts)")
     if LR_MULT:
-        if not (VARIANT == "baseline" and DATA_EPOCHS in (0, 8) and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= LR_MULT_FROM_PASS <= 7 and LR_MULT > 0):
-            raise ValueError(f"LR_MULT={LR_MULT}, LR_MULT_FROM_PASS={LR_MULT_FROM_PASS}: factor > 0 and pass 2..7, only with VARIANT=baseline, unique tokens or DATA_EPOCHS=8 with equal passes")
+        # cvd (owner popup 2026-10-23, stacking the best setups with LR x2) keeps the plain MuonH optimizer, so the factor composes with it
+        if not (VARIANT in ("baseline", "cvd") and opt_cls is MuonHConfig and DATA_EPOCHS in (0, 8) and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= LR_MULT_FROM_PASS <= 7 and LR_MULT > 0):
+            raise ValueError(f"LR_MULT={LR_MULT}, LR_MULT_FROM_PASS={LR_MULT_FROM_PASS}: factor > 0 and pass 2..7, only with VARIANT=baseline or cvd on the plain MuonH optimizer, unique tokens or DATA_EPOCHS=8 with equal passes")
         opt_cls, opt_extra = LrMultMuonHConfig, dict(lr_mult=LR_MULT, lr_mult_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (LR_MULT_FROM_PASS - 1))
     if DTP:
         if not (VARIANT == "baseline" and not VOCAB_K and DATA_EPOCHS == 8 and not PASS_DATA.startswith(("bpd", "rsplit")) and 2 <= DTP_FROM_PASS <= 7 and DTP > 0):
