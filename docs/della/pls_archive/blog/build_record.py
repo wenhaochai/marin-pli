@@ -85,6 +85,8 @@ RUNS = [
     # hc and attnres run on 4 GPUs like their controls: on 8 their first step aborted in XLA (w16, w17, other compute).
     *[(S(en, zh), "130m", 48, 2.6, g, ("wq", jids, f"130m-della{g}xh100-pls1-sep-bbfrozen-{tag}-vs-d48"), fig) for en, zh, g, jids, tag, fig in [
         ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", 8, "w15", "apreln-gilns", "36"),
+        ("Pre-LN with LNS's start, step size and clip: probes only", "Pre-LN，取 LNS 的初始值、步长和裁剪：只加探针", 8, "w61", "apreln-gilnsbf-slns", "36"),
+        ("Pre-LN with LNS's step size and clip, scales start at 1: probes only", "Pre-LN，取 LNS 的步长和裁剪，增益初始化为 1：只加探针", 8, "w62", "apreln-slns", "36"),
         ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", 4, "w27", "ahc-rstatic", "37"),
         ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", 4, "w28", "aattnres-rstatic", "37")]],
     (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("wq", "w14", "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
