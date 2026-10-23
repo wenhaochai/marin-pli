@@ -912,6 +912,28 @@ figs["fig-hc-depth"] = dict(title={"en": "Separate-heads cost of Hyper-Connectio
                                                 dict(type="dots", color=BLUE7, pts=[[d, v] for d, v in HCD.items() if v is not None]),
                                                 dict(type="dots", color=GREY, pts=[[48, v] for v in OTH48 if v is not None])])])
 print("Fig 39 HC cost by depth", HCD, "others at 48", OTH48)
+# Figure 40 (owner popups 2026-10-23): is the separate-heads cost the readouts seeing the whole state the later layers
+# read? Pre-LN separate heads whose intermediate readouts see only the first f of the hidden coordinates (PLS_VIS, wq
+# w87/w88), against the Pre-LN probes run; seed 1 of both (w89/w90) shows the seed noise of the cost at f = 1. HC (its
+# readout, the sum of 4 streams, sees a quarter of the stream space) as a grey reference line.
+VIS = {1.0: sep_cost("apreln-vs-d48-g4"), 0.5: None, 0.25: None}
+if G4.get("-sep-apreln-vis0.5-vs-d48/final") is not None:
+    VIS[0.5] = round(float(G4["-sep-apreln-vis0.5-vs-d48/final"][47] - G4["-sep-bbfrozen-apreln-vs-d48-g4/final"][47]), 4)
+if G4.get("-sep-apreln-vis0.25-vs-d48/final") is not None:
+    VIS[0.25] = round(float(G4["-sep-apreln-vis0.25-vs-d48/final"][47] - G4["-sep-bbfrozen-apreln-vs-d48-g4/final"][47]), 4)
+VIS_S1 = sep_cost("apreln-vs-d48-s1")
+VX = {1.0: 0, 0.5: 1, 0.25: 2}
+w40 = [lab for f, lab in ((0.5, "1/2"), (0.25, "1/4")) if VIS[f] is None] + (["seed 1"] if VIS_S1 is None else [])
+figs["fig-vis"] = dict(title={"en": "Separate-heads cost when the readouts see part of the state, Pre-LN, 48 layers", "zh": "读出只看部分状态时的独立头代价，Pre-LN，48 层"},
+                       legend=[[{"en": "Pre-LN, seed 0", "zh": "Pre-LN，种子 0"}, BLUE7, "dot"], [{"en": "Pre-LN, seed 1", "zh": "Pre-LN，种子 1"}, "#8AB4F8", "dot"], [{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, GREY, "line"]],
+                       quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
+                       xlabel={"en": "Share of coordinates the intermediate readouts see", "zh": "中间层读出看到的坐标比例"}, height=200, cols=1,
+                       panels=[dict(xlim=[-0.5, 2.5], ylim=[-0.05, 0.15], xticks=[[0, "1"], [1, "1/2"], [2, "1/4"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
+                                    label={"en": "Layer 48" + (" · " + ", ".join(w40) + " queued" if w40 else ""), "zh": "第 48 层" + (" · " + "、".join(w.replace("seed 1", "种子 1") for w in w40) + " 排队中" if w40 else "")},
+                                    marks=([dict(type="line", color=GREY, width=1.2, alpha=1.0, pts=[[-0.5, HCD[48]], [2.5, HCD[48]]])] if HCD[48] is not None else [])
+                                    + [dict(type="dots", color=BLUE7, pts=[[VX[f], v] for f, v in VIS.items() if v is not None])]
+                                    + ([dict(type="dots", color="#8AB4F8", pts=[[0.12, VIS_S1]])] if VIS_S1 is not None else []))])
+print("Fig 40 visible fraction", VIS, "seed 1", VIS_S1)
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

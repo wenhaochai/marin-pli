@@ -96,6 +96,12 @@ RUNS = [
         ("AttnRes (Full), pseudo-query scale clipped to 10", "AttnRes (Full)，伪查询尺度裁剪到 10", 48, "aattnres-qclip10", "38", ("w78", "w79")),
         ("Hyper-Connections, 24 layers", "Hyper-Connections，24 层", 24, "ahc", "39", ("w80", "w81")),
         ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
+    # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
+    *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
+        ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),
+        ("Pre-LN, separate heads; intermediate readouts see 1/4 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/4 的坐标", "w88", "-apreln-vis0.25-vs-d48"),
+        ("Pre-LN, seed 1: separate heads", "Pre-LN，种子 1：独立头", "w89", "-apreln-vs-d48-s1"),
+        ("Pre-LN, seed 1: probes only", "Pre-LN，种子 1：只加探针", "w90", "-bbfrozen-apreln-vs-d48-s1")]],
     (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("wq", "w14", "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
