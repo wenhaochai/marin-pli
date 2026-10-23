@@ -1,0 +1,4 @@
+# owner popup 2026-10-23 after w107 (8K unique with LR x3 = 1.4427: the 8K base LR is too low): fairness check for w110 (8K x4): unique tokens with the same LR x4 from the same step, so the cost compares like with like. wq --partial.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=VOCAB_K=8000+LR_MULT=4+LR_MULT_FROM_PASS=2
+par lrx4-full-v8k-run 300m-della4xh100-lrx4-fp2-v8k main 4 450m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m VOCAB_K=8000 LR_MULT=4 LR_MULT_FROM_PASS=2
+wait
