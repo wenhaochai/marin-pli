@@ -875,6 +875,43 @@ figs["fig-arch-route"] = dict(title={"en": "Training loss with dynamic and stati
                                            label={"en": "Hyper-Connections", "zh": "Hyper-Connections"}),
                                       dict(xlim=[0, 5000], ylim=[3.0, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (3.0, 3.5, 4.0)], marks=[], empty=ARCH2_STATUS,
                                            label={"en": "AttnRes (Full)", "zh": "AttnRes (Full)"})])
+# Figures 38 and 39 (owner popups 2026-10-22: the follow-ups and their two placeholders; pls_arch3_fetchable.sbatch, wq
+# w76-w83). The separate-heads cost of a design = its separate-heads run's final last-layer training loss minus its probes
+# run's (d48g4.npz "final": the -vs-d48(-g4) runs; at 6 layers auto10.json, mean of the last 50 steps). A variant not
+# fetched yet is named queued in the panel label.
+def sep_cost(tag, layers=48):
+    a, b = G4.get(f"-sep-{tag}/final"), G4.get(f"-sep-bbfrozen-{tag}/final")
+    return None if a is None or b is None else round(float(a[layers - 1] - b[layers - 1]), 4)
+
+
+VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
+         ("amhc-mhcid-vs-d48", {"en": "mHC, residual mixing = I", "zh": "mHC，残差混合 = I"}, BLUE7),
+         ("aattnres-vs-d48-g4", {"en": "AttnRes (Full), seed 0", "zh": "AttnRes (Full)，种子 0"}, GREY),
+         ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
+         ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
+v38 = [sep_cost(t) for t, _, _ in VAR38]
+w38 = [lab for (t, lab, _), v in zip(VAR38, v38) if v is None]
+lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " queued" if w38 else ""), "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 排队中" if w38 else "")}
+figs["fig-arch-var"] = dict(title={"en": "Separate-heads cost of design variants, 48 layers", "zh": "结构变体的独立头代价，48 层"},
+                            legend=[[{"en": "Control", "zh": "对照"}, GREY, "box"], [{"en": "Variant", "zh": "变体"}, BLUE7, "box"]],
+                            quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"}, height=200, cols=1,
+                            panels=[dict(xlim=[-0.7, len(VAR38) - 0.3], ylim=[-0.05, 0.15], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"), cats=[l for _, l, _ in VAR38], label=lab38,
+                                         marks=[dict(type="bars", color=c, vals=[v if i == n else None for n, v in enumerate(v38)]) for i, (_, _, c) in enumerate(VAR38)])])
+print("Fig 38 separate-heads cost", dict(zip([t for t, _, _ in VAR38], v38)))
+HCD = {6: round(A10["hc"][5] - A10["hc-probes"][5], 4) if {"hc", "hc-probes"} <= set(A10) else None,
+       12: sep_cost("ahc-vs-d12", 12), 24: sep_cost("ahc-vs-d24", 24), 48: sep_cost("ahc-vs-d48-g4")}
+OTH48 = [sep_cost("vs-d48-g4")] + [sep_cost(f"a{k}-vs-d48-g4") for k, _ in ARCH if k != "hc"]  # Sandwich-LN, then the other eight
+w39 = [str(d) for d, v in HCD.items() if v is None]
+figs["fig-hc-depth"] = dict(title={"en": "Separate-heads cost of Hyper-Connections by depth", "zh": "Hyper-Connections 的独立头代价与深度"},
+                            legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "line"], [{"en": "Other designs, 48 layers", "zh": "其他结构，48 层"}, GREY, "dot"]],
+                            quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
+                            xlabel={"en": "Layers", "zh": "层数"}, height=200, cols=1,
+                            panels=[dict(xlim=[0, 52], ylim=[-0.05, 0.15], xticks=[[d, str(d)] for d in (6, 12, 24, 48)], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
+                                         label={"en": "Last layer" + (" · " + ", ".join(w39) + " layers queued" if w39 else ""), "zh": "最后一层" + (" · " + "、".join(w39) + " 层排队中" if w39 else "")},
+                                         marks=[dict(type="line", color=BLUE7, width=1.6, alpha=1.0, pts=[[d, v] for d, v in HCD.items() if v is not None]),
+                                                dict(type="dots", color=BLUE7, pts=[[d, v] for d, v in HCD.items() if v is not None]),
+                                                dict(type="dots", color=GREY, pts=[[48, v] for v in OTH48 if v is not None])])])
+print("Fig 39 HC cost by depth", HCD, "others at 48", OTH48)
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

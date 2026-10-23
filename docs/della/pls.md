@@ -539,3 +539,27 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
    （每组两个种子）。seed 0 的最大源只在少数 token 上很大（p90 的 cos 0.99，中位数 0.09）：值本身不重要（置零 +0.008），但把每个
    token 缩放到平均大小的代价是 0.585 nats，信息在“哪些 token 写得大”里。seed 1 的最大源是 L48.mlp，只由输出头读取，任何替换都不改变
    损失。
+
+## A3：结构变体与 HC 深度扫描（2026-10-23，wq w76–w83，排队中）
+
+起因：所有者弹窗（2026-10-22）批准四个跟进实验，并要求本项目同时排队的作业不少于 4 个。代码 pls 436fdb2e3c，CPU 测试
+`scripts/della/depth_arch_variant3_test.py`，作业脚本 `scripts/della/pls_arch3_fetchable.sbatch`（按作业名选设置；每个实验都跑
+独立头 `-sep` 和普通模型加探针 `-probes` 两次，各 4 GPU，`--partial`）。独立头代价 = 独立头 run 最后一层最终训练损失减探针 run 的。
+
+| 实验 | 作业 | 对照的代价 | 检验 |
+|---|---|---|---|
+| mHC，残差混合固定为 I（`MHC_RES=identity`，tag -mhcid） | w76 sep，w77 probes | mHC 0.102 | mHC 付全价是否因为双随机乘积随深度坍缩到低秩 |
+| Full AttnRes，伪查询 Post Clip，s = ‖q⊙g‖√d ≤ 10（`AR_QCLIP=10`，tag -qclip10） | w78，w79 | seed 0 −0.021，seed 1 +0.061 | 近二值读取（s ≥ 40）是否只是温度效应；它是否影响代价 |
+| HC 24 层 | w80，w81 | 48 层 0.048，6 层 0.125 | 半价从多深开始出现 |
+| HC 12 层 | w82，w83 | 同上 | 同上 |
+
+1. 批准的第五项“Full AttnRes 加空槽（Softmax₁）”在提交前去掉了（独立审查发现）。Softmax₁ 的权重等于普通 softmax 的权重乘以每个 token
+   一个常数 c = S/(S + e^{−max})。AttnRes 的每个读取后面都接 RMSNorm（子层的 ln_1/ln_2，读出的 final norm），RMSNorm 把 c 消掉，所以模型
+   计算的函数不变（只差 norm 的 eps）。源本身是分支输出，空槽碰不到它们。要让“什么都不读”起作用，空值必须改变归一化之后的结果（例如可学的
+   空值向量，或读取加回一个不归一化的残差流）。
+2. Post Clip（kexue.fm/archives/11729）：每步更新之后，若 s > τ，把 q 乘以 τ/s，方向不变，键增益 g 不裁剪。源的 logit = s·cos(v, q⊙g)，
+   所以 τ 限制每个 logit 的绝对值。τ = 10：独立头模型后三分之一层 s 的中位数是 9.0，普通模型 19.1（A1）。预测：普通模型的二值读取
+   （最大权重 > 0.9）从 11.6% 降到接近独立头的 1.1%，最后一层损失变化在种子噪声内。
+3. mHC identity：残差 logit 的 phi 列、增益和偏置得到的梯度恰好为 0（测试 1），Adam（eps 1e-8）不更新它们。
+4. HC 深度扫描用与 48 层相同的宽度、数据和步数（LAYERS=12/24，`-vs-d12`/`-vs-d24`）。比较用的其他结构只有 48 层的数据。
+5. 网页 Fig 38（`fig-arch-var`）和 Fig 39（`fig-hc-depth`）加了占位（所有者弹窗 2026-10-22，“两张图”），已有的点已画出。

@@ -89,6 +89,13 @@ RUNS = [
         ("Pre-LN with LNS's step size and clip, scales start at 1: probes only", "Pre-LN，取 LNS 的步长和裁剪，增益初始化为 1：只加探针", 8, "w62", "apreln-slns", "36"),
         ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", 4, "w27", "ahc-rstatic", "37"),
         ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", 4, "w28", "aattnres-rstatic", "37")]],
+    # owner popups 2026-10-22: design variants (Figure 38) and the HC depth sweep (Figure 39), pls_arch3_fetchable.sbatch
+    *[(S(en + (": separate heads" if bb == "" else ": probes only"), zh + ("：独立头" if bb == "" else "：只加探针")), "130m", L, 2.6, 4,
+       ("wq", jid, f"130m-della4xh100-pls1-sep{bb}-{tag}-vs-d{L}"), fig) for en, zh, L, tag, fig, pair in [
+        ("mHC, residual mixing fixed to I", "mHC，残差混合固定为 I", 48, "amhc-mhcid", "38", ("w76", "w77")),
+        ("AttnRes (Full), pseudo-query scale clipped to 10", "AttnRes (Full)，伪查询尺度裁剪到 10", 48, "aattnres-qclip10", "38", ("w78", "w79")),
+        ("Hyper-Connections, 24 layers", "Hyper-Connections，24 层", 24, "ahc", "39", ("w80", "w81")),
+        ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
     (S("Probes on the finished NTP model, weights kept", "在训练完的 NTP 模型上加探针，保留权重"), "130m", 6, 1.0, 8, ("wq", "w14", "130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep"), "22"),
     (S("Separate heads, layer losses summing to 1", "独立头，各层损失权重合计为 1"), "130m", 6, 2.6, 4, ("slurm", 14998751, "130m-della4xh100-pls0.2-sep"), "12, 13"),
     (S("Separate heads, each head trains its own layer", "独立头，每个头只训练自己那一层"), "130m", 6, 2.6, 4, ("slurm", 14998752, "130m-della4xh100-pls1-sep-local"), "12"),
