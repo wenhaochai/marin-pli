@@ -1,0 +1,43 @@
+#!/bin/bash
+#SBATCH --job-name=arch3
+#SBATCH --account=pli
+#SBATCH --partition=pli-c
+#SBATCH --qos=pli-short
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=48
+#SBATCH --mem-per-gpu=32G
+#SBATCH --time=20:00:00
+#SBATCH --output=/scratch/gpfs/GROUP/USER/project/marin-pls/logs/slurm/%x_%j.out
+#FETCHABLE: self-contained (the run's knobs below come from the job name, nothing from the submit shell)
+
+# Internals follow-ups (owner popup 2026-10-22: mHC with H_res = I, AttnRes query Post Clip, HC depth sweep; the approved
+# AttnRes null slot was dropped before submission: an RMSNorm follows every AttnRes read and cancels it). Each design runs twice, as its control in pls_d48_g4_submit.sh: separate heads (-sep: PLS_DETACH_BB=0)
+# and the ordinary model with probes (-probes: PLS_DETACH_BB=1), each on 4 GPUs (wq puts two 4-GPU jobs on one host).
+#   arch3-mhcid-{sep,probes}     mhc with the residual mixing fixed to I        (control -amhc-; survey B5: does rank
+#                                                                                collapse of the Sinkhorn product make
+#                                                                                mHC's separate heads pay full price?)
+#   arch3-arqclip-{sep,probes}   Full AttnRes, pseudo-query logit scale <= 10   (control -aattnres-; A1: are the near-
+#                                                                                binary reads (s >= 40) a temperature effect?)
+#   arch3-hc-d{12,24}-{sep,probes}  HC at 12 / 24 layers                         (48 layers: separate heads pay 0.048 nats
+#                                                                                at the last layer; 6 layers: 0.125)
+# Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
+set -euo pipefail
+cd /scratch/gpfs/GROUP/USER/project/marin-pls
+if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=${FETCHED_JOB_NAME:-$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' ')}; else NAME=$SLURM_JOB_NAME; fi
+case $NAME in
+  *-sep) BB=0; DESIGN=${NAME%-sep};;
+  *-probes) BB=1; DESIGN=${NAME%-probes};;
+  *) echo "arch3 job name '$NAME' must end in -sep or -probes"; exit 2;;
+esac
+base="SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=$BB PARAM_MAP=vocab NUM_GPUS=4"
+case $DESIGN in
+  arch3-mhcid) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity";;
+  arch3-arqclip) S="$base LAYERS=48 PDP=2 ARCH=attnres AR_QCLIP=10";;
+  arch3-hc-d12) S="$base LAYERS=12 PDP=4 ARCH=hc";;
+  arch3-hc-d24) S="$base LAYERS=24 PDP=4 ARCH=hc";;
+  *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
+esac
+export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
+exec bash scripts/della/pls_h100x8_single.sbatch

@@ -54,6 +54,12 @@ Two variants (config fields, default off; tests: scripts/della/depth_arch_varian
                            function, the same clip factor (the clip sees lns's gradients), the same Adam direction (Adam is
                            scale-free per coordinate up to eps 1e-20), so the same trajectory up to rounding (Lean
                            ArchLean.PracTrain; tests: scripts/della/lns_equiv_test.py).
+Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.py):
+    depth_mhc_res="identity"  mhc with the residual mixing fixed to the identity, H <- H + w (x) F(RN(x)): only read and
+                           write are learned (the m^2 residual columns of phi, their gain and biases get no gradient).
+    DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
+                           after each step, so that its logit scale s = ||q * g|| sqrt(d) stays <= tau: q <- q min(1, tau / s)
+                           (the key gain g is not clipped). A source's logit is s cos(v, q * g), so tau bounds every logit.
 
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
 the sum of the streams for hc and mhc; for attnres the mix the next layer's attention reads (after the last layer, the
@@ -327,9 +333,12 @@ class DepthArchLayer(eqx.Module):
             res = mix["mhc", 2 * m :] * g["hp_scale", 2] + c["mhc", 2 * m :]
             read = hax.nn.sigmoid(pre.rename({"mhc": "stream"}))
             write = 2.0 * hax.nn.sigmoid(post.rename({"mhc": "stream_out"}))
-            A = _sinkhorn_liger(res.unflatten_axis("mhc", (So, S)))  # (..., stream_out, stream) = (out, in)
             x = hax.dot(read, Hf, axis=S)
             f = self.branch(j, x.astype(H.dtype), mask, key=keys[j], pos_ids=pos_ids)
+            if _mhc_identity(self.config):  # the residual mixing fixed to the identity
+                H = (Hf + (write * f32(f).broadcast_axis(So)).rename({"stream_out": "stream"})).astype(H.dtype)
+                continue
+            A = _sinkhorn_liger(res.unflatten_axis("mhc", (So, S)))  # (..., stream_out, stream) = (out, in)
             H = (hax.dot(A, Hf, axis=S) + write * f32(f).broadcast_axis(So)).rename({"stream_out": "stream"}).astype(H.dtype)
         return H
 
@@ -357,6 +366,13 @@ def _static(config) -> bool:
     if route not in ("dynamic", "static"):
         raise ValueError(f"depth_route must be 'dynamic' or 'static', got {route!r}")
     return route == "static"
+
+
+def _mhc_identity(config) -> bool:
+    res = getattr(config, "depth_mhc_res", "sinkhorn")
+    if res not in ("sinkhorn", "identity"):
+        raise ValueError(f"depth_mhc_res must be 'sinkhorn' or 'identity', got {res!r}")
+    return res == "identity"
 
 
 def _static_weights(theta: NamedArray, n, d: int) -> NamedArray:
@@ -466,6 +482,8 @@ class DepthArchTransformer(eqx.Module):
             f = hax.named(lns_factor(config.num_layers, jnp.bfloat16) if gain_init == "lns_bf16" else f, config.Layers)
             stacked = eqx.tree_at(lambda b: (b.ln_1.weight, b.ln_2.weight), stacked, (stacked.ln_1.weight * f, stacked.ln_2.weight * f))
         static = attnres and _static(config)
+        if _mhc_identity(config) and arch != "mhc":
+            raise ValueError(f"depth_mhc_res='identity' needs mhc, got {arch!r}")
         if static and arch != "attnres":
             raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
         if _static(config) and arch not in ("hc", "attnres"):
@@ -693,6 +711,7 @@ class DepthArchMuonHConfig(MuonHConfig):
     "hyper", "query", "key_gain" or "src_logit") get their own Adam with ``new_param_epsilon`` (see the module docstring for why)."""
 
     new_param_epsilon: float = 1e-8
+    attnres_query_clip: float = 0.0  # > 0: attnres_query_post_clip(tau) after the update (module docstring)
 
     def build(self, num_train_steps):
         learning_rate_schedule = self.lr_scheduler(num_train_steps)
@@ -711,7 +730,8 @@ class DepthArchMuonHConfig(MuonHConfig):
                 "adam": adam(self.epsilon),
                 "adam_new": adam(self.new_param_epsilon),
             }
-            return optax.multi_transform(transformations, self.create_mask)
+            tx = optax.multi_transform(transformations, self.create_mask)
+            return optax.chain(tx, attnres_query_post_clip(self.attnres_query_clip)) if self.attnres_query_clip > 0 else tx
 
         return optax.inject_hyperparams(optimizer)(learning_rate=learning_rate_schedule, adam_lr=adam_lr_schedule)
 
@@ -726,6 +746,36 @@ class DepthArchMuonHConfig(MuonHConfig):
             return "adam_new" if label == "adam" and any(f in path_str for f in _NEW_PARAMS) else label
 
         return jax.tree_util.tree_map(relabel, base, paths, is_leaf=lambda x: isinstance(x, (str, hnn.Linear)))
+
+
+def attnres_query_post_clip(tau: float):
+    """Post Clip of attnres's pseudo-queries (kexue.fm/archives/11729): the update is changed so that after it every
+    pseudo-query q (each layer's two, and the head's) has logit scale s = ||q * g|| sqrt(d) <= tau, q <- q min(1, tau / s),
+    with g the key gain after its own update (not clipped). In float32; params must be passed (optax.chain does)."""
+
+    def clip_q(uq: NamedArray, q: NamedArray, ug: NamedArray, g: NamedArray, Embed: Axis) -> NamedArray:
+        qn = q.astype(jnp.float32) + uq.astype(jnp.float32)
+        w = qn * (g.astype(jnp.float32) + ug.astype(jnp.float32))
+        s = hax.sqrt(hax.sum(w * w, axis=Embed.name)) * math.sqrt(Embed.size)
+        fac = hax.where(s > tau, tau / hax.maximum(s, 1e-30), 1.0)
+        return (qn * fac - q.astype(jnp.float32)).astype(uq.dtype)
+
+    def fix(u, p):
+        if not isinstance(p, DepthArchTransformer) or not p.arch.startswith("attnres") or p.final_query is None:
+            return u
+        Embed = p.config.Embed
+        us, ps = cast(Stacked, u.layers).stacked, cast(Stacked, p.layers).stacked
+        uq = clip_q(us.query, ps.query, us.key_gain, ps.key_gain, Embed)
+        fq = clip_q(u.final_query, p.final_query, u.final_key_gain, p.final_key_gain, Embed)
+        return eqx.tree_at(lambda t: (t.layers.stacked.query, t.final_query), u, (uq, fq))
+
+    def update(updates, state, params=None):
+        if params is None:
+            raise ValueError("attnres_query_post_clip needs params")
+        is_t = lambda x: isinstance(x, DepthArchTransformer)  # noqa: E731
+        return jax.tree_util.tree_map(fix, updates, params, is_leaf=is_t), state
+
+    return optax.GradientTransformation(lambda params: optax.EmptyState(), update)
 
 
 def lns_factor(n, dtype):

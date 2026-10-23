@@ -245,6 +245,15 @@ ARCH = os.environ.get("ARCH", "")
 ROUTE = os.environ.get("ROUTE", "dynamic")
 GAIN_INIT = os.environ.get("GAIN_INIT", "one")
 GAIN_STEP = os.environ.get("GAIN_STEP", "one")
+# MHC_RES=identity (ARCH=mhc): the residual mixing fixed to the identity, only read and write learned. Tag -mhcid.
+# AR_QCLIP=tau (ARCH=attnres): Post Clip of every pseudo-query's logit scale ||q * g|| sqrt(d) to <= tau after each step
+# (DepthArchMuonHConfig.attnres_query_clip). Tag -qclip{tau}. Both: owner popup 2026-10-22, depth_arch_qwen3 docstring.
+# (A null slot, Softmax_1, was dropped before submission: every attnres read feeds an RMSNorm, which cancels the
+# per-token factor the slot multiplies a read by, so it computes the same function as attnres.)
+MHC_RES = os.environ.get("MHC_RES", "sinkhorn")
+AR_QCLIP = float(os.environ.get("AR_QCLIP", "0"))
+if MHC_RES not in ("sinkhorn", "identity") or (MHC_RES != "sinkhorn" and ARCH != "mhc") or (AR_QCLIP and (ARCH != "attnres" or ROUTE != "dynamic")) or AR_QCLIP < 0:
+    raise ValueError(f"MHC_RES=identity needs ARCH mhc, AR_QCLIP > 0 needs ARCH attnres with dynamic routing; got MHC_RES={MHC_RES} AR_QCLIP={AR_QCLIP} ARCH={ARCH} ROUTE={ROUTE}")
 if ROUTE not in ("dynamic", "static") or GAIN_INIT not in ("one", "lns", "lns_bf16") or GAIN_STEP not in ("one", "lns") or (ROUTE != "dynamic" and ARCH not in ("hc", "attnres")) or ((GAIN_INIT != "one" or GAIN_STEP != "one") and ARCH != "preln"):
     raise ValueError(f"ROUTE=static needs ARCH hc or attnres, GAIN_INIT / GAIN_STEP need ARCH preln; got ROUTE={ROUTE} GAIN_INIT={GAIN_INIT} GAIN_STEP={GAIN_STEP} ARCH={ARCH}")
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "pls", *OBJECTIVE_VARIANTS):
@@ -308,7 +317,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-os" if PLS_OPT_SPLIT else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-mhcid" if MHC_RES == "identity" else "") + (f"-qclip{AR_QCLIP:g}" if AR_QCLIP else "") + ("-os" if PLS_OPT_SPLIT else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -400,7 +409,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, **({"scan_layers": False} if ARCH else {}))
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, depth_mhc_res=MHC_RES, **({"scan_layers": False} if ARCH else {}))
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
@@ -419,6 +428,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);
     # every other run, the baseline included, keeps MuonHConfig exactly.
+    if AR_QCLIP and PLS_OPT_SPLIT:
+        raise ValueError("AR_QCLIP is implemented in DepthArchMuonHConfig, not with PLS_OPT_SPLIT")
     if GAIN_STEP == "lns" and (PLS_OPT_SPLIT or HEADS_FROM):
         raise ValueError("GAIN_STEP=lns has its own optimizer; not with PLS_OPT_SPLIT or HEADS_FROM")
     if GAIN_STEP == "lns":
@@ -453,6 +464,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         min_lr_ratio=0.0,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
+        **({"attnres_query_clip": AR_QCLIP} if AR_QCLIP else {}),
     )
 
     def build_config(ctx: StepContext) -> TrainLmOnPodConfig:
