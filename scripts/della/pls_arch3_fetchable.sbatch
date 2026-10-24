@@ -26,6 +26,9 @@
 #                                hidden coordinates (PLS_VIS; owner popup 2026-10-23: is the cost the readouts seeing the
 #                                whole state?); control: the -apreln- probes run
 #   arch3-preln-s1-{sep,probes}  Pre-LN seed 1 (seed noise of the separate-heads cost)
+#   arch3-arvnorm-{sep,probes}   Full AttnRes whose sources enter every mix at unit RMS (AR_VNORM=1; owner popup 2026-10-24:
+#                                the ordinary models' largest source is 1,511x to 52,810x the median and their loss spikes;
+#                                control -aattnres-)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -44,6 +47,7 @@ case $DESIGN in
   arch3-preln-vis50) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.5";;
   arch3-preln-vis25) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.25";;
   arch3-preln-s1) S="$base LAYERS=48 PDP=4 ARCH=preln SEED=1";;
+  arch3-arvnorm) S="$base LAYERS=48 PDP=2 ARCH=attnres AR_VNORM=1";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40

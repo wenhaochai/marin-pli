@@ -60,6 +60,10 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
     DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
                            after each step, so that its logit scale s = ||q * g|| sqrt(d) stays <= tau: q <- q min(1, tau / s)
                            (the key gain g is not clipped). A source's logit is s cos(v, q * g), so tau bounds every logit.
+One more (owner popup 2026-10-24; tests: scripts/della/depth_arch_variant3_test.py):
+    depth_attnres_vnorm=True  attnres (full, dynamic routing): every source enters the mix at unit RMS, sum_i w_i v_i / RMS(v_i)
+                           (the weights w_i unchanged); no parameters. The ordinary models' largest source is 1,511x to
+                           52,810x the median source (A2) and their loss spikes; this removes source magnitudes from the mix.
 
 The state read out after layer k (the per-layer heads and the final norm see it): h for the residual designs and moda;
 the sum of the streams for hc and mhc; for attnres the mix the next layer's attention reads (after the last layer, the
@@ -361,6 +365,13 @@ class DepthArchLayer(eqx.Module):
         return h + self.mlp(xf, key=k2), (ka, va), (kf, vf)
 
 
+def _vnorm(config) -> bool:
+    v = bool(getattr(config, "depth_attnres_vnorm", False))
+    if v and (getattr(config, "depth_arch", None) != "attnres" or _static(config)):
+        raise ValueError("depth_attnres_vnorm needs depth_arch attnres with dynamic routing")
+    return v
+
+
 def _static(config) -> bool:
     route = getattr(config, "depth_route", "dynamic")
     if route not in ("dynamic", "static"):
@@ -401,12 +412,15 @@ def _put(V: NamedArray, R: NamedArray, i, f: NamedArray, Embed: Axis):
     return V.at["src", i].set(f.astype(V.dtype)), R.at["src", i].set(r)
 
 
-def _mix_buf(query: NamedArray, V: NamedArray, R: NamedArray, n) -> NamedArray:
+def _mix_buf(query: NamedArray, V: NamedArray, R: NamedArray, n, vnorm: bool = False) -> NamedArray:
     """_mix over the first n sources of the buffer V (axis src; later slots masked out). RMS(V_i) = V_i R_i, so the
-    logits are (query . V_i) R_i, accumulated in float32, and the weighted sum accumulates in float32."""
+    logits are (query . V_i) R_i, accumulated in float32, and the weighted sum accumulates in float32. vnorm: the sum of
+    w_i V_i R_i (every source at unit RMS)."""
     Src = V.resolve_axis("src")
     logits = hax.dot(V, query.astype(V.dtype), axis=query.axes[0], preferred_element_type=jnp.float32) * R
     w = hax.nn.softmax(hax.where(hax.arange(Src) < n, logits, -1e30), axis=Src)
+    if vnorm:
+        w = w * R
     return hax.dot(w.astype(V.dtype), V, axis=Src, preferred_element_type=jnp.float32).astype(V.dtype)
 
 
@@ -566,7 +580,7 @@ class DepthArchTransformer(eqx.Module):
         V = hax.zeros((Axis("src", 2 * L + 1),) + x.axes, dtype=x.dtype)
         R = hax.zeros((Axis("src", 2 * L + 1),) + tuple(a for a in x.axes if a.name != Embed.name), dtype=jnp.float32)
         V, R = _put(V, R, 0, x, Embed)
-        static = _static(cfg)
+        static, vnorm = _static(cfg), _vnorm(cfg)
         if static:  # the next read's static logits per layer: layer i+1's attention, after the last layer the head's
             th = cast(NamedArray, stacked.src_logit)
             nxt = hax.concatenate(cfg.Layers.name, [th[Sub, 0][cfg.Layers.name, 1:], cast(NamedArray, self.final_src_logit).broadcast_axis(cfg.Layers.resize(1))])
@@ -577,7 +591,7 @@ class DepthArchTransformer(eqx.Module):
         def mix(q, V, R, n):
             if static:
                 return hax.dot(_static_weights(q, n, Embed.size).astype(V.dtype), V, axis="src", preferred_element_type=jnp.float32).astype(V.dtype)
-            return _mix_buf(q, V, R, n)
+            return _mix_buf(q, V, R, n, vnorm)
 
         def step(layer, carry, i, q_next, *, key):
             h_in, V, R = carry
@@ -592,7 +606,8 @@ class DepthArchTransformer(eqx.Module):
             out = mix(q_next, V, R, 2 * n + 3)
             return (out, V, R), out
 
-        _, outs = self._two_level_scan(step, (x, V, R), hax.arange(cfg.Layers), nxt, key=key)
+        h0 = _rms(x, Embed) if vnorm else x   # layer 0's attention reads the one source, at unit RMS under vnorm (as the loop)
+        _, outs = self._two_level_scan(step, (h0, V, R), hax.arange(cfg.Layers), nxt, key=key)
         return outs
 
     def _moda_scan(self, x: NamedArray, attn_mask, *, key, pos_ids) -> NamedArray:
@@ -658,7 +673,9 @@ class DepthArchTransformer(eqx.Module):
                 return values + [partial], rkeys + [_rms(partial, Embed)]
             return values, rkeys
 
-        static = _static(cfg)
+        static, vnorm = _static(cfg), _vnorm(cfg)
+        if vnorm and block:
+            raise ValueError("depth_attnres_vnorm is implemented for attnres (full), not attnres_block")
 
         def query(i: int, j: int) -> NamedArray:
             lay = blocks[i]
@@ -668,7 +685,7 @@ class DepthArchTransformer(eqx.Module):
 
         def _mixq(q: NamedArray, vals: list, rk: list) -> NamedArray:
             if not static:
-                return _mix(q, vals, rk)
+                return _mix(q, rk if vnorm else vals, rk)   # vnorm: the values are the keys, the sources at unit RMS
             w = _static_weights(q, len(vals), Embed.size)
             out = vals[0] * w["src", 0].astype(vals[0].dtype)
             for t in range(1, len(vals)):
