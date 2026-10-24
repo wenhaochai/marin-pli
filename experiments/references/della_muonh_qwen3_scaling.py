@@ -498,9 +498,14 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
                 per_device_parallelism=pdp,  # PDP=<n>: microbatch per device
+                # EVAL_PDP=<n>: eval sequences per device (default -1: the train microbatch). The microbatch-1 designs
+                # evaluate in fewer, larger batches at 4; zero-weight padding keeps the evaluated tokens the same (speed work 2026-10-24).
+                per_device_eval_parallelism=int(os.environ.get("EVAL_PDP", "-1")),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
-                max_eval_batches=1 if SMOKE_STEPS else None,
+                # SMOKE_EVAL_BATCHES=<n>: a smoke evaluates n batches instead of 1 (an A/B of EVAL_PDP sets n so both arms
+                # see the same sequences).
+                max_eval_batches=int(os.environ.get("SMOKE_EVAL_BATCHES", "1")) if SMOKE_STEPS else None,
                 checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
