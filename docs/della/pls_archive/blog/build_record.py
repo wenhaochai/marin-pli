@@ -308,7 +308,10 @@ rows = []
 WB = "https://wandb.ai/reself/marin-della/runs/muonh-qwen3-"
 CODE = "https://github.com/wenhaochai/marin-pli/tree/"
 # private commit -> public commit, from the last scrub of the pls branch (tmp/pls_scan/scrub.sh, git filter-repo)
-CMAP = dict(line.split()[:2] for line in open("/scratch/gpfs/GROUP/USER/tmp/pls_scan/pls_public/.git/filter-repo/commit-map").read().splitlines()[1:])
+# The pls-mtp branch (w12-w14 ran from it) has its own scrub (scrub_mtp.sh), public branch per-layer-contribution-mtp;
+# filter-repo maps the shared history to the same public commits, so the two maps merge.
+CMAP = {k: v for f in ("pls_public", "pls_mtp_public")
+        for k, v in (line.split()[:2] for line in open(f"/scratch/gpfs/GROUP/USER/tmp/pls_scan/{f}/.git/filter-repo/commit-map").read().splitlines()[1:])}
 
 
 def wandb_run(rid):

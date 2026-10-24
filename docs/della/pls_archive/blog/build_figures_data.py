@@ -919,13 +919,21 @@ HCD = {6: round(A10["hc"][5] - A10["hc-probes"][5], 4) if {"hc", "hc-probes"} <=
        12: sep_cost("ahc-vs-d12", 12), 24: sep_cost("ahc-vs-d24", 24), 48: sep_cost("ahc-vs-d48-g4")}
 OTH48 = [sep_cost("vs-d48-g4")] + [sep_cost(f"a{k}-vs-d48-g4") for k, _ in ARCH if k != "hc"]  # Sandwich-LN, then the other eight
 w39 = [str(d) for d, v in HCD.items() if v is None]
+# the line joins only neighbouring measured depths: a depth still training leaves a gap, not an interpolated value
+HCD_SEGS, _seg = [], []
+for d, v in HCD.items():
+    if v is None:
+        HCD_SEGS, _seg = HCD_SEGS + ([_seg] if len(_seg) > 1 else []), []
+    else:
+        _seg = _seg + [[d, v]]
+HCD_SEGS += [_seg] if len(_seg) > 1 else []
 figs["fig-hc-depth"] = dict(title={"en": "Separate-heads cost of Hyper-Connections by depth", "zh": "Hyper-Connections 的独立头代价与深度"},
                             legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "line"], [{"en": "Other designs, 48 layers", "zh": "其他结构，48 层"}, GREY, "dot"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
                             xlabel={"en": "Layers", "zh": "层数"}, height=200, cols=1,
                             panels=[dict(xlim=[0, 52], ylim=[-0.05, 0.15], xticks=[[d, str(d)] for d in (6, 12, 24, 48)], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
                                          label={"en": "Last layer" + (" · " + ", ".join(w39) + " layers queued" if w39 else ""), "zh": "最后一层" + (" · " + "、".join(w39) + " 层排队中" if w39 else "")},
-                                         marks=[dict(type="line", color=BLUE7, width=1.6, alpha=1.0, pts=[[d, v] for d, v in HCD.items() if v is not None]),
+                                         marks=[dict(type="line", color=BLUE7, width=1.6, alpha=1.0, pts=seg) for seg in HCD_SEGS] + [
                                                 dict(type="dots", color=BLUE7, pts=[[d, v] for d, v in HCD.items() if v is not None]),
                                                 dict(type="dots", color=GREY, pts=[[48, v] for v in OTH48 if v is not None])])])
 print("Fig 39 HC cost by depth", HCD, "others at 48", OTH48)
