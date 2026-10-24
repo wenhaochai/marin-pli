@@ -24,7 +24,7 @@ archs = [("" if a == "sandwich" else a) for a in args] or ARCHS
 api = wandb.Api(timeout=300)
 P = "reself/marin-della/muonh-qwen3-130m-della{}xh100-pls1"
 ARCH2_GPUS = {"preln-gilns": 8, "hc-rstatic": 4, "attnres-rstatic": 4, "preln-gilnsbf-slns": 8, "preln-slns": 8}
-keys = [f"train/pls/L{k}" for k in range(48)]
+keys48 = [f"train/pls/L{k}" for k in range(48)]
 out = dict(np.load(OUT, allow_pickle=True)) if OUT.exists() else {}
 errors = 0
 # Steps whose W&B row was lost although training ran through them, checked in the Slurm logs before listing. 4595: job
@@ -33,7 +33,7 @@ errors = 0
 # 4631: the same for the seed-1 probes run (15520126 saved step-4631 at its limit; 15538869 loaded it, 2026-10-17).
 LOGGING_GAPS = {"-sep-aattnres-vs-d48-g4": {4595}, "-sep-bbfrozen-aattnres-vs-d48-s1-g4": {4631}}
 
-def history(r, last):
+def history(r, last, keys):
     by = {}
     for lo in range(0, last + 1, 1000):
         for x in r.scan_history(keys=["_step", *keys], min_step=lo, max_step=lo + 1000, page_size=2000):
@@ -41,11 +41,21 @@ def history(r, last):
                 by[x["_step"]] = x   # a resumed run logs the steps after its last checkpoint twice; keep the last value
     return by
 
+# The A3 / E1 arms (pls_arch3_fetchable.sbatch, wq w76-w90) are 4-GPU runs named -vs-d{L} with no -g4:
+# "arch3:<middle>:<L>[@seed]", e.g. arch3:ahc:24 -> -sep-ahc-vs-d24, arch3:apreln@s1:48 -> -sep-apreln-vs-d48-s1.
 for arch in archs:
     arch2 = arch.removeprefix("arch2:") if arch.startswith("arch2:") else None
+    arch3 = arch.removeprefix("arch3:") if arch.startswith("arch3:") else None
+    nl = int(arch3.split(":")[1].partition("@")[0]) if arch3 else 48
+    keys = keys48[:nl]
+    sel = sorted({0, nl // 4 - 1, nl // 2 - 1, 3 * nl // 4 - 1, nl - 2, nl - 1})
     for setup in (("-sep-bbfrozen",) if arch2 else ("-sep", "-sep-bbfrozen")):
         a_, _, seed = arch.partition("@")   # "attnres@s1": the seed-1 copy (-vs-d48-s1-g4; Figure 8)
-        tag = f"{setup}-a{arch2}-vs-d48" if arch2 else setup + (f"-a{a_}" if a_ else "") + "-vs-d48" + (f"-{seed}" if seed else "") + "-g4"
+        if arch3:
+            mid, _, rest = arch3.partition(":")
+            tag = f"{setup}-{mid}-vs-d{nl}" + (f"-{rest.partition('@')[2]}" if "@" in rest else "")
+        else:
+            tag = f"{setup}-a{arch2}-vs-d48" if arch2 else setup + (f"-a{a_}" if a_ else "") + "-vs-d48" + (f"-{seed}" if seed else "") + "-g4"
         try:
             r = api.run(P.format(ARCH2_GPUS[arch2] if arch2 else 4) + tag)
         except Exception as e:
@@ -58,7 +68,7 @@ for arch in archs:
         if r.state != "finished" and not partial:
             print(tag, r.state, "step", last, "skipped")
             continue
-        by = history(r, last)
+        by = history(r, last, keys)
         if not by:
             print(tag, r.state, "no rows"); continue
         st = np.array(sorted(by)); ce = np.array([[by[s][k] for k in keys] for s in st])
@@ -67,10 +77,10 @@ for arch in archs:
         gaps = len(missing - allowed)
         complete = r.state == "finished" and st[-1] == n - 1 and last == n - 1 and gaps == 0
         fin = ce[-50:].mean(0)
-        ev = np.array([r.summary.get(f"eval/L{k}/loss", np.nan) for k in range(48)], float)
+        ev = np.array([r.summary.get(f"eval/L{k}/loss", np.nan) for k in range(nl)], float)
         print(f"{tag} {r.state} step {st[-1]} of {n - 1} unique {len(st)} gaps {gaps} (allowed {sorted(missing & allowed)}) nonfinite {int((~np.isfinite(ce)).sum())} complete {complete}\n"
-              f"  final L1 L12 L24 L36 L47 L48 {np.round(fin[[0, 11, 23, 35, 46, 47]], 3).tolist()}\n"
-              f"  eval  L1 L12 L24 L36 L47 L48 {np.round(ev[[0, 11, 23, 35, 46, 47]], 3).tolist()} eval/loss {r.summary.get('eval/loss')} params {r.summary.get('parameter_count')}")
+              f"  final L{[k + 1 for k in sel]} {np.round(fin[sel], 3).tolist()}\n"
+              f"  eval  L{[k + 1 for k in sel]} {np.round(ev[sel], 3).tolist()} eval/loss {r.summary.get('eval/loss')} params {r.summary.get('parameter_count')}")
         if partial:
             continue
         if complete:

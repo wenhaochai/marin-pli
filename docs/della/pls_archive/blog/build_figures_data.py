@@ -868,13 +868,28 @@ figs["fig-arch-gain"] = dict(title={"en": "Pre-norm scales, 48 layers", "zh": "p
                                           label={"en": "Mean pre-norm scale by layer", "zh": "每层 pre-norm 增益的均值"}),
                                      dict(xlim=[0.5, 48.5], ylim=[-0.6, 0.1], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (-0.6, -0.4, -0.2, 0)], marks=GAIN_MARKS[1], empty=None if GAIN_MARKS[1] else ARCH2_STATUS,
                                           label={"en": "Final probe training loss minus Pre-LN's", "zh": "探针最终训练损失减 Pre-LN"})])
+# Figure 37 (L2, wq w27 HC done 2026-10-24, w28 AttnRes): each probes run's layer-48 training loss by step (d48g4.npz
+# "ce", 50-step running mean, 400 points); static routing keeps only the static part of the read / mixing / write.
+ROUTE37 = [("hc", "ahc-vs-d48-g4", "ahc-rstatic-vs-d48", {"en": "Hyper-Connections", "zh": "Hyper-Connections"}),
+           ("attnres", "aattnres-vs-d48-g4", "aattnres-rstatic-vs-d48", {"en": "AttnRes (Full)", "zh": "AttnRes (Full)"})]
+def _route_line(tag, col):
+    st, ce = G4.get(f"-sep-bbfrozen-{tag}/step"), G4.get(f"-sep-bbfrozen-{tag}/ce")
+    if st is None or ce is None:
+        return None
+    xs, y = smooth(np.asarray(st, float), np.asarray(ce, float)[:, 47])   # values above the panel are clipped by the chart
+    idx = np.unique(np.linspace(0, len(xs) - 1, 400).astype(int)); return dict(type="line", color=col, width=1.6, alpha=1.0, pts=pts(xs[idx], y[idx]))
+_rp = []
+for _a, _dyn, _sta, _lab in ROUTE37:
+    _m = [m for m in (_route_line("apreln-vs-d48-g4", GREY), _route_line(_dyn, BLUE7), _route_line(_sta, GREEN)) if m is not None]
+    _q = G4.get(f"-sep-bbfrozen-{_sta}/final") is None
+    _rp.append(dict(xlim=[0, 5000], ylim=[2.8, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (2.8, 3.2, 3.6, 4.0)],
+                    marks=_m, empty=None if _m else ARCH2_STATUS,
+                    label={k: v + ((" · static routing queued" if k == "en" else " · 静态路由排队中") if _q else "") for k, v in _lab.items()}))
+    print("Fig 37", _a, "layer-48 final probe loss dynamic / static",
+          *(None if G4.get(f"-sep-bbfrozen-{t}/final") is None else round(float(G4[f"-sep-bbfrozen-{t}/final"][47]), 3) for t in (_dyn, _sta)))
 figs["fig-arch-route"] = dict(title={"en": "Training loss with dynamic and static routing, 48 layers", "zh": "动态路由与静态路由的训练损失，48 层"},
                               legend=[[{"en": "Dynamic routing", "zh": "动态路由"}, BLUE7, "line"], [{"en": "Static routing", "zh": "静态路由"}, GREEN, "line"], [{"en": "Pre-LN", "zh": "Pre-LN"}, GREY, "line"]],
-                              quantity=LOSS48, xlabel={"en": "Training step", "zh": "训练步数"}, height=200,
-                              panels=[dict(xlim=[0, 5000], ylim=[3.0, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (3.0, 3.5, 4.0)], marks=[], empty=ARCH2_STATUS,
-                                           label={"en": "Hyper-Connections", "zh": "Hyper-Connections"}),
-                                      dict(xlim=[0, 5000], ylim=[3.0, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (3.0, 3.5, 4.0)], marks=[], empty=ARCH2_STATUS,
-                                           label={"en": "AttnRes (Full)", "zh": "AttnRes (Full)"})])
+                              quantity=LOSS48, xlabel={"en": "Training step", "zh": "训练步数"}, height=200, panels=_rp)
 # Figures 38 and 39 (owner popups 2026-10-22: the follow-ups and their two placeholders; pls_arch3_fetchable.sbatch, wq
 # w76-w83). The separate-heads cost of a design = its separate-heads run's final last-layer training loss minus its probes
 # run's (d48g4.npz "final": the -vs-d48(-g4) runs; at 6 layers auto10.json, mean of the last 50 steps). A variant not
