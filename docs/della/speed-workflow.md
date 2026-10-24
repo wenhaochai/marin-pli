@@ -1,0 +1,45 @@
+# Speed investigation of the 300m vocab runs (workflow wf_cb88f9ae-72b, 2026-10-24)
+
+One sentence: the charwin runs lose about 40% of their step time to a 128-token flash block, every 300m run spends about
+half of its step in a pure-JAX flash attention that full per-layer remat runs twice, and three candidate fixes are built on
+branches but none is verified on H100.
+
+Owner decision (10-24, via the terminal session): the vocab and pls studies keep running on the current code; nothing
+below is switched on or A/B-tested; the findings go to the nanomarin session. Worktrees stay in
+`/scratch/gpfs/GROUP/USER/tmp/speed_wt/`. Every speed number is from an A40/A100 on a shared vis node or an estimate
+from logs, never an H100 measurement. Raw agent outputs: the workflow journal
+(`~/.claude/projects/-home-USER/c574d901-7815-4be8-b851-ba33c8717449/subagents/workflows/wf_cb88f9ae-72b/journal.jsonl`).
+
+## Measured baseline (logs, 4x H100)
+
+| Run | SEQ_LEN | flash block | s/step |
+|---|---|---|---|
+| 8K (w107) | 4096 | 1024 | 1.2-1.29 |
+| 64K (w58) | 4096 | 1024 | 1.4 |
+| 128K (w20 etc.) | 4096 | 1024 | 1.51-1.56 |
+| bytes (w29) | 4096 | 1024 | 1.25 |
+| charwin v64k / v32k / v16k / v8k | 4224 / 4480 / 4992 / 5504 | 128 | 2.5 / 2.6 / 3.1 / 3.7 |
+| charwin bytes | 19456 | 1024 | 18.5 |
+
+Peak device memory 12.3-13.0 GiB of 71 GiB on every run. Non-step overhead (eval, checkpoints, compile) 3.5-5.5% of wall
+time; Paloma eval alone 3.5% at 8K. Head + cross-entropy about 17-19% of the step at 128K, 11% at 64K, 2% at 8K
+(step-time differences across vocabularies). Collectives about 1% (estimate from the compiled HLO's collective volume).
+
+## Candidates
+
+| Candidate | Change (where) | Expected gain | Numerics | State |
+|---|---|---|---|---|
+| Flash block = largest divisor of SEQ_LEN <= 1024 and a multiple of 32 | `experiments/references/della_muonh_qwen3_scaling.py:112` (FLASH_BLOCK rule); e.g. 4224->704, 4480->896, 4992->832, 5504->688 | charwin attention per layer -33 to -38% (A40, B=32); est. charwin step 2.5->~1.45 s | reordering-level (same flash path, other chunking); out diff 0.023, same error vs f32 as block 128 | not built (one line), not on H100 |
+| FA4/CuTe segmented attention backend | branch `speed-fa4-segmented-attention-backend` 6497ef5720: new AttentionBackend case in `lib/levanter/src/levanter/layers/attention.py` routing to `lib/levanter/src/levanter/grug/attention/_fa4_cute.py` | fwd 6-12x faster than JAX flash (A40); full 300m fwd 2.0x at 4096 (A40); est. -40% step at 4096, -60% charwin | precision-level, not bitwise; error vs f32 equal or smaller than JAX flash on sm80; no cross-document leak in 30 probes | review: not harmless yet. sm90 backward never ran (head_dim 64 goes through the generic launcher); random-init checks are weak; A/B plan unsound (afterok on a raw sbatch id, no seed-noise reference, covers only 20% of the schedule) |
+| Save flash residuals in remat (REMAT=flash) | branch `speed-save-flash-residuals-remat` 444ea137bf: names flash_o/flash_ell in the flash forward, save them in the per-layer checkpoint policy | -15% at 4096, -26% at 4224 (A40, batch 2); est. 12% on H100; +2.5 GiB/device at 300m | same math, bf16 grads differ 1.1-1.7% rel L2 (same distance to f32 as full remat; 1.8e-6 in f32) | review: not harmless yet (no H100 A/B; cleanup and retry hazards in the A/B scripts; weak acceptance test) |
+| CUDA-graph while loops (XLA_CMD_BUFFER_WHILE=1) | branch `speed-command-buffer-while` fe5a177339: launcher adds `--xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL` | est. up to 30% for charwin (the 128-block loop is launch-bound); A40 timing was noise | same kernels; step-0 loss bitwise, 158/159 grad leaves bitwise on A40 | review: not harmless yet (H100 and multi-GPU FSDP unverified; A/B rerun hazard with fixed run ids) |
+| cuDNN attention with a dense segment mask | `jax.nn.dot_product_attention(..., implementation='cudnn')` in levanter `dot_product_attention` | fwd+bwd 2x vs JAX flash at 4096 (A40); est. 20% | precision-level | not built; fallback if FA4 fails on H100 |
+| XLA CE fast backward / balanced vocab blocks | levanter fused CE (`maybe_fused_next_token_loss`) | 0.5-3% | rounding-level; the current 128K H100 path has grad rel error 2e-2 vs f32, 5-20x the XLA path | not built |
+| Collective overlap flags | XLA latency-hiding scheduler flags | ~0.7% | none | not built |
+| SIGTERM checkpoint, charwin task limits, per-step host sync | trainer / plans | 0.5-1.5% | none | not built |
+| Rejected | pure data parallel (0%), no remat + microbatching (-5%) | | | |
+
+## Not tested anywhere
+
+H100 (sm90) timing and numerics of every candidate; multi-GPU FSDP numerics; a same-seed full-schedule A/B (the planned
+A/Bs covered only the first ~20% of the schedule at high LR); 520m/1_2b memory with saved residuals.
