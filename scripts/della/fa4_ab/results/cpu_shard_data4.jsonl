@@ -1,0 +1,6 @@
+{"variant": "ref32", "S": 256, "B": 8, "layers": 2, "loss": 7.372927665710449, "grad_norm": 34.97307275425931, "block": null}
+{"variant": "jax_flash", "S": 256, "B": 8, "layers": 2, "loss": 7.37253475189209, "grad_norm": 34.972728275126755, "block": 256}
+{"variant": "fa4 (kernel replaced by f32 dense attention on the same lower bounds)", "S": 256, "B": 8, "layers": 2, "loss": 7.372927665710449, "grad_norm": 34.972116465628154, "block": null}
+{"params_identical_across_variants": true, "n_leaves": 16}
+{"fa4_local_qkv_shapes": [[2, 256, 12, 64]], "devices": 4}
+{"doc_count": 58, "doc_mean": 35.310344827586206, "doc_max": 135}

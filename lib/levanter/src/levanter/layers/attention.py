@@ -67,6 +67,9 @@ class AttentionBackend(StrEnum):
     SPLASH = "splash"  # on TPU.
     JAX_FLASH = "jax_flash"  # Use the JAX reference implementation
     VANILLA = "vanilla"  # regular dot product attention
+    # Causal (+ packed-document segment ids) self-attention through the grug FA4/CuTe segmented kernel
+    # (levanter.grug.attention). NVIDIA GPU only (sm80/sm90/sm100); no fallback: unsupported inputs raise.
+    FA4_CUTE = "fa4_cute"
 
 
 _SPLASH_FALLBACK_WARNINGS_EMITTED: set[str] = set()
@@ -271,6 +274,24 @@ def dot_product_attention(
                     scaling_factor=scaling_factor,
                     logits_soft_cap=logits_soft_cap,
                 )
+
+        case AttentionBackend.FA4_CUTE:
+            attention_out = _fa4_cute_attention(
+                QPos,
+                KPos,
+                Key,
+                query,
+                key,
+                value,
+                mask,
+                bias=bias,
+                dropout=dropout,
+                inference=inference,
+                attention_dtype=attention_dtype,
+                scaling_factor=scaling_factor,
+                logits_soft_cap=logits_soft_cap,
+                attn_sink=attn_sink,
+            )
 
         case _:
             attention_out = None
@@ -647,6 +668,166 @@ def _te_flash_attention(
     attn_output = attn_output.rearrange(reference_out_shape.axes).astype(reference_out_shape.dtype)
 
     return attn_output
+
+
+def _fa4_flat_physical_axes(axes) -> tuple[str, ...] | None:
+    """Mesh axes that the logical ``axes`` (one BSHD bin) are sharded over, flattened; None if unsharded."""
+    names: list[str] = []
+    for entry in pspec_for_axis(axes):
+        if entry is None:
+            continue
+        if isinstance(entry, tuple):
+            names.extend(e for e in entry if e is not None)
+        else:
+            names.append(entry)
+    return tuple(names) if names else None
+
+
+def _fa4_segment_lower_bounds(segment_ids: jax.Array) -> jax.Array:
+    """Per query, the first key position of its segment: the start of the run of equal ids that holds it.
+
+    ``segment_ids`` is [B, S]. Keys ``lower_bound[b, q] <= k <= q`` are exactly the keys allowed by
+    ``causal & (segment_ids[q] == segment_ids[k])`` whenever each id value occupies one contiguous run per row,
+    which holds for levanter's eos-cumsum segment ids (monotone) and for trailing -1 padding.
+    """
+    seq_len = segment_ids.shape[1]
+    positions = jnp.arange(seq_len, dtype=jnp.int32)[None, :]
+    previous = jnp.concatenate([segment_ids[:, :1], segment_ids[:, :-1]], axis=1)
+    starts = (positions == 0) | (segment_ids != previous)
+    return jax.lax.cummax(jnp.where(starts, positions, 0), axis=1).astype(jnp.int32)
+
+
+def _fa4_cute_attention(
+    QPos: AxisSelector,
+    KPos: AxisSelection,
+    Key: AxisSelector,
+    query: NamedArray,
+    key: NamedArray,
+    value: NamedArray,
+    mask: Optional[Union[NamedArray, "AttentionMask"]],
+    *,
+    bias: Optional[NamedArray],
+    dropout: float,
+    inference: bool,
+    attention_dtype: Optional[jnp.dtype],
+    scaling_factor: float,
+    logits_soft_cap: float | None,
+    attn_sink: Optional[NamedArray],
+) -> NamedArray:
+    """Causal self-attention, optionally restricted to packed documents, via the grug FA4/CuTe kernel.
+
+    The kernel takes BSHD bf16/fp16 q/k/v and per-token key lower bounds instead of a mask, so the
+    levanter mask must be ``AttentionMask.causal()`` plus at most segment ids. It runs per device inside a
+    shard_map over the batch (and head) mesh axes that the inputs are already sharded on; the sequence axis
+    must be unsharded. Softmax statistics are fp32 inside the kernel.
+    """
+    from levanter.grug.attention._fa4_cute import _segmented_kernel_config  # noqa: PLC0415  # optional CUDA deps
+    from levanter.grug.attention._fa4_cute_backend import fa4_cute_attention_forward  # noqa: PLC0415
+
+    if bias is not None:
+        raise NotImplementedError("FA4_CUTE attention does not support bias.")
+    if attn_sink is not None:
+        raise NotImplementedError("FA4_CUTE attention does not support attention sinks.")
+    if logits_soft_cap is not None:
+        raise NotImplementedError("FA4_CUTE attention does not support logits_soft_cap.")
+    if dropout != 0.0 and not inference:
+        raise NotImplementedError("FA4_CUTE attention does not support dropout.")
+    if not isinstance(mask, AttentionMask) or not mask.is_causal:
+        raise NotImplementedError("FA4_CUTE attention requires a causal AttentionMask.")
+    if (
+        mask.causal_offset is not None
+        or mask.explicit_mask is not None
+        or mask.sliding_window is not None
+        or mask.bidirectional_window is not None
+    ):
+        raise NotImplementedError(
+            "FA4_CUTE attention supports only AttentionMask.causal() with optional segment ids "
+            "(no causal_offset, explicit_mask, sliding_window or bidirectional_window)."
+        )
+    if isinstance(scaling_factor, jax.Array) or not isinstance(scaling_factor, (int, float)):
+        raise NotImplementedError("FA4_CUTE attention requires a static Python float scaling_factor.")
+
+    dtype = jnp.dtype(attention_dtype or query.dtype)
+    if dtype not in (jnp.dtype(jnp.bfloat16), jnp.dtype(jnp.float16)):
+        raise NotImplementedError(f"FA4_CUTE attention computes in bf16/fp16 only, got {dtype} (upcast_attn=True?).")
+    query = query.astype(dtype)
+    key = key.astype(dtype)
+    value = value.astype(dtype)
+
+    q_class, k_class, v_class = _bin_and_group_axes_by_function(query, key, value, QPos, KPos, Key)
+    QPos = query.resolve_axis(QPos)
+    KPos = key.resolve_axis(KPos)
+    if QPos.size != KPos.size:
+        raise NotImplementedError("FA4_CUTE attention supports self-attention only (q_len == k_len).")
+
+    q_ = _reshape_axes_for_bshd_bins(query, q_class).array
+    k_ = _reshape_axes_for_bshd_bins(key, k_class).array
+    v_ = _reshape_axes_for_bshd_bins(value, v_class).array
+    batch, seq_len = q_.shape[0], q_.shape[1]
+
+    if mask.segment_ids is not None:
+        # Self-attention: levanter builds (ids, ids) from one array (AttentionMask.with_segment_ids), so the
+        # query ids define the documents for the keys too.
+        q_segment_ids = mask.segment_ids[0].astype(jnp.int32)
+        batch_names = {ax.name for ax in q_class["B"]}
+        for ax in q_class["B"]:
+            if ax.name not in q_segment_ids.shape:
+                q_segment_ids = q_segment_ids.broadcast_axis(ax)
+        extra = [ax.name for ax in q_segment_ids.axes if ax.name != QPos.name and ax.name not in batch_names]
+        if extra:
+            raise NotImplementedError(f"FA4_CUTE attention: segment ids carry axes {extra} beyond batch and position.")
+        segment_ids = _maybe_flatten(q_segment_ids, q_class["B"], "B").rearrange(("B", QPos.name)).array
+    else:
+        segment_ids = jnp.zeros((batch, seq_len), dtype=jnp.int32)
+
+    if _fa4_flat_physical_axes(q_class["S"]) is not None or _fa4_flat_physical_axes(k_class["S"]) is not None:
+        raise NotImplementedError("FA4_CUTE attention requires an unsharded sequence axis.")
+    if _fa4_flat_physical_axes(q_class["D"]) is not None:
+        raise NotImplementedError("FA4_CUTE attention requires an unsharded head_size axis.")
+    batch_spec = _fa4_flat_physical_axes(q_class["B"])
+    q_spec = PartitionSpec(batch_spec, None, _fa4_flat_physical_axes(q_class["H"]), None)
+    kv_spec = PartitionSpec(batch_spec, None, _fa4_flat_physical_axes(k_class["H"]), None)
+    segment_spec = PartitionSpec(batch_spec, None)
+
+    kernel_config = _segmented_kernel_config(q_.shape[-1])
+    sm_scale = float(scaling_factor)
+
+    def _local_attention(q, k, v, seg):
+        lower_bounds = _fa4_segment_lower_bounds(seg)
+        valid = jnp.ones(q.shape[:2], dtype=jnp.bool_)
+        return fa4_cute_attention_forward(q, k, v, lower_bounds, valid, sm_scale=sm_scale, kernel_config=kernel_config)
+
+    mesh = hax.partitioning._get_mesh()
+    if mesh is None or mesh.empty:
+        attn_output = _local_attention(q_, k_, v_, segment_ids)
+    else:
+        attn_output = shard_map(
+            _local_attention,
+            mesh=mesh,
+            in_specs=(q_spec, kv_spec, kv_spec, segment_spec),
+            out_specs=q_spec,
+            check_rep=False,
+        )(q_, k_, v_, segment_ids)
+
+    attn_output = haliax.named(attn_output, ("B", "S", "H", "D"))
+    attn_output = _unflatten_bshd(attn_output, q_class, v_class)
+    reference_out_shape = eqx.filter_eval_shape(
+        simple_attention_with_dropout,
+        QPos,
+        KPos,
+        Key,
+        query,
+        key,
+        value,
+        mask,
+        None,
+        True,
+        0.0,
+        dtype,
+        None,
+        prng=None,
+    )
+    return attn_output.rearrange(reference_out_shape.axes).astype(reference_out_shape.dtype)
 
 
 def _te_get_mask_type(mask):

@@ -1,0 +1,7 @@
+# FA4 attention A/B (branch speed-fa4-segmented-attention-backend, this worktree's code in both arms) at the default shape:
+# 300m, VOCAB_K=64000, SEQ_LEN=4096, seed 0, data_seed 42, batch 128, the full 11444-step schedule, each arm cut at
+# AB_WALL=60m (~2300 steps for the JAX-flash arm at 1.4 s/step: evals at 1000 and 2000). Arm A: JAX flash, block 1024.
+# Arm B: FA4/CuTe. Output directories are removed at the end (RUN_TAG -ab1); no permanent checkpoints (first at 10000).
+par ab-jax-sl4096 - other 4 75m /scratch/gpfs/GROUP/USER/tmp/speed_wt/fa4-segmented-attention-backend/scripts/della/fa4_ab/fa4_run.sh CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VOCAB_K=64000 ATTN_BACKEND=jax_flash RUN_TAG=-ab1 AB_WALL=60m
+par ab-fa4-sl4096 - other 4 75m /scratch/gpfs/GROUP/USER/tmp/speed_wt/fa4-segmented-attention-backend/scripts/della/fa4_ab/fa4_run.sh CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VOCAB_K=64000 ATTN_BACKEND=fa4 RUN_TAG=-ab1 AB_WALL=60m
+wait

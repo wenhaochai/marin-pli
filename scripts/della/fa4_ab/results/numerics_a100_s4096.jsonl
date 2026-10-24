@@ -1,0 +1,8 @@
+{"variant": "ref32", "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Failed to get configs for: 4 out of 154 instructions. See logs for all failures. Example failure: \nOut of memory while trying to allocate 3.02GiB with allocator GPU_0_bfc on device 0. [tf-allocator-allocation-error='']"}
+{"variant": "jax_flash", "S": 4096, "B": 4, "layers": 2, "loss": 11.55250358581543, "grad_norm": 12.435257404622305, "block": null, "seconds": 6.5}
+{"variant": "jax_flash_alt", "S": 4096, "B": 4, "layers": 2, "loss": 11.552519798278809, "grad_norm": 12.436054821096874, "block": 512, "seconds": 13.3}
+{"variant": "fa4", "S": 4096, "B": 4, "layers": 2, "loss": 11.552545547485352, "grad_norm": 12.436706271770735, "block": null, "seconds": 15.2}
+{"params_identical_across_variants": true, "n_leaves": 16}
+{"doc_count": 26, "doc_mean": 630.1538461538462, "doc_max": 2073}
+{"compare": "fa4 vs jax_flash", "loss_a": 11.552545547485352, "loss_b": 11.55250358581543, "loss_abs_diff": 4.1961669921875e-05, "grad_norm_a": 12.436706271770735, "grad_norm_b": 12.435257404622305, "grad_norm_rel_diff": 0.00011651283936356978, "grad_rel_l2": 0.01481731915919149, "grad_max_abs_diff": 0.000732421875, "grad_max_rel_diff_worst_leaf": [".transformer.layers.stacked.self_attn.q_norm.weight[<flat index 0>]", 0.016393441706895828]}
+{"compare": "jax_flash_alt vs jax_flash", "loss_a": 11.552519798278809, "loss_b": 11.55250358581543, "loss_abs_diff": 1.621246337890625e-05, "grad_norm_a": 12.436054821096874, "grad_norm_b": 12.435257404622305, "grad_norm_rel_diff": 6.412544980955385e-05, "grad_rel_l2": 0.010175505789721082, "grad_max_abs_diff": 0.00048828125, "grad_max_rel_diff_worst_leaf": [".transformer.layers.stacked.mlp.gate_proj.weight[<flat index 0>]", 0.013020833022892475]}
