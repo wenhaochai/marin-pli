@@ -77,6 +77,9 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 # Block sizes only change tiling, not the loss, so use the inferred sizes.
 os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
 PROFILE = os.environ.get("PROFILE", "")
+# LOG_JAXPR=0 skips levanter's jaxpr / StableHLO text dumps of each program (minutes of host work with the GPUs idle);
+# the compiled programs are the same (speed work 2026-10-24).
+LOG_JAXPR = os.environ.get("LOG_JAXPR", "1") == "1"
 
 VERSION = "2026.09.13"
 # NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the
@@ -512,6 +515,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 seed=SEED,
                 model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,
                 allow_nondivisible_batch_size=True,
+                log_jaxprs=LOG_JAXPR,
+                log_xla_hlo=LOG_JAXPR,
                 # PROFILE="<start>:<steps>" traces those train steps with jax.profiler into <log_dir>/<run id>/profiler (kept
                 # local); measurement only, the run's math is unchanged (speed work, owner 2026-10-24).
                 **({"profiler": ProfilerConfig(enabled=True, start_step=int(PROFILE.split(":")[0]), num_steps=int(PROFILE.split(":")[1]),
