@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from equinox import filter_eval_shape
 from haliax import AxisSelection, AxisSpec, ds
-from haliax.jax_utils import named_call
+from haliax.jax_utils import named_call, tree_checkpoint_name
 from haliax.types import PrecisionLike
 from jaxtyping import PRNGKeyArray
 
@@ -296,6 +296,10 @@ def _flash_attention_forward(
 
     _, o, ell = jax.lax.while_loop(lambda state: state[0] < Tr, do_o_block, (0, o, ell))
 
+    # Name the residuals so a remat policy (ScanCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"])) can
+    # save them instead of re-running this forward in the backward pass. The names are identities otherwise.
+    o = tree_checkpoint_name(o, "flash_o")
+    ell = tree_checkpoint_name(ell, "flash_ell")
     return o, (o, ell)
 
 
