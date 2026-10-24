@@ -954,7 +954,7 @@ figs["fig-vis"] = dict(title={"en": "Separate-heads cost when the readouts see p
                        quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
                        xlabel={"en": "Share of coordinates the intermediate readouts see", "zh": "中间层读出看到的坐标比例"}, height=200, cols=1,
                        panels=[dict(xlim=[-0.5, 2.5], ylim=[-0.05, 0.15], xticks=[[0, "1"], [1, "1/2"], [2, "1/4"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
-                                    label={"en": "Layer 48" + (" · " + ", ".join(w40) + " queued" if w40 else ""), "zh": "第 48 层" + (" · " + "、".join(w.replace("seed 1", "种子 1") for w in w40) + " 排队中" if w40 else "")},
+                                    label={"en": "Layer 48" + (" · " + ", ".join(w40) + " still training" if w40 else ""), "zh": "第 48 层" + (" · " + "、".join(w.replace("seed 1", "种子 1") for w in w40) + " 还在训练" if w40 else "")},
                                     marks=([dict(type="line", color=GREY, width=1.2, alpha=1.0, pts=[[-0.5, HCD[48]], [2.5, HCD[48]]])] if HCD[48] is not None else [])
                                     + [dict(type="dots", color=BLUE7, pts=[[VX[f], v] for f, v in VIS.items() if v is not None])]
                                     + ([dict(type="dots", color="#8AB4F8", pts=[[0.12, VIS_S1]])] if VIS_S1 is not None else []))])
