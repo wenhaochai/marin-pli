@@ -35,6 +35,7 @@ from haliax.partitioning import ResourceAxis
 from haliax.quantization import QuantizationConfig
 from levanter.optim.model_averaging import EmaModelAveragingConfig
 from levanter.checkpoint import CheckpointerConfig
+from levanter.callbacks.profiler import ProfilerConfig, XprofUploadConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
 from levanter.models.qwen import Qwen3Config
@@ -75,6 +76,7 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 # (its kernel jaxpr is unavailable), so every run and resume segment re-sweeps: ~10 min at 1_2b before the first step.
 # Block sizes only change tiling, not the loss, so use the inferred sizes.
 os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
+PROFILE = os.environ.get("PROFILE", "")
 
 VERSION = "2026.09.13"
 # NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the
@@ -510,6 +512,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 seed=SEED,
                 model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,
                 allow_nondivisible_batch_size=True,
+                # PROFILE="<start>:<steps>" traces those train steps with jax.profiler into <log_dir>/<run id>/profiler (kept
+                # local); measurement only, the run's math is unchanged (speed work, owner 2026-10-24).
+                **({"profiler": ProfilerConfig(enabled=True, start_step=int(PROFILE.split(":")[0]), num_steps=int(PROFILE.split(":")[1]),
+                                               upload=XprofUploadConfig(enabled=False))} if PROFILE else {}),
             ),
             train_seq_len=SEQ_LEN,
             initialize_model_from_checkpoint_path=HEADS_FROM,
