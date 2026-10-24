@@ -1,0 +1,4 @@
+{"variant": "jax_flash", "S": 4096, "B": 8, "layers": 12, "fwd_loss": 11.544757843017578, "fwd_ms_min": 416.4089789846912, "fwd_ms_median": 419.0713340358343, "device": "NVIDIA A40"}
+{"variant": "fa4", "S": 4096, "B": 8, "layers": 12, "fwd_loss": 11.54464340209961, "fwd_ms_min": 209.69043299555779, "fwd_ms_median": 212.09924551658332, "device": "NVIDIA A40"}
+{"variant": "jax_flash", "S": 4224, "B": 8, "layers": 12, "fwd_loss": 11.548439979553223, "fwd_ms_min": 604.2489899555221, "fwd_ms_median": 667.2661534976214, "device": "NVIDIA A40"}
+{"variant": "fa4", "S": 4224, "B": 8, "layers": 12, "fwd_loss": 11.54840087890625, "fwd_ms_min": 184.59359096596017, "fwd_ms_median": 270.1473284687381, "device": "NVIDIA A40"}

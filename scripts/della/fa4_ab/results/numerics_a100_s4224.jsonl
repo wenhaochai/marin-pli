@@ -1,0 +1,8 @@
+{"variant": "jax_flash", "S": 4224, "B": 4, "layers": 2, "loss": 11.542545318603516, "grad_norm": 12.24893394546175, "block": 128, "seconds": 21.5}
+{"variant": "jax_flash_alt", "S": 4224, "B": 4, "layers": 2, "loss": 11.542586326599121, "grad_norm": 12.24857010077719, "block": 704, "seconds": 8.6}
+{"variant": "fa4", "S": 4224, "B": 4, "layers": 2, "loss": 11.542555809020996, "grad_norm": 12.249375860528112, "block": null, "seconds": 11.9}
+{"variant": "ref32", "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 10.56GiB with allocator GPU_0_bfc on device 0. [executable_name='jit_loss_fn'] [tf-allocator-allocation-error='']"}
+{"params_identical_across_variants": true, "n_leaves": 16}
+{"doc_count": 27, "doc_mean": 625.7777777777778, "doc_max": 2096}
+{"compare": "fa4 vs jax_flash", "loss_a": 11.542555809020996, "loss_b": 11.542545318603516, "loss_abs_diff": 1.049041748046875e-05, "grad_norm_a": 12.249375860528112, "grad_norm_b": 12.24893394546175, "grad_norm_rel_diff": 3.6077838963655357e-05, "grad_rel_l2": 0.015726212144398163, "grad_max_abs_diff": 0.000732421875, "grad_max_rel_diff_worst_leaf": [".transformer.layers.stacked.self_attn.k_norm.weight[<flat index 0>]", 0.02489626593887806]}
+{"compare": "jax_flash_alt vs jax_flash", "loss_a": 11.542586326599121, "loss_b": 11.542545318603516, "loss_abs_diff": 4.100799560546875e-05, "grad_norm_a": 12.24857010077719, "grad_norm_b": 12.24893394546175, "grad_norm_rel_diff": 2.970419190605869e-05, "grad_rel_l2": 0.014403297497673525, "grad_max_abs_diff": 0.000732421875, "grad_max_rel_diff_worst_leaf": [".transformer.layers.stacked.self_attn.k_norm.weight[<flat index 0>]", 0.02282157726585865]}

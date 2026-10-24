@@ -110,10 +110,12 @@ PDP = int(os.environ["PDP"]) if os.environ.get("PDP") else None
 SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
 # JAX flash attention tiles the sequence in 1024-token blocks; the Q12 character windows (owner popup 2026-10-22, SEQ_LEN = 4096
 # x token ratio rounded to 128, e.g. 4480) are not multiples of 1024 (w32-w34 smoke: "q axis size 4480 is not a multiple of
-# 1024", 2026-10-23), so such a window takes the largest power-of-two block that divides it. Same attention, no run tag.
-FLASH_BLOCK = None if SEQ_LEN % 1024 == 0 else next((b for b in (512, 256, 128) if SEQ_LEN % b == 0), None)
+# 1024", 2026-10-23), so such a window takes the largest block <= 1024 that divides it and is a multiple of 32 (speed,
+# owner 2026-10-25 "应上尽上": 4224 -> 704, 4480 -> 896, 4992 -> 832, 5504 -> 688; the power-of-two rule before fell to 128,
+# about 40% of the charwin step). Same attention up to summation order, no run tag.
+FLASH_BLOCK = None if SEQ_LEN % 1024 == 0 else next((b for b in range(1024, 31, -32) if SEQ_LEN % b == 0), None)
 if SEQ_LEN % 1024 and FLASH_BLOCK is None:
-    raise ValueError(f"SEQ_LEN={SEQ_LEN}: a multiple of 128 for the flash-attention blocks")
+    raise ValueError(f"SEQ_LEN={SEQ_LEN}: a multiple of 32 for the flash-attention blocks")
 # REMAT: per-layer gradient checkpointing. "full" (default, every run before 2026-10-24) saves only the layer carry, so
 # the backward pass re-runs each layer's whole forward, flash-attention while-loops included. "flash" also saves the
 # flash-attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py), so the backward pass
@@ -122,6 +124,12 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 REMAT = os.environ.get("REMAT", "full")
 if REMAT not in ("full", "flash"):
     raise ValueError(f"REMAT={REMAT}: full | flash")
+# ATTN_BACKEND=fa4 (speed candidate, 2026-10-24): attention through levanter's grug FA4/CuTe segmented kernel
+# (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop. Same mask (causal + same document), fp32 softmax
+# statistics, no block size. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag fa4_cute.
+ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "jax_flash")
+if ATTN_BACKEND not in ("jax_flash", "fa4"):
+    raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4")
 BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
@@ -685,8 +693,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         num_kv_heads=s["kv"],
         hybrid_norm=True,
         # No Transformer Engine on Della, so the GPU default (NVTE) would fall back to unfused O(S^2) attention.
-        attn_backend=AttentionBackend.JAX_FLASH,
-        **({"flash_attention_block_size": FLASH_BLOCK} if FLASH_BLOCK else {}),
+        attn_backend=AttentionBackend.FA4_CUTE if ATTN_BACKEND == "fa4" else AttentionBackend.JAX_FLASH,
+        **({"flash_attention_block_size": FLASH_BLOCK} if FLASH_BLOCK and ATTN_BACKEND == "jax_flash" else {}),
         **model_extra,
     )
     if VARIANT == "fip" and TIE:
@@ -802,7 +810,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in OV_VARIANTS else "muonh-qwen3-focal-della" if VARIANT == "focal" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *(["remat-flash"] if REMAT == "flash" else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "fa4_cute" if ATTN_BACKEND == "fa4" else "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *(["remat-flash"] if REMAT == "flash" else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,
