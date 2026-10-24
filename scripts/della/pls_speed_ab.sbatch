@@ -16,6 +16,7 @@
 #   det: XLA_FLAGS --xla_gpu_exclude_nondeterministic_ops=true on both arms; off vs on, for a bitwise check
 #   twin: the same with knobs off on both arms (the determinism floor, used only if det is not bitwise)
 #   time: default flags, off vs on, both with PROFILE=20:3, for step time, kernel times and memory
+#   eval: 20 steps, then the same 640 eval sequences at the train microbatch (160 batches) vs EVAL_PDP=4 (40 batches)
 # AB_ON holds the knobs of the on arm.
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls-speed
@@ -27,6 +28,7 @@ curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz || export WANDB_
 trap pls_tmp_cleanup EXIT
 case ${SLURM_JOB_NAME#pls-speed-ab-} in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ON="LEVANTER_CE_BTILED_ONEHOT=1 LOG_JAXPR=0";;
+  attnres-eval) A="LAYERS=48 PDP=2 ARCH=attnres"; ON="EVAL_PDP=4"; AB_ROUNDS=${AB_ROUNDS:-eval};;
   *) echo "unknown design '$SLURM_JOB_NAME'"; exit 2;;
 esac
 ON=${AB_ON:-$ON}
@@ -45,6 +47,7 @@ for r in ${AB_ROUNDS:-det time twin}; do
     det) arm 0,1,2,3 detoff $DET & arm 4,5,6,7 deton $DET $ON & wait;;
     twin) arm 0,1,2,3 detoffa $DET & arm 4,5,6,7 detoffb $DET & wait;;
     time) arm 0,1,2,3 timeoff PROFILE=20:3 & arm 4,5,6,7 timeon PROFILE=20:3 $ON & wait;;
+    eval) arm 0,1,2,3 evaloff SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=160 & arm 4,5,6,7 evalon SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=40 $ON & wait;;
   esac
 done
 echo "rounds done $(date +%T)"
