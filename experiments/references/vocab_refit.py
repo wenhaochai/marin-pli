@@ -8,7 +8,9 @@ From a tokenizer's unique-token run (U) or 8-pass run (R), train only PART on fi
 (the run order's sequences past the unique-token run's last step, with a margin of a few mixture blocks), everything
 else frozen, for FT_STEPS steps of FT_BATCH sequences; then write the Paloma loss sums per subset (T = 1, the format of
 vocab_temp_losses.py). PART: rows (input embedding and output head), body (every other weight), or rare (the input and
-output rows of ids >= RARE_FROM only). The rows' share of R's cost is R's gain from re-fitting the rows minus U's gain;
+output rows of ids >= RARE_FROM only); within the body (owner popup 2026-10-24, "在 body 里继续定位"): attn (every
+layer's self_attn weights), mlp (every layer's mlp weights), lo / hi (every weight of layers 0..L/2-1 / L/2..L-1; norms
+included, final norm excluded). The rows' share of R's cost is R's gain from re-fitting the rows minus U's gain;
 the body run is the control. Adam directions scaled by each weight block's RMS times FT_LR (a relative step),
 linear warmup over 10% of the steps, cosine to 0, no weight decay.
 
@@ -40,7 +42,7 @@ from levanter.models.loss import maybe_fused_next_token_loss
 import experiments.references.vocab_temp_losses as vtl
 
 PART = os.environ["PART"]
-assert PART in ("rows", "body", "rare"), PART
+assert PART in ("rows", "body", "rare", "attn", "mlp", "lo", "hi"), PART
 RARE_FROM = int(os.environ.get("RARE_FROM", "0"))
 assert PART != "rare" or RARE_FROM > 0, "PART=rare needs RARE_FROM"
 STEPS_RUN = int(os.environ["STEPS_RUN"])
@@ -67,12 +69,15 @@ def train_order(Pos):
 
 def trainable_mask(model, rare):
     """A pytree of bools (or, for PART=rare, row masks) over the model's arrays: what the re-fit may change."""
-    is_row = lambda path: any(getattr(p, "name", None) in ("token_embeddings", "lm_head") for p in path)
+    names = lambda path: {getattr(p, "name", None) for p in path}
     flat, treedef = jax.tree_util.tree_flatten_with_path(model)
     out = []
     for path, leaf in flat:
-        row = is_row(path)
-        out.append({"rows": row, "body": not row, "rare": row}[PART] and eqx.is_inexact_array(leaf))
+        n = names(path)
+        row = bool(n & {"token_embeddings", "lm_head"})
+        layer = "layers" in n
+        out.append({"rows": row, "body": not row, "rare": row, "attn": layer and "self_attn" in n, "mlp": layer and "mlp" in n,
+                    "lo": layer, "hi": layer}[PART] and eqx.is_inexact_array(leaf))
     return jax.tree_util.tree_unflatten(treedef, out)
 
 
@@ -97,7 +102,13 @@ def main():
         model = vtl.inference_mode(model, True)   # no dropout in this model; inference mode only fixes attention-path flags
         mask = trainable_mask(model, None)
         rare = (hax.arange(Vocab) >= RARE_FROM) if PART == "rare" else None
+        Layer = cfg.Layers
+        half = (hax.arange(Layer) < Layer.size // 2) if PART == "lo" else (hax.arange(Layer) >= Layer.size // 2) if PART == "hi" else None
         train_p, frozen_p = eqx.partition(model, mask)
+        n_train = sum(x.size for x in jax.tree_util.tree_leaves(train_p) if eqx.is_array(x))
+        n_all = sum(x.size for x in jax.tree_util.tree_leaves(model) if eqx.is_array(x))
+        print(f"PART={PART}: {n_train / 1e6:.1f}M of {n_all / 1e6:.1f}M weights trainable" + (" (half of their layer rows move)" if PART in ("lo", "hi") else ""), flush=True)
+        assert n_train > 0, f"PART={PART} matched no weights"
         sched = optax.warmup_cosine_decay_schedule(0.0, FT_LR, max(1, FT_STEPS // 10), FT_STEPS, 0.0)
         # Adam direction, step sized relative to each weight block's RMS (FT_LR = relative change per step at the peak), so
         # one FT_LR suits the rows and the MuonH-trained matrices alike
@@ -118,6 +129,9 @@ def main():
             if rare is not None:   # only the rows of ids >= RARE_FROM move
                 g = jax.tree_util.tree_map(lambda x: hax.where(rare, x, hax.zeros_like(x)) if isinstance(x, hax.NamedArray) and x.array is not None and m_has_vocab(x) else x, g,
                                            is_leaf=lambda x: isinstance(x, hax.NamedArray))
+            if half is not None:   # only the weights of one half of the layers move
+                g = jax.tree_util.tree_map(lambda x: hax.where(half, x, hax.zeros_like(x)) if isinstance(x, hax.NamedArray) and x.array is not None and any(a.name == Layer.name for a in x.axes) else x, g,
+                                           is_leaf=lambda x: isinstance(x, hax.NamedArray))
             upd, os_ = opt.update(g, os_, tp)
             return eqx.apply_updates(tp, upd), os_, loss
 
@@ -130,7 +144,14 @@ def main():
             losses.append(float(loss))
             if i % 50 == 0 or i == FT_STEPS - 1:
                 print(f"step {i} loss {losses[-1]:.4f} ({time.time() - t0:.0f}s)", flush=True)
+        before = model
         model = eqx.combine(train_p, frozen_p)
+        if half is not None:   # check: the other half of the layers did not move
+            moved = [float(jnp.max(jnp.abs(hax.where(half, 0.0, a - b).array))) for a, b in
+                     zip(jax.tree_util.tree_leaves(model, is_leaf=lambda x: isinstance(x, hax.NamedArray)), jax.tree_util.tree_leaves(before, is_leaf=lambda x: isinstance(x, hax.NamedArray)))
+                     if isinstance(a, hax.NamedArray) and any(x.name == Layer.name for x in a.axes)]
+            print(f"frozen half max change {max(moved):.3g}", flush=True)
+            assert max(moved) == 0.0, "the frozen half of the layers moved"
 
         @hax.named_jit(axis_resources=trainer.compute_axis_mapping)
         def loss_sum(m, ex):
