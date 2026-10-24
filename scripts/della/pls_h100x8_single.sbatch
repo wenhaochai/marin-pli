@@ -108,8 +108,12 @@ watchdog() {
   done
 }
 
-smoke_id=$(run_id "PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s")
-[[ $smoke_id == *-j${JID}s-smoke$SMOKE ]] || { echo "bad smoke run id '$smoke_id'"; exit 2; }
+# A wq job keeps its id (w<n>) across resume segments, so the smoke tag also carries this segment's host job id: with the
+# same smoke run id, W&B resumed the first segment's smoke run and dropped steps 0-29 as already logged, so the train-path
+# gate below read the first segment's summary on every resume (w28: 7.4239 in all three segments, found 2026-10-24).
+SEG=${FETCHED_JOB_ID:+h$SLURM_JOB_ID}
+smoke_id=$(run_id "PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG}")
+[[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]] || { echo "bad smoke run id '$smoke_id'"; exit 2; }
 rid=$(run_id)
 [[ $rid == muonh-qwen3-*-della${NG}xh100-* ]] || { echo "bad run id '$rid'"; exit 2; }
 out=$MARIN_PREFIX/speedrun/$rid/2026.09.13
@@ -123,9 +127,9 @@ if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then echo
 slog=logs/slurm/${JNAME}_${JID}_smoke.log
 r=0
 # shellcheck disable=SC2086
-env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
 echo "smoke $smoke_id exited rc=$r $(date +%H:%M:%S)"
-if [[ $smoke_id == *-j${JID}s-smoke$SMOKE ]]; then
+if [[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]]; then
   rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
 fi
 [ $r -eq 0 ] || { echo "job $JID: smoke failed rc=$r" > "$FAILDIR/$rid.fail"; echo "smoke failed: no training"; exit 4; }
