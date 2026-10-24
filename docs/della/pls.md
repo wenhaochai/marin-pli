@@ -647,3 +647,4 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
   - A7 `EVAL_PDP=4`：microbatch 1 的设计用每卡 4 条序列做 eval，训练不变。A/B：pli-cp 16146461（同样 640 条序列）。
 - 推迟：A3（截止前存 checkpoint，再把间隔改为 30 min，约 1.5–2%）、A5（一次 eval，约 0.9%）、A2（探针去掉无用的 dX 矩阵乘，约 6%，改数值，要 1100 步 A/B）。
 - 不上（改数值或风险大）：hc/mhc 改 microbatch 4 加 vmm 分配器（约 30%，但换 CE 路径，和已完成的对照不可比）、AttnRes 快速 CE 反向、融合 Pallas CE、latency-hiding scheduler。
+- 结束（owner 10-24，经 terminal：「tokenizer size和pls这两个调研完了就还是继续用老代码跑吧先不用做切换和测试，只是把经验都告诉nanomarin」）：pli-cp 上的 4 个测速作业在开始前取消（owner 弹窗同意）；pls 的作业继续用老代码，只保留 smoke 闸门修复。全部结论交给 nanomarin：`marin-pls-speed/docs/della/pls_speed/HANDOFF.md`，分支 pls-speed（archive）。
