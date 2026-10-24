@@ -95,7 +95,9 @@ RUNS = [
         ("mHC, residual mixing fixed to I", "mHC，残差混合固定为 I", 48, "amhc-mhcid", "38", ("w76", "w77")),
         ("AttnRes (Full), pseudo-query scale clipped to 10", "AttnRes (Full)，伪查询尺度裁剪到 10", 48, "aattnres-qclip10", "38", ("w78", "w79")),
         ("Hyper-Connections, 24 layers", "Hyper-Connections，24 层", 24, "ahc", "39", ("w80", "w81")),
-        ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
+        ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83")),
+        # owner popup 2026-10-24: sources at unit RMS in every mix (Figure 41)
+        ("AttnRes (Full), sources at unit RMS", "AttnRes (Full)，源归一化到单位 RMS", 48, "aattnres-vnorm", "41", ("w122", "w123"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),
@@ -169,12 +171,18 @@ JOBS = {"130m-della4xh100-pls1": [14732138], "130m-della4xh100-pls1-dh": [147690
         "300m-della4xh100-pls1": [14732139, 14732140], "300m-della4xh100-pls1-sep": [14940604], "300m-della4xh100-pls1-sep-bbfrozen": [14888822]}
 STATE = {"finished": S("Done", "完成"), "running": S("Running", "运行中"), "crashed": S("Failed", "失败"), "failed": S("Failed", "失败"),
          "COMPLETED": S("Done", "完成"), "RUNNING": S("Running", "运行中"), "PENDING": S("Queued", "排队中"), "planned": S("Planned", "计划中"),
+         "STOPPED": S("Stopped", "已停止"),
          "PAUSED": S("Paused, resume queued", "暂停，续跑已排队"), "PARTLY": S("Partly done", "部分完成")}
 OK_EXIT = {"0", "124", "143"}   # training-task exits that count for the run (see the docstring)
 api = wandb.Api(timeout=300)
 
 
 WQ = "/scratch/gpfs/GROUP/USER/tools/wq/wq"   # GPU jobs go to wq since 2026-10-21 (owner): ids w<n>, not in sacct
+
+
+# wq jobs cancelled on the owner's decision, with no rerun: w79 (ordinary AttnRes, query clip) diverged at step 660
+# (owner popup 2026-10-24, "取消 w79").
+STOPPED = {"w79"}
 
 
 def wq_state(wid):
@@ -348,7 +356,9 @@ for setup, size, layers, tok, gpus, src, figs in RUNS:
     elif kind == "wq":   # a wq job (run by a pilot host): its training tasks sit in the host's ledger under the run id
         state = wq_state(ref)
         hours = sum(int(t["end"]) - int(t["start"]) for t in TASKS if t["run"] == rid and t["kind"] == "main" and t["exit"] in OK_EXIT) / 3600
-        if state == "failed":
+        if state == "failed" and ref in STOPPED:   # cancelled on the owner's decision, not to be rerun: its hours and run stay
+            state = "STOPPED"
+        elif state == "failed":
             state, hours, run = "planned", 0.0, None
     elif kind == "slurm" and str(ref) in FETCH:   # run by a host job (fetch_pending.sh)
         F = FETCH[str(ref)]

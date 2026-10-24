@@ -905,8 +905,10 @@ VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
          ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
          ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
 v38 = [sep_cost(t) for t, _, _ in VAR38]
-w38 = [lab for (t, lab, _), v in zip(VAR38, v38) if v is None]
-lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " queued" if w38 else ""), "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 排队中" if w38 else "")}
+# the query-clip probes run (w79) diverged at step 660 and was stopped (owner popup 2026-10-24): that bar stays empty
+w38 = [lab for (t, lab, _), v in zip(VAR38, v38) if v is None and t != "aattnres-qclip10-vs-d48"]
+lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " queued" if w38 else "") + " · query scale \u2264 10: ordinary model diverged, stopped",
+         "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 排队中" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散，已停止"}
 figs["fig-arch-var"] = dict(title={"en": "Separate-heads cost of design variants, 48 layers", "zh": "结构变体的独立头代价，48 层"},
                             legend=[[{"en": "Control", "zh": "对照"}, GREY, "box"], [{"en": "Variant", "zh": "变体"}, BLUE7, "box"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"}, height=200, cols=1,
@@ -949,6 +951,22 @@ figs["fig-vis"] = dict(title={"en": "Separate-heads cost when the readouts see p
                                     + [dict(type="dots", color=BLUE7, pts=[[VX[f], v] for f, v in VIS.items() if v is not None])]
                                     + ([dict(type="dots", color="#8AB4F8", pts=[[0.12, VIS_S1]])] if VIS_S1 is not None else []))])
 print("Fig 40 visible fraction", VIS, "seed 1", VIS_S1)
+# Figure 41 (owner popup 2026-10-24): the ordinary AttnRes (Full) models' layer-48 training loss by step (d48g4.npz "ce",
+# 50-step running mean, 400 points; values above the panel are clipped by the chart): the two seeds as written, and the
+# model whose sources enter every mix at unit RMS (AR_VNORM=1, pls_arch3_fetchable.sbatch arch3-arvnorm). A run not
+# fetched yet is named queued in the panel label.
+VN41 = [("aattnres-vs-d48-g4", GREY, {"en": "Sources as written, seed 0", "zh": "源按原样，种子 0"}),
+        ("aattnres-vs-d48-s1-g4", "#BDC1C6", {"en": "Sources as written, seed 1", "zh": "源按原样，种子 1"}),
+        ("aattnres-vnorm-vs-d48", BLUE7, {"en": "Sources at unit RMS", "zh": "源归一化到单位 RMS"})]
+_m41 = [m for m in (_route_line(t, c) for t, c, _ in VN41) if m is not None]
+_q41 = G4.get("-sep-bbfrozen-aattnres-vnorm-vs-d48/final") is None
+figs["fig-ar-vnorm"] = dict(title={"en": "Training loss of ordinary AttnRes (Full) models, 48 layers", "zh": "AttnRes (Full) 普通模型的训练损失，48 层"},
+                            legend=[[lab, c, "line"] for _, c, lab in VN41],
+                            quantity=LOSS48, xlabel={"en": "Training step", "zh": "训练步数"}, height=200, cols=1,
+                            panels=[dict(xlim=[0, 5000], ylim=[2.8, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (2.8, 3.2, 3.6, 4.0)],
+                                         marks=_m41, empty=None if _m41 else ARCH2_STATUS,
+                                         label={"en": "Ordinary model with probes" + (" · sources at unit RMS queued" if _q41 else ""), "zh": "加探针的普通模型" + (" · 源归一化排队中" if _q41 else "")})])
+print("Fig 41 separate-heads cost, sources at unit RMS", sep_cost("aattnres-vnorm-vs-d48"))
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,
