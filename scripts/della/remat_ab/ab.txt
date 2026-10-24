@@ -1,0 +1,9 @@
+# REMAT A/B (branch speed-save-flash-residuals-remat, worktree tmp/speed_wt/save-flash-residuals-remat): the charwin v64k
+# run of w31 (300m, VOCAB_K=64000, SEQ_LEN=4224, flash block 128, seed 0, data seed 42, batch 128, real 11444-step
+# schedule) twice from the worktree code, REMAT=full and REMAT=flash, each stopped after AB_MINUTES=105 (about 2400+ steps;
+# evals at 1000 and 2000). Scratch run ids (-rematab-*), no permanent checkpoints (keep every 10000), output and temporary
+# checkpoints deleted by arm.sh at the end. Compare with scripts/della/remat_ab/compare.py (w31 = the same run on main code).
+smoke smoke - other 4 15m /scratch/gpfs/GROUP/USER/tmp/speed_wt/save-flash-residuals-remat/scripts/della/remat_ab/arm.sh CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VOCAB_K=64000 SEQ_LEN=4224 REMAT=flash SMOKE_STEPS=30 RUN_TAG=-rematab-smoke-flash
+par rematab-full 300m-della4xh100-v64k-sl4224-rematab-full main 4 115m /scratch/gpfs/GROUP/USER/tmp/speed_wt/save-flash-residuals-remat/scripts/della/remat_ab/arm.sh CUDA_VISIBLE_DEVICES=0,1,2,3 SIZE=300m VOCAB_K=64000 SEQ_LEN=4224 REMAT=full RUN_TAG=-rematab-full AB_MINUTES=105
+par rematab-flash 300m-della4xh100-v64k-sl4224-rematab-flash main 4 115m /scratch/gpfs/GROUP/USER/tmp/speed_wt/save-flash-residuals-remat/scripts/della/remat_ab/arm.sh CUDA_VISIBLE_DEVICES=4,5,6,7 SIZE=300m VOCAB_K=64000 SEQ_LEN=4224 REMAT=flash RUN_TAG=-rematab-flash AB_MINUTES=105
+wait

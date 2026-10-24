@@ -1,0 +1,5 @@
+# Optional seed-noise arm for the REMAT A/B: the same run as ab.txt's rematab-full with SEED=1 (trainer init seed; data
+# order unchanged), so |full(s1) - full(s0)| is the seed-noise yardstick for |flash - full| in the same config.
+smoke smoke - other 4 15m /scratch/gpfs/GROUP/USER/tmp/speed_wt/save-flash-residuals-remat/scripts/della/remat_ab/arm.sh SIZE=300m VOCAB_K=64000 SEQ_LEN=4224 REMAT=full SEED=1 SMOKE_STEPS=30 RUN_TAG=-rematab-smoke-s1
+par rematab-full-s1 300m-della4xh100-v64k-sl4224-s1-rematab-full main 4 115m /scratch/gpfs/GROUP/USER/tmp/speed_wt/save-flash-residuals-remat/scripts/della/remat_ab/arm.sh SIZE=300m VOCAB_K=64000 SEQ_LEN=4224 REMAT=full SEED=1 RUN_TAG=-rematab-full AB_MINUTES=105
+wait

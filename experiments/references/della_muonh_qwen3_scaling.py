@@ -42,6 +42,7 @@ if os.environ.get("VARIANT") in ("ov", "ovss", "ovfocal", "ovgram", "ovgram3", "
 
 import jmp
 from fray.cluster import ResourceConfig
+from haliax.nn.scan import ScanCheckpointPolicy
 from haliax.partitioning import ResourceAxis
 from haliax.quantization import QuantizationConfig
 from levanter.optim.model_averaging import EmaModelAveragingConfig
@@ -113,6 +114,14 @@ SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
 FLASH_BLOCK = None if SEQ_LEN % 1024 == 0 else next((b for b in (512, 256, 128) if SEQ_LEN % b == 0), None)
 if SEQ_LEN % 1024 and FLASH_BLOCK is None:
     raise ValueError(f"SEQ_LEN={SEQ_LEN}: a multiple of 128 for the flash-attention blocks")
+# REMAT: per-layer gradient checkpointing. "full" (default, every run before 2026-10-24) saves only the layer carry, so
+# the backward pass re-runs each layer's whole forward, flash-attention while-loops included. "flash" also saves the
+# flash-attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py), so the backward pass
+# re-runs norms, projections and the MLP but not the attention forward. Same math (bf16 rounding differs); ~+2-3 GiB
+# per device at 300m. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag remat-flash.
+REMAT = os.environ.get("REMAT", "full")
+if REMAT not in ("full", "flash"):
+    raise ValueError(f"REMAT={REMAT}: full | flash")
 BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
@@ -663,6 +672,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         )
     else:
         model_cls, model_extra = Qwen3Config, {}
+    if REMAT == "flash":
+        model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
@@ -791,7 +802,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in OV_VARIANTS else "muonh-qwen3-focal-della" if VARIANT == "focal" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *(["remat-flash"] if REMAT == "flash" else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,
