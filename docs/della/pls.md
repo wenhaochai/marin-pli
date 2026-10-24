@@ -632,3 +632,18 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 预测：普通模型没有尖峰（按上面同样的标准：比前 51 步中位数高 0.3 nats）；第 48 层最终训练损失不高于种子 1 的 2.955；独立头
 代价在其他结构的 0.06 到 0.11 之间。注意（审查）：归一化去掉了源大小对读取的影响，源本身仍可以长大，所以要看的是尖峰，不是源的比值。
 网页 Fig 41（`fig-ar-vnorm`）加了占位。
+
+## 速度：无害的加速（2026-10-24，owner 经 terminal 转达；分支 pls-speed，worktree marin-pls-speed）
+
+- 要求：找出能加速的设置，只上线无害的：数值不改变比较（逐位相同，或在匹配 A/B 里落在种子噪声内）；不就地改运行中和排队的作业；不加参数，不改配方。
+- 搜索：ultracode workflow（9 个 agent：4 个找、4 个反驳、1 个写计划），计划和全部候选在 `tmp/pls_speed/plan.md`、`results.json`。
+- 测得的成本（日志）：Pre-LN d48 每步 15.2 s，其中 47 个额外读出 12.3 s（81%）；读出受 f32 logits 的显存带宽限制。HC d48 在 microbatch 1 每步 25.4 s；AttnRes d48 34.5 s。jaxpr 和 HLO 文本日志每个程序 2–2.5 min（GPU 空闲）。
+- 已发现的问题（不是速度）：
+  1. resume 段的 smoke 和第一段用同一个 run id，W&B 丢掉第 0–29 步，所以 train-path 闸门在每次 resume 读的是第一段的 summary（w28 三段都是 7.4239）。已修：smoke 标签加上宿主作业 id（`684b48ead8`）。
+  2. 读出 CE 的反向有两条路：microbatch 1 的设计（hc、mhc、attnres、moda）共享内存不够，退回 XLA 路径（f32 delta、TF32 矩阵乘、梯度在 bf16 累加）；PDP=4 的设计（preln、sandwich、lns 等）走 b-tiled 路径。同一设计的独立头和探针走同一路径，所以每个设计的代价不受影响；不同设计之间的代价比较多了一个 CE 梯度精度的差异。
+- 候选（已实现为开关，默认关）：
+  - A1 `LEVANTER_CE_BTILED_ONEHOT=1`：b-tiled 反向里标签项用 select 代替 scatter，让 XLA 把 exp、乘法、标签项和 bf16 转换融合成一个 kernel。CPU 上在真实宽度和词表（B 6000、V 128256，两个 b 块，有和无 soft cap）逐位相同。估计 PDP≥2 的 run 快约 10%。GPU A/B：pli-cp 16146325。
+  - A4 `LOG_JAXPR=0`：不写 jaxpr 和 HLO 文本；编译出的程序相同。每段省约 4 min。没有脚本读这些文件。
+  - A7 `EVAL_PDP=4`：microbatch 1 的设计用每卡 4 条序列做 eval，训练不变。A/B：pli-cp 16146461（同样 640 条序列）。
+- 推迟：A3（截止前存 checkpoint，再把间隔改为 30 min，约 1.5–2%）、A5（一次 eval，约 0.9%）、A2（探针去掉无用的 dX 矩阵乘，约 6%，改数值，要 1100 步 A/B）。
+- 不上（改数值或风险大）：hc/mhc 改 microbatch 4 加 vmm 分配器（约 30%，但换 CE 路径，和已完成的对照不可比）、AttnRes 快速 CE 反向、融合 Pallas CE、latency-hiding scheduler。
