@@ -26,7 +26,7 @@ case $NAME in
   *) echo "unknown set '$NAME'"; exit 2;;
 esac
 O=/scratch/gpfs/GROUP/USER/tmp/pls_conflict/gpu
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 JAX_PLATFORMS=cuda   # conflict.py defaults to cpu (it runs on vis nodes too): w145/w146 ran on CPU and left the GPUs at 0% (2026-10-25)
 pids=()
 for g in 0 1 2 3; do
   CUDA_VISIBLE_DEVICES=$g timeout 62m "$PY" /scratch/gpfs/GROUP/USER/tmp/pls_conflict/conflict.py ${R[$g]} $O/${R[$g]}.json --b 8 --t 1024 > $O/${R[$g]}.log 2>&1 &
