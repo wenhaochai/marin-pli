@@ -107,6 +107,10 @@ RUNS = [
         ("AttnRes (Full), static routing: separate heads", "AttnRes (Full)，静态路由：独立头", "w152", "aattnres-rstatic")]],
     # owner popup 2026-10-25: every intermediate loss at weight 1/47 (Figure 42); control: the Pre-LN probes run
     (S("Pre-LN, separate heads, intermediate weight 1/47", "Pre-LN，独立头，中间层权重 1/47"), "130m", 48, 2.6, 4, ("wq", "w154", "130m-della4xh100-pls0.0212766-sep-apreln-vs-d48"), "42"),
+    # owner popup 2026-10-25 (13:40): HC 48 layers seed 1 (Figure 39) and Pre-LN readouts that see 1/8 (Figure 40)
+    (S("Hyper-Connections, seed 1: separate heads", "Hyper-Connections，种子 1：独立头"), "130m", 48, 2.6, 4, ("wq", "w178", "130m-della4xh100-pls1-sep-ahc-vs-d48-s1"), "39"),
+    (S("Hyper-Connections, seed 1: probes only", "Hyper-Connections，种子 1：只加探针"), "130m", 48, 2.6, 4, ("wq", "w179", "130m-della4xh100-pls1-sep-bbfrozen-ahc-vs-d48-s1"), "39"),
+    (S("Pre-LN, separate heads; intermediate readouts see 1/8 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/8 的坐标"), "130m", 48, 2.6, 4, ("wq", "w180", "130m-della4xh100-pls1-sep-apreln-vis0.125-vs-d48"), "40"),
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),

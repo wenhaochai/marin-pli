@@ -33,6 +33,11 @@
 #                                Hyper-Connections' alone? HC 12 / 24 / 48 layers: 0.121 / 0.077 / 0.048)
 #   arch3-hcstatic-sep, arch3-arstatic-sep  separate heads with static routing (owner popup 2026-10-25); their probes runs
 #                                are the L2 runs wq w27 / w28 (run ids -sep-bbfrozen-a{hc,attnres}-rstatic-vs-d48)
+#   arch3-preln-w47-sep          Pre-LN separate heads, every intermediate loss at weight 1/47 (they sum to 1; owner popup
+#                                2026-10-25: at weight 1 their gradient is 41x the last layer's, cos 0.96; is the cost its size?);
+#                                control: the -apreln- probes run (a probe's weight does not reach the backbone)
+#   arch3-hc-s1-{sep,probes}     HC 48 layers seed 1 (owner popup 2026-10-25: HC's low cost rests on one seed)
+#   arch3-preln-vis125-sep       Pre-LN readouts see 1/8 of the coordinates (owner popup 2026-10-25: extends E1)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -56,6 +61,9 @@ case $DESIGN in
   arch3-preln-d24) S="$base LAYERS=24 PDP=4 ARCH=preln";;
   arch3-hcstatic) S="$base LAYERS=48 PDP=4 ARCH=hc ROUTE=static";;
   arch3-arstatic) S="$base LAYERS=48 PDP=2 ARCH=attnres ROUTE=static";;
+  arch3-preln-w47) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_W=0.0212766";;   # the last PLS_W wins in env
+  arch3-hc-s1) S="$base LAYERS=48 PDP=4 ARCH=hc SEED=1";;
+  arch3-preln-vis125) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.125";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
