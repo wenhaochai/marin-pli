@@ -1,0 +1,4 @@
+# owner popup 2026-10-25 (截断版本的组合): the truncation's best fixes stacked: random replacement from pass 2, a new order each pass, LR x3 from pass 2, EMA 0.999 evaluated alongside; seed 0. wq --partial.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=VOCAB_K=32000+VARIANT=cvd+CVD_FROM_PASS=2+DATA_EPOCHS=8+PASS_DATA=rs+LR_MULT=3+LR_MULT_FROM_PASS=2+EMA_BETA=0.999
+par combo-v32k-run 300m-della4xh100-cvd8k-p0.5-fp2-lrx3-fp2-v32k-rep8-rs-ema0.999 main 4 450m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m VOCAB_K=32000 VARIANT=cvd CVD_FROM_PASS=2 DATA_EPOCHS=8 PASS_DATA=rs LR_MULT=3 LR_MULT_FROM_PASS=2 EMA_BETA=0.999
+wait

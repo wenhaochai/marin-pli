@@ -1,0 +1,4 @@
+# owner popup 2026-10-25 (最佳设置的第 2 个种子): the 128K lowest setup (cvd pieces without gradient, new order each pass, LR x2 from pass 2; s0 1.4348) with an EMA 0.999 of the weights evaluated alongside. wq --partial.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=cvd+CVD_MODE=detach+DATA_EPOCHS=8+PASS_DATA=rs+LR_MULT=2+LR_MULT_FROM_PASS=2+EMA_BETA=0.999
+par best128k-ema-s0-run 300m-della4xh100-cvd8k-p0.5-mdetach-lrx2-fp2-rep8-rs-ema0.999 main 4 400m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m VARIANT=cvd CVD_MODE=detach DATA_EPOCHS=8 PASS_DATA=rs LR_MULT=2 LR_MULT_FROM_PASS=2 EMA_BETA=0.999
+wait
