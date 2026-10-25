@@ -1,0 +1,4 @@
+# owner popup 2026-10-25 (单字分布平滑): label smoothing toward the repeated text's unigram distribution from pass 2 (unismooth_qwen3.py), seed 0; unique point = own. wq --partial.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=VOCAB_K=8000+VARIANT=unismooth+US_EPS=0.02+US_FROM_PASS=2+DATA_EPOCHS=8
+par us002-v8k-run 300m-della4xh100-us0.02-fp2-v8k-rep8 main 4 450m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m VOCAB_K=8000 VARIANT=unismooth US_EPS=0.02 US_FROM_PASS=2 DATA_EPOCHS=8
+wait

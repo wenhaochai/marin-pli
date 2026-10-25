@@ -67,6 +67,7 @@ from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
+from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
 from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
 from experiments.references.embed_wd_muonh import EmbedWDMuonHConfig
 from experiments.references.lr_mult_muonh import LrMultMuonHConfig
@@ -312,6 +313,11 @@ CVD_MODE = os.environ.get("CVD_MODE", "pieces")
 # of repeated pass p of 8, so the full-data point is the tokenizer's own. Works with any VOCAB_K. Tag -drop<p>[-fp<pass>].
 DROP_P = float(os.environ.get("DROP_P", "0.1"))
 DROP_FROM_PASS = int(os.environ.get("DROP_FROM_PASS", "0"))
+# VARIANT=unismooth (owner popup 2026-10-25, "单字分布平滑"): from the first update of pass US_FROM_PASS of 8 on, each training
+# target becomes (1 - US_EPS) onehot + US_EPS * u, u = the token counts of the repeated subset (unismooth_qwen3.py; counts
+# in logs/vocab_token_losses/subset_counts_<K>.npy, K = 128000 or 8000). Evaluation is plain CE. Tag -us<eps>-fp<pass>.
+US_EPS = float(os.environ.get("US_EPS", "0.05"))
+US_FROM_PASS = int(os.environ.get("US_FROM_PASS", "0"))
 # VARIANT=inoise (goal of 2026-10-21, owner popup, parallel batch C and D): input noise in training (InputNoiseQwen3Config):
 # each input position with probability INOISE_P gets a zero row (INOISE_MODE=zero, embedding dropout) or a uniformly random
 # ordinary token (rand), from the first update of repeated pass INOISE_FROM_PASS. Any VOCAB_K. Tag -in<mode><p>[-fp<pass>].
@@ -417,7 +423,7 @@ CVD_RATE_COUNT = int(os.environ.get("CVD_RATE_COUNT", "0"))
 # (DecayToPiecesMuonHConfig). Tag -dtp<lambda>-fp<p>.
 DTP = float(os.environ.get("DTP", "0"))
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -506,6 +512,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-r{INOISE_RAND_MAX // 1000}k" if INOISE_RAND_MAX else "") + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
+    if VARIANT == "unismooth":
+        variant_tags += f"-us{US_EPS:g}-fp{US_FROM_PASS}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -629,6 +637,14 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "inoise":
         model_cls, model_extra = InputNoiseQwen3Config, dict(noise_p=INOISE_P, noise_mode=INOISE_MODE, noise_rand_max=INOISE_RAND_MAX,
                                                              noise_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (INOISE_FROM_PASS - 1) if INOISE_FROM_PASS else 0)
+    elif VARIANT == "unismooth":
+        if not (DATA_EPOCHS == 8 and 2 <= US_FROM_PASS <= 7 and 0 < US_EPS < 1 and VOCAB_K in (0, 8000) and not PASS_DATA.startswith(("bpd", "rsplit"))):
+            raise ValueError(f"VARIANT=unismooth: DATA_EPOCHS=8, US_FROM_PASS 2..7, 0 < US_EPS < 1, VOCAB_K 0 or 8000, equal passes")
+        counts = f"/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_token_losses/subset_counts_{VOCAB_K or 128000}.npy"
+        if not os.path.exists(counts):
+            raise FileNotFoundError(counts)
+        model_cls, model_extra = UniSmoothQwen3Config, dict(us_eps=US_EPS, us_counts=counts,
+                                                          us_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (US_FROM_PASS - 1))
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)
