@@ -994,6 +994,22 @@ figs["fig-ar-vnorm"] = dict(title={"en": "Training loss of ordinary AttnRes (Ful
                                          marks=_m41, empty=None if _m41 else ARCH2_STATUS,
                                          label={"en": "Ordinary model with probes" + (" · sources at unit RMS queued" if _q41 else ""), "zh": "加探针的普通模型" + (" · 源归一化排队中" if _q41 else "")})])
 print("Fig 41 separate-heads cost, sources at unit RMS", sep_cost("aattnres-vnorm-vs-d48"))
+# Figure 42 (owner popup 2026-10-25, wq w154): at weight 1 the 47 intermediate losses' backbone gradient is 41x the last
+# layer's, at cos 0.96 (pls_conflict.py). Pre-LN separate heads with every intermediate weight 1/47 (they sum to 1), against
+# the Pre-LN probes run (a probe's weight does not reach the backbone). x = log10(weight); the separate-heads cost as in Fig 38.
+_p42 = G4.get("-sep-bbfrozen-apreln-vs-d48-g4/final")
+W42 = {1.0: sep_cost("apreln-vs-d48-g4"),
+       1 / 47: (None if _p42 is None or G4.get("-pls0.0212766-sep-apreln-vs-d48/final") is None
+                else round(float(G4["-pls0.0212766-sep-apreln-vs-d48/final"][47] - _p42[47]), 4))}
+w42 = [lab for w, lab in ((1 / 47, "1/47"),) if W42[w] is None]
+figs["fig-weight"] = dict(title={"en": "Separate-heads cost by intermediate-loss weight, Pre-LN, 48 layers", "zh": "独立头代价与中间层损失权重，Pre-LN，48 层"},
+                          legend=[[{"en": "Pre-LN", "zh": "Pre-LN"}, BLUE7, "dot"]],
+                          quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
+                          xlabel={"en": "Weight of each intermediate layer loss", "zh": "每个中间层损失的权重"}, height=200, cols=1,
+                          panels=[dict(xlim=[-2.0, 0.3], ylim=[-0.05, 0.15], xticks=[[round(np.log10(1 / 47), 4), "1/47"], [0, "1"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
+                                       label={"en": "Layer 48" + (" · weight " + ", ".join(w42) + " queued" if w42 else ""), "zh": "第 48 层" + (" · 权重 " + "、".join(w42) + " 排队中" if w42 else "")},
+                                       marks=[dict(type="dots", color=BLUE7, pts=[[round(float(np.log10(w)), 4), v] for w, v in W42.items() if v is not None])])])
+print("Fig 42 cost by weight", W42)
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

@@ -105,6 +105,8 @@ RUNS = [
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep-{tag}-vs-d48"), "37") for en, zh, jid, tag in [
         ("Hyper-Connections, static routing: separate heads", "Hyper-Connections，静态路由：独立头", "w151", "ahc-rstatic"),
         ("AttnRes (Full), static routing: separate heads", "AttnRes (Full)，静态路由：独立头", "w152", "aattnres-rstatic")]],
+    # owner popup 2026-10-25: every intermediate loss at weight 1/47 (Figure 42); control: the Pre-LN probes run
+    (S("Pre-LN, separate heads, intermediate weight 1/47", "Pre-LN，独立头，中间层权重 1/47"), "130m", 48, 2.6, 4, ("wq", "w154", "130m-della4xh100-pls0.0212766-sep-apreln-vs-d48"), "42"),
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),
