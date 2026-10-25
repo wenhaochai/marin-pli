@@ -111,6 +111,11 @@ RUNS = [
     (S("Hyper-Connections, seed 1: separate heads", "Hyper-Connections，种子 1：独立头"), "130m", 48, 2.6, 4, ("wq", "w178", "130m-della4xh100-pls1-sep-ahc-vs-d48-s1"), "39"),
     (S("Hyper-Connections, seed 1: probes only", "Hyper-Connections，种子 1：只加探针"), "130m", 48, 2.6, 4, ("wq", "w179", "130m-della4xh100-pls1-sep-bbfrozen-ahc-vs-d48-s1"), "39"),
     (S("Pre-LN, separate heads; intermediate readouts see 1/8 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/8 的坐标"), "130m", 48, 2.6, 4, ("wq", "w180", "130m-della4xh100-pls1-sep-apreln-vis0.125-vs-d48"), "40"),
+    # owner popup 2026-10-25 (16:30): HC 48 layers with 1 / 2 residual streams instead of 4 (Figure 43)
+    (S("Hyper-Connections, 1 residual stream: separate heads", "Hyper-Connections，1 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w194", "130m-della4xh100-pls1-sep-ahc-hcs1-vs-d48"), "43"),
+    (S("Hyper-Connections, 1 residual stream: probes only", "Hyper-Connections，1 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w195", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs1-vs-d48"), "43"),
+    (S("Hyper-Connections, 2 residual streams: separate heads", "Hyper-Connections，2 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w196", "130m-della4xh100-pls1-sep-ahc-hcs2-vs-d48"), "43"),
+    (S("Hyper-Connections, 2 residual streams: probes only", "Hyper-Connections，2 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w197", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs2-vs-d48"), "43"),
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),

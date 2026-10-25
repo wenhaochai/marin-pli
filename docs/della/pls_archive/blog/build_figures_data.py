@@ -1015,6 +1015,18 @@ figs["fig-weight"] = dict(title={"en": "Separate-heads cost by intermediate-loss
                                        label={"en": "Layer 48" + (" · weight " + ", ".join(w42) + " queued" if w42 else ""), "zh": "第 48 层" + (" · 权重 " + "、".join(w42) + " 排队中" if w42 else "")},
                                        marks=[dict(type="dots", color=BLUE7, pts=[[round(float(np.log10(w)), 4), v] for w, v in W42.items() if v is not None])])])
 print("Fig 42 cost by weight", W42)
+# Figure 43 (owner popup 2026-10-25, wq w194-w197): HC 48 layers with 1 / 2 residual streams instead of 4, each against its
+# own probes run; 1 stream is Pre-LN plus HC's token-dependent scalar gates. x = log2(streams); the cost as in Fig 38.
+S43 = {1: sep_cost("ahc-hcs1-vs-d48"), 2: sep_cost("ahc-hcs2-vs-d48"), 4: sep_cost("ahc-vs-d48-g4")}
+w43 = [str(m) for m, v in S43.items() if v is None]
+figs["fig-hc-streams"] = dict(title={"en": "Separate-heads cost by residual stream count, Hyper-Connections, 48 layers", "zh": "独立头代价与残差流数，Hyper-Connections，48 层"},
+                              legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "dot"]],
+                              quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
+                              xlabel={"en": "Residual streams", "zh": "残差流数"}, height=200, cols=1,
+                              panels=[dict(xlim=[-0.4, 2.4], ylim=[-0.05, 0.15], xticks=[[0, "1"], [1, "2"], [2, "4"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
+                                           label={"en": "Layer 48" + (" · " + ", ".join(w43) + " stream" + ("s" if w43 != ["1"] else "") + " queued" if w43 else ""), "zh": "第 48 层" + (" · " + "、".join(w43) + " 条流排队中" if w43 else "")},
+                                           marks=[dict(type="dots", color=BLUE7, pts=[[{1: 0, 2: 1, 4: 2}[m], v] for m, v in S43.items() if v is not None])])])
+print("Fig 43 cost by stream count", S43)
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,
