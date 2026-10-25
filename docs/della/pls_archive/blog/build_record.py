@@ -97,7 +97,14 @@ RUNS = [
         ("Hyper-Connections, 24 layers", "Hyper-Connections，24 层", 24, "ahc", "39", ("w80", "w81")),
         ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83")),
         # owner popup 2026-10-24: sources at unit RMS in every mix (Figure 41)
-        ("AttnRes (Full), sources at unit RMS", "AttnRes (Full)，源归一化到单位 RMS", 48, "aattnres-vnorm", "41", ("w122", "w123"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
+        ("AttnRes (Full), sources at unit RMS", "AttnRes (Full)，源归一化到单位 RMS", 48, "aattnres-vnorm", "41", ("w122", "w123")),
+        # owner popup 2026-10-25: Pre-LN at 12 and 24 layers (Figure 39)
+        ("Pre-LN, 12 layers", "Pre-LN，12 层", 12, "apreln", "39", ("w147", "w148")),
+        ("Pre-LN, 24 layers", "Pre-LN，24 层", 24, "apreln", "39", ("w149", "w150"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
+    # owner popup 2026-10-25: separate heads with static routing; their probes runs are w27 / w28 (Figure 37)
+    *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep-{tag}-vs-d48"), "37") for en, zh, jid, tag in [
+        ("Hyper-Connections, static routing: separate heads", "Hyper-Connections，静态路由：独立头", "w151", "ahc-rstatic"),
+        ("AttnRes (Full), static routing: separate heads", "AttnRes (Full)，静态路由：独立头", "w152", "aattnres-rstatic")]],
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),

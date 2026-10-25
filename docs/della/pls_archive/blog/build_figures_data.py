@@ -864,7 +864,7 @@ LOSS48 = {"en": "Layer-48 training loss (nats)", "zh": "第 48 层训练损失�
 figs["fig-arch-gain"] = dict(title={"en": "Pre-norm scales, 48 layers", "zh": "pre-norm 增益，48 层"},
                              legend=GAIN_LEGEND,
                              quantity={"en": "Pre-norm scale relative to Pre-LN's", "zh": "pre-norm 增益相对 Pre-LN 的比值"}, xlabel=LAYER_X, height=200, cols=1,
-                             panels=[dict(xlim=[0.5, 48.5], ylim=[0.0, 1.2], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (0, 0.4, 0.8, 1.2)], marks=GAIN_MARKS[0], empty=None if GAIN_MARKS[0] else ARCH2_STATUS,
+                             panels=[dict(xlim=[0.5, 48.5], ylim=[0.0, 1.6], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (0, 0.4, 0.8, 1.2, 1.6)], marks=GAIN_MARKS[0], empty=None if GAIN_MARKS[0] else ARCH2_STATUS,
                                           label={"en": "Mean pre-norm scale by layer", "zh": "每层 pre-norm 增益的均值"}),
                                      dict(xlim=[0.5, 48.5], ylim=[-0.6, 0.1], xticks=L48T, yticks=[[t, f"{t:g}"] for t in (-0.6, -0.4, -0.2, 0)], marks=GAIN_MARKS[1], empty=None if GAIN_MARKS[1] else ARCH2_STATUS,
                                           label={"en": "Final probe training loss minus Pre-LN's", "zh": "探针最终训练损失减 Pre-LN"})])
@@ -882,9 +882,14 @@ _rp = []
 for _a, _dyn, _sta, _lab in ROUTE37:
     _m = [m for m in (_route_line("apreln-vs-d48-g4", GREY), _route_line(_dyn, BLUE7), _route_line(_sta, GREEN)) if m is not None]
     _q = G4.get(f"-sep-bbfrozen-{_sta}/final") is None
+    # owner popup 2026-10-25: the separate-heads cost of both routings in the label (static separate heads: wq w151, w152)
+    _c = {t: (None if G4.get(f"-sep-{t}/final") is None or G4.get(f"-sep-bbfrozen-{t}/final") is None
+              else round(float(G4[f"-sep-{t}/final"][47] - G4[f"-sep-bbfrozen-{t}/final"][47]), 3)) for t in (_dyn, _sta)}
+    _cl = {"en": " · separate-heads cost: dynamic " + (f"{_c[_dyn]:.3f}" if _c[_dyn] is not None else "–") + ", static " + (f"{_c[_sta]:.3f}" if _c[_sta] is not None else "queued"),
+           "zh": " · 独立头代价：动态 " + (f"{_c[_dyn]:.3f}" if _c[_dyn] is not None else "–") + "，静态 " + (f"{_c[_sta]:.3f}" if _c[_sta] is not None else "排队中")}
     _rp.append(dict(xlim=[0, 5000], ylim=[2.8, 4.0], xticks=[[t, f"{t:,}"] for t in (0, 2500, 5000)], yticks=[[t, f"{t:g}"] for t in (2.8, 3.2, 3.6, 4.0)],
                     marks=_m, empty=None if _m else ARCH2_STATUS,
-                    label={k: v + ((" · static routing queued" if k == "en" else " · 静态路由排队中") if _q else "") for k, v in _lab.items()}))
+                    label={k: v + ((" · static routing queued" if k == "en" else " · 静态路由排队中") if _q else _cl[k]) for k, v in _lab.items()}))
     print("Fig 37", _a, "layer-48 final probe loss dynamic / static",
           *(None if G4.get(f"-sep-bbfrozen-{t}/final") is None else round(float(G4[f"-sep-bbfrozen-{t}/final"][47]), 3) for t in (_dyn, _sta)))
 figs["fig-arch-route"] = dict(title={"en": "Training loss with dynamic and static routing, 48 layers", "zh": "动态路由与静态路由的训练损失，48 层"},
@@ -919,6 +924,9 @@ HCD = {6: round(A10["hc"][5] - A10["hc-probes"][5], 4) if {"hc", "hc-probes"} <=
        12: sep_cost("ahc-vs-d12", 12), 24: sep_cost("ahc-vs-d24", 24), 48: sep_cost("ahc-vs-d48-g4")}
 OTH48 = [sep_cost("vs-d48-g4")] + [sep_cost(f"a{k}-vs-d48-g4") for k, _ in ARCH if k != "hc"]  # Sandwich-LN, then the other eight
 w39 = [str(d) for d, v in HCD.items() if v is None]
+# owner popup 2026-10-25 (wq w147-w150): Pre-LN at 12 and 24 layers, beside its 48-layer cost; is the fall with depth HC's alone?
+PRD = {12: sep_cost("apreln-vs-d12", 12), 24: sep_cost("apreln-vs-d24", 24), 48: sep_cost("apreln-vs-d48-g4")}
+w39p = [str(d) for d, v in PRD.items() if v is None]
 # the line joins only neighbouring measured depths: a depth still training leaves a gap, not an interpolated value
 HCD_SEGS, _seg = [], []
 for d, v in HCD.items():
@@ -927,16 +935,27 @@ for d, v in HCD.items():
     else:
         _seg = _seg + [[d, v]]
 HCD_SEGS += [_seg] if len(_seg) > 1 else []
+def _segs(D):
+    out, seg = [], []
+    for d, v in D.items():
+        if v is None:
+            out, seg = out + ([seg] if len(seg) > 1 else []), []
+        else:
+            seg = seg + [[d, v]]
+    return out + ([seg] if len(seg) > 1 else [])
 figs["fig-hc-depth"] = dict(title={"en": "Separate-heads cost of Hyper-Connections by depth", "zh": "Hyper-Connections 的独立头代价与深度"},
-                            legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "line"], [{"en": "Other designs, 48 layers", "zh": "其他结构，48 层"}, GREY, "dot"]],
+                            legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "line"], [{"en": "Pre-LN", "zh": "Pre-LN"}, RED, "line"], [{"en": "Other designs, 48 layers", "zh": "其他结构，48 层"}, GREY, "dot"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
                             xlabel={"en": "Layers", "zh": "层数"}, height=200, cols=1,
                             panels=[dict(xlim=[0, 52], ylim=[-0.05, 0.15], xticks=[[d, str(d)] for d in (6, 12, 24, 48)], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
-                                         label={"en": "Last layer" + (" · " + ", ".join(w39) + " layers queued" if w39 else ""), "zh": "最后一层" + (" · " + "、".join(w39) + " 层排队中" if w39 else "")},
+                                         label={"en": "Last layer" + (" · HC " + ", ".join(w39) + " layers queued" if w39 else "") + (" · Pre-LN " + ", ".join(w39p) + " layers queued" if w39p else ""),
+                                                "zh": "最后一层" + (" · HC " + "、".join(w39) + " 层排队中" if w39 else "") + (" · Pre-LN " + "、".join(w39p) + " 层排队中" if w39p else "")},
                                          marks=[dict(type="line", color=BLUE7, width=1.6, alpha=1.0, pts=seg) for seg in HCD_SEGS] + [
                                                 dict(type="dots", color=BLUE7, pts=[[d, v] for d, v in HCD.items() if v is not None]),
-                                                dict(type="dots", color=GREY, pts=[[48, v] for v in OTH48 if v is not None])])])
-print("Fig 39 HC cost by depth", HCD, "others at 48", OTH48)
+                                                dict(type="dots", color=GREY, pts=[[48, v] for v in OTH48 if v is not None])]
+                                               + [dict(type="line", color=RED, width=1.6, alpha=1.0, pts=seg) for seg in _segs(PRD)]
+                                               + [dict(type="dots", color=RED, pts=[[d, v] for d, v in PRD.items() if v is not None])])])
+print("Fig 39 HC cost by depth", HCD, "Pre-LN", PRD, "others at 48", OTH48)
 # Figure 40 (owner popups 2026-10-23): is the separate-heads cost the readouts seeing the whole state the later layers
 # read? Pre-LN separate heads whose intermediate readouts see only the first f of the hidden coordinates (PLS_VIS, wq
 # w87/w88), against the Pre-LN probes run; seed 1 of both (w89/w90) shows the seed noise of the cost at f = 1. HC (its
