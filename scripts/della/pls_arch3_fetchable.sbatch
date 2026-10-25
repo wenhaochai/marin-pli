@@ -38,6 +38,8 @@
 #                                control: the -apreln- probes run (a probe's weight does not reach the backbone)
 #   arch3-hc-s1-{sep,probes}     HC 48 layers seed 1 (owner popup 2026-10-25: HC's low cost rests on one seed)
 #   arch3-preln-vis125-sep       Pre-LN readouts see 1/8 of the coordinates (owner popup 2026-10-25: extends E1)
+#   arch3-hc{1,2}-{sep,probes}  HC 48 layers with 1 / 2 residual streams instead of 4 (owner popup 2026-10-25: is HC's low
+#                                cost its extra streams or its token-dependent gates? 1 stream = Pre-LN plus HC's gates)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -64,6 +66,8 @@ case $DESIGN in
   arch3-preln-w47) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_W=0.0212766";;   # the last PLS_W wins in env
   arch3-hc-s1) S="$base LAYERS=48 PDP=4 ARCH=hc SEED=1";;
   arch3-preln-vis125) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.125";;
+  arch3-hc1) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=1";;
+  arch3-hc2) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=2";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
