@@ -197,7 +197,7 @@ against plain 1.4769 and unique 1.4539. The 8K cost falls 0.0230 -> 0.0181 (x1.5
 far and the first to remove most of the 8K cost. Open: the unique-token run at the same lr x2 from the same step (if a
 larger late lr also helps unique tokens, the cost is not what fell); x3. RESULT lrx 128K (w48, w50; exact, seed 0, rep8):
 x1.5 gives 1.4561, x2 gives 1.4480, against plain 1.4653 and unique 1.3856: the 128K cost falls 0.0797 -> 0.0705 -> 0.0624,
-the same dose response as 8K but a fifth of the cost against two thirds there.
+the same dose response as 8K but a fifth of the cost against two thirds there. FAIRNESS 128K (w117, 2026-10-26, exact, seed 0; the new code): unique tokens with LR x2 from the same step 1.3943, worse than plain unique 1.3856, so the lowest unique point stays the plain one and the 8-pass x2 cost against it is 0.0624.
 Follow-ups queued 2026-10-22 (owner popup): w54 8K unique tokens lr x2 from total/8 (the control), w55 8K lr x3,
 w56/w57/w58 16K/32K/64K lr x2; code 310c596088 lets LR_MULT run on unique tokens.
 
