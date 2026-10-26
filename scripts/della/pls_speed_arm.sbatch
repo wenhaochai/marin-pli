@@ -27,7 +27,7 @@
 #   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
 # Rounds (default: det time for preln, time for hc and attnres; a -det, -time or -dettime suffix sets them): det
 # (XLA_FLAGS --xla_gpu_exclude_nondeterministic_ops=true, 40 steps: bitwise comparison between arms); time (default
-# flags, 40 steps, PROFILE=20:3: step time, kernel times, memory); prof (-prof only: no command buffers, HLO dumped,
+# flags, 40 steps: step time); prof (-prof only: no command buffers, HLO dumped,
 # PROFILE=20:2, for trace_families.py).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -70,7 +70,7 @@ for r in $ROUNDS; do
   xf=; pr=
   case $r in
     det) xf="--xla_gpu_exclude_nondeterministic_ops=true";;
-    time) pr="PROFILE=20:3";;
+    time) pr=;;   # no profile here: with command buffers on, jax.profiler.stop_trace hung and left GPUs idle (w237/w238, 2026-10-26)
     # prof: no command buffers (each kernel then shows in the trace under its own HLO instruction) and the optimized HLO
     # dumped, for trace_families.py (the Tokenizer Size session's speed-all 7b2eba3a51); its step time is not the measure
     prof) pr="PROFILE=20:2"; xf="--xla_gpu_enable_command_buffer= --xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/pls_speed/hlo_${NAME}_${JID} --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*";;
