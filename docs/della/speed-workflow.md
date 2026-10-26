@@ -122,6 +122,30 @@ profiler). Branch async-hooks (91e23bf466): LEVANTER_ASYNC_STEP=1 dispatches ste
 each step's own state, which the train step then keeps instead of donating); levanter test_train_lm passes in both modes;
 4-GPU check w307 (live vs liveasync, evals and checkpoints mid-run, wall_ms from W&B runtime).
 
+**The host path between steps (2026-10-26 07:00-09:00; 4 GPUs, 300m, wall per step over steps 20-190 from W&B
+runtime).** The async loop as first written gained nothing: w309 128K 558.8 ms sync against 562.9 async, w310 / w311 the
+same with the loop capture or all CUDA graphs off. Profiles w313 / w315 (4 GPUs, graphs on, Python tracer;
+scripts/della/speed_all/trace_step_timeline.py prints host frames and GPU idle on one timeline): GPU busy 503 of 600 ms
+per step, idle 84 ms at the step boundary. Between the loss read and the next dispatch the host runs, in order:
+jnp.isnan / jnp.isinf on the host loss (each a device computation read back), checkpoint_hook's saveable_state (an eqx
+filter, 13 ms), Checkpointer.on_step's save decision as a jnp array read back through broadcast_one_to_all every step,
+~120 scalar metrics read one at a time by the wandb tracker (0.14 ms each), the watch hook every 10 steps (~45 ms), then
+the named_jit dispatch (~80 ms under the tracer). Under the async loop the two device computations queue behind step
+N+1, so the host waited for all of N+1 and the loop stayed synchronous. Fixes on branch async-hooks (533848cd1a,
+e95273ab99): math.isnan / math.isinf, a numpy array for the save decision, is_inside_jit without its probe array when
+no transformation is active, and tracker.log starting every metric array's device-to-host copy before a tracker reads
+one; levanter test_train_lm, test_jax_utils, test_checkpoint* and test_tracker pass in both loop modes. w317 (128K, 200
+steps): sync 557.4 ms (the fixes alone change little: 557.8 / 558.8 before), async 523.9 ms (-6.0%, losses within
+noise); profile w318: GPU idle 11.2% of the trace sync, 1.7% async. Allocator (w316, 8K, 200 steps): on the default BFC
+allocator REMAT=fdots ran out of memory at step 8 asking for one 40.28 GiB block (w160's failure: its largest free block
+was 40.34 GiB, split by small buffers); XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async (CUDA's stream-ordered pool, no
+contiguous block needed) runs flash at 439.3 ms against 445.2 on BFC (-1.3%) and fdots at 409.6 ms (-8.0%). Queued:
+w319 XLA dot merger (--xla_gpu_dot_merger_threshold_mb=4096; q/k/v and gate/up as one GEMM each), w320 main code vs the
+fixed sync loop vs async, w321 fdots + cuda_async at 128K, w322 / w323 the same with full Paloma evals and checkpoints
+every 20 steps (128K, 8K unismooth), w324 / w325 the combined stack (async + fdots + cuda_async), w326 the lse kernel in
+evaluation (LEVANTER_CE_LSE_KERNEL_EVAL=1; evaluation's forward-only CE still takes the XLA path, 7.33 against 3.28 ms
+per 8192-row block at 128K, and evaluations are ~4.4% of a 128K run).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
