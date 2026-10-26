@@ -5,6 +5,7 @@ import functools
 import inspect
 import logging
 import math
+import os
 import warnings
 from dataclasses import dataclass
 from enum import StrEnum
@@ -70,6 +71,9 @@ class AttentionBackend(StrEnum):
     # Causal (+ packed-document segment ids) self-attention through the grug FA4/CuTe segmented kernel
     # (levanter.grug.attention). NVIDIA GPU only (sm80/sm90/sm100); no fallback: unsupported inputs raise.
     FA4_CUTE = "fa4_cute"
+    # The same attention through upstream FA4's varlen kernels, each packed document one sequence (grug _fa4_thd).
+    # On SM90 at head_dim <= 64 these are the native wgmma/TMA kernels; the segmented kernel is Ampere-style there.
+    FA4_THD = "fa4_thd"
 
 
 _SPLASH_FALLBACK_WARNINGS_EMITTED: set[str] = set()
@@ -275,7 +279,7 @@ def dot_product_attention(
                     logits_soft_cap=logits_soft_cap,
                 )
 
-        case AttentionBackend.FA4_CUTE:
+        case AttentionBackend.FA4_CUTE | AttentionBackend.FA4_THD:
             attention_out = _fa4_cute_attention(
                 QPos,
                 KPos,
@@ -291,6 +295,7 @@ def dot_product_attention(
                 scaling_factor=scaling_factor,
                 logits_soft_cap=logits_soft_cap,
                 attn_sink=attn_sink,
+                thd=attn_backend == AttentionBackend.FA4_THD,
             )
 
         case _:
@@ -713,6 +718,7 @@ def _fa4_cute_attention(
     scaling_factor: float,
     logits_soft_cap: float | None,
     attn_sink: Optional[NamedArray],
+    thd: bool = False,
 ) -> NamedArray:
     """Causal self-attention, optionally restricted to packed documents, via the grug FA4/CuTe kernel.
 
@@ -720,6 +726,10 @@ def _fa4_cute_attention(
     levanter mask must be ``AttentionMask.causal()`` plus at most segment ids. It runs per device inside a
     shard_map over the batch (and head) mesh axes that the inputs are already sharded on; the sequence axis
     must be unsharded. Softmax statistics are fp32 inside the kernel.
+
+    ``thd``: the same attention through upstream FA4's varlen kernels instead (AttentionBackend.FA4_THD): per device
+    each packed document is one sequence of a THD batch with a static sequence count, LEVANTER_FA4_THD_DOCS_PER_ROW
+    per row (default 32); more documents on a device give a NaN, never a wrong mask.
     """
     from levanter.grug.attention._fa4_cute import _segmented_kernel_config  # noqa: PLC0415  # optional CUDA deps
     from levanter.grug.attention._fa4_cute_backend import fa4_cute_attention_forward  # noqa: PLC0415
@@ -796,6 +806,16 @@ def _fa4_cute_attention(
         lower_bounds = _fa4_segment_lower_bounds(seg)
         valid = jnp.ones(q.shape[:2], dtype=jnp.bool_)
         return fa4_cute_attention_forward(q, k, v, lower_bounds, valid, sm_scale=sm_scale, kernel_config=kernel_config)
+
+    if thd:
+        from levanter.grug.attention._fa4_thd import fa4_thd_local_attention  # noqa: PLC0415  # optional CUDA deps
+
+        docs_per_row = int(os.environ.get("LEVANTER_FA4_THD_DOCS_PER_ROW", "32"))
+
+        def _local_attention(q, k, v, seg):
+            return fa4_thd_local_attention(
+                q, k, v, seg, softmax_scale=sm_scale, max_documents=docs_per_row * q.shape[0]
+            )
 
     mesh = hax.partitioning._get_mesh()
     if mesh is None or mesh.empty:

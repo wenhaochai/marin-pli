@@ -23,6 +23,7 @@
 #   a1      = CE label term as a select (pls 5ab04d3e45)   gif = a1 + CE gradient in the forward
 #   dbase, dbase2, da1, dgif = base, base again, a1, gif with --xla_gpu_exclude_nondeterministic_ops (per-step loss bitwise?)
 #   now     = the defaults since 2026-10-26 04:30 (FA4, REMAT=flash, CE A1 + GIF, cb)   nowdots = now with REMAT=fdots
+#   nowthd  = now with ATTN_BACKEND=fa4thd (upstream FA4 varlen kernels, native SM90; branch fa4-sm90)
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
 # PAIR line, its per-step train/loss minus the first arm's (same seed, data, schedule; bf16 noise is ~1e-3).
 set -uo pipefail
@@ -31,7 +32,7 @@ shift
 ARMS=("$@")
 [ ${#ARMS[@]} -ge 1 ] || { echo "no arms"; exit 2; }
 MAIN=/scratch/gpfs/GROUP/USER/project/marin
-WT=/scratch/gpfs/GROUP/USER/tmp/speed_wt/all
+WT=/scratch/gpfs/GROUP/USER/tmp/speed_wt/fa4sm90   # branch fa4-sm90 (speed-all has its own copy)
 PY=$MAIN/.venv/bin/python
 cd "$WT"
 source scripts/della/job_tmpdir.sh
@@ -76,6 +77,7 @@ for ARM in "${ARMS[@]}"; do
     fa4flash) export ATTN_BACKEND=fa4 REMAT=flash XLA_FLAGS="$CB" ;;
     now) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;   # the defaults since 2026-10-26 04:30
     nowdots) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
+    nowthd) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;   # branch fa4-sm90
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
     gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     dbase|dbase2) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash ;;   # det arms on JAX flash (FA4 backward is not run-to-run deterministic)

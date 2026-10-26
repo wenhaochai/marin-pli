@@ -7,6 +7,7 @@ from a lognormal with mean ~1000 tokens, cut to the window) and 'one' (one docum
 Backends:
   jax_flash  levanter dot_product_attention, AttentionBackend.JAX_FLASH, block FLASH (default 1024): today's path
   fa4        levanter dot_product_attention, AttentionBackend.FA4_CUTE (branch speed-all)
+  fa4thd     levanter dot_product_attention, AttentionBackend.FA4_THD (branch fa4-sm90: upstream FA4 varlen, native SM90)
   pallas     jax.experimental.pallas.ops.gpu.attention.mha (Triton), causal + segment_ids
   cudnn      jax._src.cudnn.fused_attention_stablehlo.dot_product_attention, packed documents (q/kv offsets, MAXSEG per row)
 Per backend and layout: median ms of fwd+bwd (value_and_grad of sum(out * cotangent) w.r.t. q, k, v) and of fwd only,
@@ -67,7 +68,7 @@ Batch, Pos, KPos, Heads, Key = Axis("batch", B), Axis("position", T), Axis("key_
 
 
 def levanter_attn(backend):
-    be = {"jax_flash": AttentionBackend.JAX_FLASH, "fa4": AttentionBackend.FA4_CUTE}[backend]
+    be = {"jax_flash": AttentionBackend.JAX_FLASH, "fa4": AttentionBackend.FA4_CUTE, "fa4thd": AttentionBackend.FA4_THD}[backend]
 
     def f(q, k, v, seg):
         qn = hax.named(q, (Batch, Pos, Heads, Key))
@@ -128,7 +129,7 @@ for layout in LAYOUTS:
     (_, rg), ro = rf(q[:REF], k[:REF], v[:REF]), jax.jit(lambda q, k, v: reference(q, k, v, seg[:REF]))(q[:REF], k[:REF], v[:REF])
     for be in BACKENDS:
         try:
-            f = levanter_attn(be) if be in ("jax_flash", "fa4") else {"pallas": pallas_attn, "cudnn": cudnn_attn}[be]
+            f = levanter_attn(be) if be in ("jax_flash", "fa4", "fa4thd") else {"pallas": pallas_attn, "cudnn": cudnn_attn}[be]
             fwd = jax.jit(lambda q, k, v, s: f(q, k, v, s))
             vg = jax.jit(jax.value_and_grad(lambda q, k, v, s: jnp.sum(f(q, k, v, s).astype(jnp.float32) * ct.astype(jnp.float32)), argnums=(0, 1, 2)))
             t_f, out = timed(fwd, q, k, v, seg)

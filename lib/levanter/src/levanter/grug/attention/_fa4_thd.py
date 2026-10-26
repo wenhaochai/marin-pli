@@ -13,6 +13,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.ad_checkpoint import checkpoint_name
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 from jax.sharding import reshard
@@ -20,7 +21,12 @@ from jaxtyping import Array, Bool, Float, Int
 
 from levanter.cutlass_kernel_cache import cute_launcher_factory, cutlass_call, gpu_compute_capability
 from levanter.grug.attention._core import AttentionMask
-from levanter.grug.attention._fa4_cute_config import Flash4CuteKernelConfig, flash4_cute_kernel_config
+from levanter.grug.attention._fa4_cute_config import (
+    Flash4CuteKernelConfig,
+    Sm90BackwardSchedule,
+    flash4_cute_kernel_config,
+    sm90_flash4_cute_backward_config,
+)
 
 
 @dataclass(frozen=True)
@@ -161,8 +167,18 @@ def _thd_kernel_config(head_dim: int) -> Flash4CuteKernelConfig:
     arch_family = arch // 10
     if arch_family not in _SUPPORTED_ARCH_FAMILIES:
         raise NotImplementedError(f"gpu_fa4_thd_attention currently supports only SM90/SM100/SM110, got SM{arch}.")
+    if arch_family == _HOPPER_ARCH_FAMILY and head_dim <= 64:
+        # Upstream FA4's own SM90 choice at head_dim <= 64 (flash_attn.cute.interface): a 192x128 forward tile with the
+        # P @ V MMA from registers and intra-warpgroup overlap (FlashAttentionForwardSm90 defaults), 384 threads, and the
+        # backward from the upstream table (sm90_backward; one query head per KV head stores dK/dV directly).
+        return Flash4CuteKernelConfig(
+            forward_tile=(192, 128),
+            backward_tile=(128, 128),
+            num_threads=384,
+            sm90_backward=sm90_flash4_cute_backward_config(head_dim, schedule=Sm90BackwardSchedule.CAUSAL_OR_LOCAL),
+        )
     if head_dim != 128:
-        raise NotImplementedError(f"gpu_fa4_thd_attention is only wired for head_dim=128, got {head_dim}.")
+        raise NotImplementedError(f"gpu_fa4_thd_attention is wired for head_dim=128 (and <= 64 on SM90), got {head_dim}.")
     if arch_family == _HOPPER_ARCH_FAMILY:
         base = flash4_cute_kernel_config(head_dim, arch=arch)
         return Flash4CuteKernelConfig(
@@ -542,6 +558,115 @@ def _upstream_fa4_thd_backward_launcher(
     return _launch_upstream_fa4_thd_backward
 
 
+@cute_launcher_factory
+def _upstream_fa4_thd_backward_sm90_mha_launcher(
+    modules: _UpstreamFa4CuteModules,
+    *,
+    dtype: Any,
+    head_dim: int,
+    head_dim_v: int,
+    kernel_config: Flash4CuteKernelConfig,
+) -> Any:
+    """SM90 backward from the upstream table (``kernel_config.sm90_backward``) with one query head per KV head.
+
+    The same calls as upstream ``flash_attn.cute.interface._flash_attn_bwd`` on SM90 varlen: the preprocess, the backward
+    kernel storing dK and dV directly (ragged TMA; no f32 accumulators, since no two query heads share a KV head), and
+    the dQ postprocess with the backward's dQ MMA layout (tile_m, AtomLayoutMdQ, dQ_swapAB, one thread per MMA lane).
+    """
+    cutlass = modules.cutlass
+    cute = modules.cute
+    cuda = modules.cuda
+    cute_dtype = _cutlass_dtype(cutlass, dtype)
+    cfg = kernel_config.sm90_backward
+    tile_m, tile_n = cfg.tile
+    preprocess = modules.FlashAttentionBackwardPreprocess(
+        cute_dtype,
+        head_dim,
+        head_dim_v,
+        tile_m,
+        num_threads=128,
+        use_padded_offsets=False,
+    )
+    backward = modules.FlashAttentionBackward(
+        cute_dtype,
+        head_dim,
+        head_dim_v,
+        qhead_per_kvhead=1,
+        is_causal=True,
+        is_local=False,
+        deterministic=False,
+        tile_m=tile_m,
+        tile_n=tile_n,
+        Q_stage=cfg.num_stages_q,
+        dO_stage=cfg.num_stages_do,
+        PdS_stage=cfg.num_stages_pds,
+        SdP_swapAB=cfg.sdp_swap_ab,
+        dKV_swapAB=cfg.dkv_swap_ab,
+        dQ_swapAB=cfg.dq_swap_ab,
+        AtomLayoutMSdP=cfg.atom_layout_m_sdp,
+        AtomLayoutNdKV=cfg.atom_layout_n_dkv,
+        AtomLayoutMdQ=cfg.atom_layout_m_dq,
+        num_threads=cfg.num_threads,
+        V_in_regs=False,
+        score_mod=None,
+        score_mod_bwd=None,
+        mask_mod=None,
+        has_aux_tensors=False,
+        subtile_factor=2,
+        dQ_single_wg=cfg.dq_single_wg,
+    )
+    dq_postprocess = modules.FlashAttentionBackwardPostprocess(
+        cute_dtype,
+        head_dim,
+        modules.arch,
+        tile_m,
+        num_threads=128 if cfg.dq_single_wg else cfg.num_warp_groups * 128,
+        AtomLayoutMdQ=cfg.atom_layout_m_dq,
+        dQ_swapAB=cfg.dq_swap_ab,
+    )
+
+    @cute.jit
+    def _launch_upstream_fa4_thd_backward_sm90_mha(
+        stream: cuda.CUstream,
+        q: cute.Tensor,
+        k: cute.Tensor,
+        v: cute.Tensor,
+        out: cute.Tensor,
+        dout: cute.Tensor,
+        lse: cute.Tensor,
+        cu_seqlens: cute.Tensor,
+        dq: cute.Tensor,
+        dk: cute.Tensor,
+        dv: cute.Tensor,
+        dpsum: cute.Tensor,
+        lse_log2: cute.Tensor,
+        dq_accum: cute.Tensor,
+        *,
+        softmax_scale: cutlass.Float32,
+    ):
+        preprocess(out, dout, dpsum, lse, lse_log2, dq_accum, cu_seqlens, None, None, stream)
+        backward(
+            q,
+            k,
+            v,
+            dout,
+            lse_log2,
+            dpsum,
+            dq_accum,
+            dk,
+            dv,
+            softmax_scale,
+            cu_seqlens,
+            cu_seqlens,
+            window_size_left=None,
+            window_size_right=None,
+            stream=stream,
+        )
+        dq_postprocess(dq_accum, dq, softmax_scale, cu_seqlens, None, stream)
+
+    return _launch_upstream_fa4_thd_backward_sm90_mha
+
+
 def _sm90_postprocess_tile_m(arch: int, tile_m: int) -> int:
     if arch // 10 == _HOPPER_ARCH_FAMILY:
         return 64
@@ -601,12 +726,35 @@ def fa4_thd_attention_backward(
     sliding_window: int | None,
 ) -> tuple[Float[Array, "T Hq D"], Float[Array, "T Hkv D"], Float[Array, "T Hkv D"]]:
     _validate_thd_inputs(q, k, v, cu_seqlens, softmax_scale=softmax_scale)
-    if q.shape[1] == k.shape[1]:
-        raise NotImplementedError("gpu_fa4_thd_attention backward is currently wired for GQA only.")
     try:
         modules = _import_upstream_fa4_cute()
     except Exception as exc:
         raise _optional_dependency_error() from exc
+    if q.shape[1] == k.shape[1]:
+        if modules.arch // 10 != _HOPPER_ARCH_FAMILY or kernel_config.sm90_backward is None or sliding_window is not None:
+            raise NotImplementedError(
+                "gpu_fa4_thd_attention backward with one query head per KV head is wired for SM90 causal attention "
+                "with an upstream backward table (head_dim <= 64) only."
+            )
+        launcher = _upstream_fa4_thd_backward_sm90_mha_launcher(
+            modules,
+            dtype=q.dtype,
+            head_dim=q.shape[-1],
+            head_dim_v=v.shape[-1],
+            kernel_config=kernel_config,
+        )
+        input_spec, output_spec = _cutlass_thd_backward_specs(modules)
+        output_shape_dtype = _cutlass_thd_backward_output_shapes(q, k, v, cu_seqlens, kernel_config.backward_tile)
+        call = cutlass_call(
+            launcher,
+            output_shape_dtype=output_shape_dtype[:6],
+            input_spec=input_spec,
+            output_spec=output_spec[:6],
+            use_static_tensors=True,
+            softmax_scale=softmax_scale,
+        )
+        dq, dk, dv, *_scratch = call(q, k, v, out, dout, lse, cu_seqlens)
+        return dq, dk, dv
 
     launcher = _upstream_fa4_thd_backward_launcher(
         modules,
@@ -740,6 +888,10 @@ def _jax_fa4_thd_attention_fwd(
         kernel_config=kernel_config,
         sliding_window=sliding_window,
     )
+    # the names the segmented FA4 backend and levanter's flash attention give these residuals, so a remat policy that
+    # saves flash_o / flash_ell keeps them and the backward pass does not run the attention forward again
+    out = checkpoint_name(out, "flash_o")
+    lse = checkpoint_name(lse, "flash_ell")
     return out, (q, k, v, out, lse, cu_seqlens)
 
 
@@ -806,6 +958,51 @@ def _validate_thd_inputs(
         raise ValueError(f"softmax_scale must be positive, got {softmax_scale}")
 
 
+def thd_cu_seqlens_from_segment_ids(segment_ids: Int[Array, "B S"], *, max_documents: int) -> tuple[Int[Array, "N"], Int[Array, ""]]:
+    """cu_seqlens over the B*S tokens for packed documents: each run of equal ids in a row is one sequence, rows split.
+
+    The documents come first, then zero-length sequences up to ``max_documents`` (a static count for JIT); returns
+    cu_seqlens [max_documents + 1] and the number of documents. A row's runs are its documents whenever each id value
+    occupies one contiguous run per row (levanter's eos-cumsum segment ids, and trailing -1 padding as one run).
+    """
+    batch, seq_len = segment_ids.shape
+    total = batch * seq_len
+    flat = segment_ids.reshape(total)
+    positions = jnp.arange(total, dtype=jnp.int32)
+    starts = (positions % seq_len == 0) | (flat != jnp.concatenate([flat[:1], flat[:-1]]))
+    start_positions = jnp.nonzero(starts, size=max_documents, fill_value=total)[0].astype(jnp.int32)
+    cu_seqlens = jnp.concatenate([start_positions, jnp.full((1,), total, dtype=jnp.int32)])
+    return cu_seqlens, jnp.sum(starts, dtype=jnp.int32)
+
+
+def fa4_thd_local_attention(
+    q: Float[Array, "B S H D"],
+    k: Float[Array, "B S H D"],
+    v: Float[Array, "B S H D"],
+    segment_ids: Int[Array, "B S"],
+    *,
+    softmax_scale: float,
+    max_documents: int,
+) -> Float[Array, "B S H D"]:
+    """Causal attention inside packed documents on one device, through upstream FA4's varlen kernels (SM90 at
+    head_dim <= 64: wgmma/TMA forward and backward). One output element is NaN when the rows hold more than
+    ``max_documents`` documents, so an undersized bound fails loudly (a NaN loss) without a host check inside the step
+    and without a pass over the output."""
+    batch, seq_len, heads, head_dim = q.shape
+    cu_seqlens, num_documents = thd_cu_seqlens_from_segment_ids(segment_ids, max_documents=max_documents)
+    out = _jax_fa4_thd_attention(
+        q.reshape(batch * seq_len, heads, head_dim),
+        k.reshape(batch * seq_len, k.shape[2], head_dim),
+        v.reshape(batch * seq_len, v.shape[2], head_dim),
+        cu_seqlens,
+        softmax_scale,
+        _thd_kernel_config(head_dim),
+        None,
+    )
+    out = out.at[0, 0, 0].set(jnp.where(num_documents > max_documents, jnp.asarray(jnp.nan, out.dtype), out[0, 0, 0]))
+    return out.reshape(batch, seq_len, heads, head_dim)
+
+
 def gpu_fa4_thd_attention(
     q: Float[Array, "B Q Hq D"],
     k: Float[Array, "B K Hkv D"],
@@ -851,4 +1048,6 @@ __all__ = [
     "gpu_fa4_thd_attention",
     "fa4_thd_attention_forward",
     "fa4_thd_attention_backward",
+    "fa4_thd_local_attention",
+    "thd_cu_seqlens_from_segment_ids",
 ]
