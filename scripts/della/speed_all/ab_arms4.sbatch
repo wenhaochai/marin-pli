@@ -97,6 +97,8 @@ for ARM in "${ARMS[@]}"; do
     liveasync) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="$CB" ;;   # live with the async host loop
     livenocb) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600" ;;
     liveasyncnocb) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600" ;;
+    liveoff) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=" ;;   # no CUDA graphs at all
+    liveasyncoff) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=" ;;
     full) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;
     fullnocb) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
