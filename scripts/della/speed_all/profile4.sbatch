@@ -37,13 +37,14 @@ export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 export PYTHONPATH=$WT/lib/levanter/src:$WT/lib/haliax/src:$WT
-unset VARIANT DATA_EPOCHS PASS_DATA TOTAL_STEPS INIT_FROM SEED BATCH PDP NUM_GPUS TIE PRECISION XLA_FLAGS ATTN_BACKEND REMAT
+unset VARIANT DATA_EPOCHS PASS_DATA TOTAL_STEPS INIT_FROM SEED BATCH PDP NUM_GPUS TIE PRECISION XLA_FLAGS ATTN_BACKEND REMAT US_EPS US_FROM_PASS
 export NUM_GPUS=4 PDP=32   # 4 GPUs, one microbatch per step, as the vocab runs
 case $CFG in
   4096) export SIZE=300m SEQ_LEN=4096; unset VOCAB_K ;;
   4480) export SIZE=300m SEQ_LEN=4480 VOCAB_K=32000 ;;
   4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
   5504) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 ;;
+  us002) export SIZE=300m SEQ_LEN=4096 VARIANT=unismooth US_EPS=0.02 US_FROM_PASS=2 DATA_EPOCHS=8; unset VOCAB_K ;;   # the w158 config (lm_head norm jumped at step 3171): its compiled step and buffer assignment
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
 export SMOKE_STEPS=30 PROFILE=20:3
