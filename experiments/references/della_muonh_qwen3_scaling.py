@@ -142,8 +142,11 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # fdots' 37 GiB twice does not fit (w324); fproj's does. It gained nothing (w329, w330): fdots' gain is the MLP recompute.
 # "fgate" / "fmlp" (speed, 2026-10-26): flash plus the MLP's gate output (~8.5 GB at 300m), or its gate and up outputs
 # (~17 GB), named mlp_gate / mlp_up in LlamaMlp, so the backward pass recomputes one or none of the MLP's two input
-# matmuls.
-REMAT = os.environ.get("REMAT", "flash")
+# matmuls. With the async host loop and the f32 embedding gradient, 4 H100s, 300m, full evaluations and checkpoints every
+# 20 steps (median ms per step): 128K flash 516, fgate 511, fmlp 505 (w339); 8K 399, 392, 386 (w340); at SEQ_LEN 5504
+# fgate 522 against 530 and fmlp out of memory (w341). Default since the owner popup of 2026-10-26: at 300m fmlp up to
+# SEQ_LEN 4096 and fgate above it; other sizes keep flash.
+REMAT = os.environ.get("REMAT", ("fmlp" if SEQ_LEN <= 4096 else "fgate") if os.environ.get("SIZE", "130m") == "300m" else "flash")
 if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj", "fgate", "fmlp"):
     raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj | fgate | fmlp")
 
