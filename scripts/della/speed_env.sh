@@ -50,7 +50,7 @@ export LEVANTER_ASYNC_STEP=${LEVANTER_ASYNC_STEP:-1}
 # LEVANTER_EMBED_GRAD_F32=1 (speed and numerics, owner popup 2026-10-26, no baseline reruns): the input embedding's
 # gradient is summed in f32 and cast once, in place of a bf16 scatter-add that rounds once per occurrence of a token
 # (17-20% relative error on the most frequent rows of 131072 Zipf ids, w327). Changes training: the train loss over the
-# first 200 steps is 0.002 nats lower at 128K and 0.0013 at 8K, so runs from 2026-10-26 ~10:40 on are not bitwise
+# first 200 steps is 0.002 nats lower at 128K and 0.0013 at 8K, so runs that start after 2026-10-26 12:17 are not bitwise
 # comparable to earlier ones. -1.7% (128K) and -1.3% (8K) per step on top of the above.
 export LEVANTER_EMBED_GRAD_F32=${LEVANTER_EMBED_GRAD_F32:-1}
 echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL async_step=$LEVANTER_ASYNC_STEP embed_grad_f32=$LEVANTER_EMBED_GRAD_F32 ATTN_BACKEND=${ATTN_BACKEND:-code default: fa4thd at 130m/300m, fa4 above} REMAT=${REMAT:-flash (code default)}"
