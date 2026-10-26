@@ -1,6 +1,8 @@
 # Copyright The Levanter Authors
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+from functools import partial
 from typing import Literal, Optional, cast, overload
 
 import jax
@@ -14,6 +16,11 @@ from haliax.partitioning import _get_mesh, current_thread_local_mapping, shard_m
 from levanter.kernels.pallas.fused_cross_entropy_loss import (
     Implementation,
     fused_cross_entropy_loss_and_logsumexp_penalty as fused_cross_entropy_loss_and_logsumexp_penalty_kernel,
+)
+from levanter.kernels.pallas.fused_cross_entropy_loss.batched_xla import (
+    _full_vocab_b_tiled_forward_with_grads,
+    _h100_full_vocab_b_tiled_block_size,
+    _linear_softmax_cross_entropy_loss_full_vocab_b_tiled,
 )
 
 DEFAULT_REDUCTION = cast(hax.ReductionFunction, hax.mean)
@@ -96,6 +103,93 @@ def maybe_fused_next_token_loss(
         logit_soft_cap=logit_soft_cap,
         precision=precision,
     )
+
+
+# LEVANTER_CE_GRAD_IN_FWD=1 (speed work, 2026-10-25): a weighted-mean fused CE on the H100 b-tiled path computes its
+# gradients in the forward, from the same logits GEMM per block, and its backward only scales them. The cotangent of a
+# mean is weight / sum(weight) times one scalar c, so it is known before the backward up to c. The loss value is the
+# usual one (computed with no gradient); the gradient reaches x and the head through a zero-valued carrier per example
+# whose cotangent is c. Under plain evaluation the carrier's primal runs, which is the usual forward alone.
+def _ce_grad_in_forward_enabled() -> bool:
+    return os.environ.get("LEVANTER_CE_GRAD_IN_FWD", "0") == "1"
+
+
+def _grad_in_forward_b_block(x: jax.Array, w: jax.Array) -> Optional[int]:
+    """The batch tile of the H100 b-tiled path for these shapes, or None when the fused CE would take another path."""
+    return _h100_full_vocab_b_tiled_block_size(x, w) if jax.default_backend() == "gpu" else None
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(4, 5, 6, 7))
+def _ce_with_gradient_carrier(x, labels, w, g, b_block_size, dtype, logit_soft_cap, precision):
+    """(per-example loss, zeros); the zeros carry the gradient of sum_b g_b loss_b, scaled by their cotangent."""
+    loss, _ = _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
+        x, labels, w, b_block_size=b_block_size, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=precision
+    )
+    return loss, jnp.zeros(x.shape[:1], jnp.float32)
+
+
+def _ce_with_gradient_carrier_fwd(x, labels, w, g, b_block_size, dtype, logit_soft_cap, precision):
+    loss, _, grad_x, grad_w = _full_vocab_b_tiled_forward_with_grads(
+        x, labels, w, g, b_block_size=b_block_size, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=precision
+    )
+    return (loss, jnp.zeros(x.shape[:1], jnp.float32)), (grad_x, grad_w, g)
+
+
+def _ce_with_gradient_carrier_bwd(b_block_size, dtype, logit_soft_cap, precision, residuals, cotangents):
+    grad_x, grad_w, g = residuals
+    _, carrier_ct = cotangents  # the loss output is used under stop_gradient; its cotangent is zero
+    c = carrier_ct[0]  # every example's carrier gets the same cotangent (the caller sums the carriers)
+    scale = lambda t: (t.astype(jnp.float32) * c).astype(t.dtype)
+    return scale(grad_x), None, scale(grad_w), jnp.zeros_like(g)
+
+
+_ce_with_gradient_carrier.defvjp(_ce_with_gradient_carrier_fwd, _ce_with_gradient_carrier_bwd)
+
+
+def _mean_ce_grad_in_forward(
+    pred_embeddings: NamedArray,
+    lm_head: NamedArray,
+    Contract: hax.Axis,
+    Label: hax.Axis,
+    target_y: NamedArray,
+    weight: NamedArray,
+    *,
+    dtype: Optional[jnp.dtype],
+    logit_soft_cap: Optional[float],
+    precision: jax.lax.PrecisionLike,
+) -> Optional[NamedArray]:
+    """The weighted mean of the fused CE with gradient-in-forward, or None when a shard would not take the b-tiled path."""
+    denom = hax.sum(weight)  # the denominator hax.nn.loss.maybe_reduce_loss divides by
+    # The mean's cotangent per example for a unit cotangent of the mean, as its VJP forms it: (1 / denom) * weight.
+    g_all = hax.where(denom != 0, (1.0 / denom) * weight, hax.zeros_like(weight))
+    taken: list[bool] = []
+
+    def impl(shard_embeddings: NamedArray, shard_labels: NamedArray, shard_lm_head: NamedArray, shard_g: NamedArray):
+        batch_axes = hax.axis.without_axes(shard_embeddings.axes, Contract)
+        flat_embeddings, _ = flatten_all_axes_but(shard_embeddings, "__BATCH__", batch_axes, reorder_to_front=True)
+        batch_axis = flat_embeddings.resolve_axis("__BATCH__")
+        x = flat_embeddings.rearrange((batch_axis, Contract)).array
+        labels = hax.flatten_axes(shard_labels, shard_labels.axes, batch_axis).array.astype(jnp.int32)
+        g = hax.flatten_axes(shard_g.rearrange(shard_labels.axes), shard_labels.axes, batch_axis).array
+        w = shard_lm_head.array
+        b_block = _grad_in_forward_b_block(x, w)
+        taken.append(b_block is not None)
+        if b_block is None:  # not the b-tiled path: the caller falls back (these outputs are discarded)
+            return hax.zeros(shard_labels.axes), hax.zeros(shard_labels.axes)
+        loss, carrier = _ce_with_gradient_carrier(x, labels, w, g, b_block, dtype, logit_soft_cap, precision)
+        unflat = lambda a: hax.named(a, batch_axis).unflatten_axis(batch_axis, shard_labels.axes)
+        return unflat(jax.lax.stop_gradient(loss)), unflat(carrier)
+
+    mesh = _get_mesh()
+    if mesh is None or getattr(mesh, "empty", False):
+        loss, carrier = impl(pred_embeddings, target_y, lm_head, g_all)
+    else:
+        axis_mapping = current_thread_local_mapping() or {}
+        loss, carrier = shard_map(impl, axis_mapping=axis_mapping, check_rep=False)(pred_embeddings, target_y, lm_head, g_all)
+    if not all(taken):
+        return None
+    reduced = hax.nn.loss.maybe_reduce_loss(loss, hax.mean, None, where=None, weight=weight)
+    return reduced + hax.sum(carrier)
 
 
 def next_token_loss(
@@ -250,6 +344,29 @@ def fused_cross_entropy_loss_and_logsumexp_penalty(
     Label = pred_lm_head.resolve_axis(Label)
 
     lm_head = pred_lm_head.rearrange((Contract, Label))
+
+    if (
+        _ce_grad_in_forward_enabled()
+        and not return_argmax
+        and weight is not None
+        and reduction_axis is None
+        and hax.nn.loss._is_mean_reduction(reduction)
+        and not logsumexp_weight
+        and implementation in (None, "batched_xla")
+    ):
+        reduced = _mean_ce_grad_in_forward(
+            pred_embeddings,
+            lm_head,
+            Contract,
+            Label,
+            target_y,
+            weight,
+            dtype=dtype,
+            logit_soft_cap=logit_soft_cap,
+            precision=precision,
+        )
+        if reduced is not None:
+            return reduced
 
     def fused_impl(
         shard_embeddings: NamedArray, shard_labels: NamedArray, shard_lm_head: NamedArray
