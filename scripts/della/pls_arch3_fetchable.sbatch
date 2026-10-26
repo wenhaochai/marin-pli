@@ -43,6 +43,8 @@
 #   arch3-hc8-{sep,probes}       HC 48 layers with 8 streams (owner 2026-10-25, queue fill: the stream-count curve 1/2/4/8)
 #   arch3-arblock24-{sep,probes} AttnRes Block with 24 blocks instead of 8 (owner 2026-10-25, queue fill: does the cost fall
 #                                with the number of sources, from Block 0.113 toward Full?)
+#   arch3-preln-fa4-{sep,probes} Pre-LN 48 layers with FA4 attention (owner popup 2026-10-26: validate FA4 before new pairs
+#                                use it: the cost must match the JAX-flash 0.089 / 0.092 (seeds 0 / 1) within seed noise)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -73,6 +75,7 @@ case $DESIGN in
   arch3-hc2) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=2";;
   arch3-hc8) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=8";;
   arch3-arblock24) S="$base LAYERS=48 PDP=2 ARCH=attnres_block AR_BLOCKS=24";;
+  arch3-preln-fa4) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
