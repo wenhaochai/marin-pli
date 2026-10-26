@@ -98,7 +98,17 @@ projections 9%, norms 6.5%; 8K = attention 27%, MLP 23%, remat 12%, projections 
   w285 at 5504: 1269 -> 1073 ms (-15.4%). ATTN_BACKEND=fa4thd is the default at 130m/300m since 2026-10-26 05:45
   (e50e2b3dfb; larger sizes keep fa4: their GQA at head_dim 64 is not checked on this path). Open: under FA4 the
   CUDA-graph capture of while/conditional loops shows 70 ms/step of memcpy/memset and 8% idle in the production-flag
-  profile w286; w295/w296 time the full stack with and without it.
+  profile w286. The full stack with and without that capture (fa4thd, fdots, CE A1 + GIF + lse kernel): 991 / 989 ms at
+  4096 (w295), 1010 / 1020 ms at 5504 (w296; the old code took 3971 ms there, w254): the capture stays on.
+
+**fdots out again; checks past an eval (2026-10-26 05:40-05:50).** REMAT=fdots was the default at 130m/300m from 05:15 to
+05:41. The first production run on it (w160, 300m 8K unigram smoothing) ran out of memory 14 min in: after the first
+eval and checkpoint the train step could not get one 40 GiB block (RESOURCE_EXHAUSTED), and again on its retry; the
+60-step A/Bs evaluate only at their last step, so they never ran a train step after an eval. The default is REMAT=flash
+again (31fe5e3c79); w160 was requeued. New check before any default change: SMOKE_EVAL_EVERY / SMOKE_CKPT_SECONDS (smoke
+runs only) and ab_arms2 configs 4096post / 5504post (80 steps, an eval every 20 and a checkpoint every 20 s). The live
+defaults (fa4thd, flash, CE A1 + GIF + lse kernel, CUDA-graph loops) pass it: w297 (128K, 4096) 1034 ms, evals at
+20/40/60/80 and checkpoints at steps 2/21/41/61; w298 (8K, 5504) 1075 ms; no OOM, eval losses finite.
 
 ## Measured baseline (logs, 4x H100)
 
