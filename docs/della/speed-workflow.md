@@ -38,6 +38,18 @@ run id, so resumed runs keep their checkpoints. The owner chose numerics-changin
 (popup 「全部都上」), so runs from here on differ from earlier ones at the rounding level. Still pending: w210 (kernel
 errors against fp32 with document masks), w212 (REMAT=none), w227/w228 (CE gradient in the forward), w231 (profile).
 
+**Results since (2026-10-26, H100).** Kernel benchmark w210 (one GPU, 32 x 4096 x 12 x 64, document masks; fwd / fwd+bwd ms;
+rel. error of dq/dk/dv vs fp32): JAX flash 44.4 / 106 (0.5-2.2e-3, up to 9e-3 at block 128); FA4 2.4 / 7.3 (2.5-2.8e-3);
+cuDNN packed 1.35 / 8.8 (2.5-2.8e-3); Pallas Triton 3.2 / 28.5. FA4 stays (cuDNN is close; faster with one document per
+row). REMAT=none does not fit (179 GiB, w212); REMAT=dots saves 60 ms of recompute but adds 40 ms of layer-scan
+copies and 27 GiB: -2.5% (w248), not adopted. CE knobs under FA4 (w227): A1 -4.9%, A1+GIF -9.3%; det round w245 (JAX flash):
+A1 bitwise, GIF within 1.9e-6; run-to-run GEMM autotuning alone moves losses by up to 0.076 (pls w205 vs w229). A1 on
+by default. GIF went on at 01:50 and off again at 02:50: its fallback crashes under shard_map for any shard that skips the
+b-tiled CE path, and every vocabulary below 65536 does (pls bug report; no truncated-vocab main run started with it);
+back on after the pls fix and an 8K check. Profile w249 (FA4, 2 GPUs): CE + head 37%, FA4 16%, MLP 15%, remat
+recompute 14% (FA4 forward 5%), projections 8%, norms 5%, collectives 2%, embedding 2%, optimizer 1%; GPU busy 93%
+with command buffers off. Open: w253 (FA4 residuals saved under REMAT=flash), w254 (FA4 at 5504, charwin v8k).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
