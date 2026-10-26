@@ -206,6 +206,10 @@ class PerLayerQwen3Config(Qwen3Config):
     # takes no part in the differentiation (it is under stop_gradient and no parameter acts on it before the head), so
     # the CE needs no input-gradient GEMM; the scale's gradient comes through the folded head.
     pls_fold_norm: bool = False
+    # Speed (2026-10-26): chain the intermediate readouts with an optimization barrier (readout k+1's input waits for
+    # readout k's loss), so XLA runs one readout's CE at a time. The values are unchanged. For the b-tiled CE on
+    # microbatch-1 shards, whose 47 independent [4096 x vocab] logits blocks otherwise overlap past the GPU memory.
+    pls_serial_readouts: bool = False
     # With separate heads: layer k's loss trains its head and layer k only. Its readout recomputes layer k on the
     # stop-gradient output of layer k-1 (the same values), so no layer loss reaches earlier layers or the embedding;
     # the final loss trains everything as usual. One extra forward of layers 0..L-2 per step.
@@ -472,7 +476,7 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         """Layer k's readout head: its own with pls_separate_heads (k < L-1), else the model's lm_head."""
         return cast(Any, self.aux_lm_heads)[k].weight if self._separate(k) else self.get_lm_head()
 
-    def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, detach_input: bool = False, **kw) -> NamedArray:
+    def _readout_ce(self, outs: NamedArray, k: int, example: LmExample, *, detach_head: bool = False, detach_input: bool = False, after=None, **kw) -> NamedArray:
         lm_head = self._head(k)
         if detach_head:
             lm_head = jax.lax.stop_gradient(lm_head)
@@ -480,6 +484,8 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             x, lm_head = self._folded_readout(outs, k, lm_head)
         else:
             x = self._layer(outs, k, detach_head=detach_head, detach_input=detach_input)
+        if after is not None:  # pls_serial_readouts: this readout starts after the previous one's loss
+            x, _ = jax.lax.optimization_barrier((x, after))
         return maybe_fused_next_token_loss(
             self.Pos, self.Embed, self.Vocab, x, lm_head, example.tokens, loss_weight=example.loss_weight, **kw
         )
@@ -633,9 +639,10 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             aux_outs = frozen_outs + (outs - frozen_outs) * gain
 
         def supervised(w):
-            loss, per = final, []
+            loss, per, prev = final, [], None
             for k in range(L - 1):
-                ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, **kw)
+                ce = self._readout_ce(aux_outs, k, example, detach_head=cfg.pls_detach_head, detach_input=cfg.pls_detach_backbone, after=prev, **kw)
+                prev = ce if cfg.pls_serial_readouts else None
                 loss = loss + ce * (w * self._shape(k))  # NamedArray on the left: w may be a traced scalar
                 per.append(jnp.asarray(_scalar(ce), jnp.float32))
             return loss, jnp.stack(per)

@@ -284,6 +284,8 @@ PLS_VIS = float(os.environ.get("PLS_VIS", "1"))
 # PLS_FOLD_NORM=1 (with PLS_DETACH_BB=1): the probes model's readouts fold their RMSNorm scale into their heads, so their
 # CE skips the input-gradient GEMM (PerLayerQwen3Config.pls_fold_norm; speed work 2026-10-26, rounding-level change).
 PLS_FOLD_NORM = os.environ.get("PLS_FOLD_NORM", "0") == "1"
+# PLS_SERIAL=1: the intermediate readouts run one at a time (PerLayerQwen3Config.pls_serial_readouts; values unchanged)
+PLS_SERIAL = os.environ.get("PLS_SERIAL", "0") == "1"
 AR_QCLIP = float(os.environ.get("AR_QCLIP", "0"))
 # AR_VNORM=1 (ARCH=attnres, dynamic routing): every source enters the mix at unit RMS (owner popup 2026-10-24). Tag -vnorm.
 AR_VNORM = os.environ.get("AR_VNORM", "0") == "1"
@@ -457,7 +459,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             ss_stage_ends=tuple(round(f * num_steps) for f, _ in SS_SCHEDULE) if VARIANT == "ovss" else (),
         )
     elif VARIANT == "pls":
-        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, depth_mhc_res=MHC_RES, pls_visible_frac=PLS_VIS, **({"depth_attnres_vnorm": True} if AR_VNORM else {}), **({"hc_streams": HC_STREAMS} if HC_STREAMS != 4 else {}), **({"attnres_blocks": AR_BLOCKS} if AR_BLOCKS != 8 else {}), **({"pls_fold_norm": True} if PLS_FOLD_NORM else {}), **({"scan_layers": False} if ARCH else {}))
+        model_cls, model_extra = PerLayerQwen3Config, dict(pls_weight=PLS_W, pls_monitor_stride=PLS_MON, pls_eval=PLS_EVAL, pls_detach_head=PLS_DETACH, pls_separate_heads=PLS_SEP, pls_detach_backbone=PLS_DETACH_BB, pls_local_heads=PLS_LOCAL, pls_weight_shape=PLS_SHAPE, pls_pcgrad=PLS_PCGRAD, pls_off_start=PLS_OFF_START, pls_off_end=PLS_OFF_END, pls_on_start=PLS_ON_START, pls_on_end=PLS_ON_END, pls_probe=PLS_PROBE, pls_heads_only=HEADS_FROM is not None, depth_arch=ARCH or "baseline", depth_route=ROUTE, depth_gain_init=GAIN_INIT, depth_mhc_res=MHC_RES, pls_visible_frac=PLS_VIS, **({"depth_attnres_vnorm": True} if AR_VNORM else {}), **({"hc_streams": HC_STREAMS} if HC_STREAMS != 4 else {}), **({"attnres_blocks": AR_BLOCKS} if AR_BLOCKS != 8 else {}), **({"pls_fold_norm": True} if PLS_FOLD_NORM else {}), **({"pls_serial_readouts": True} if PLS_SERIAL else {}), **({"scan_layers": False} if ARCH else {}))
     else:
         model_cls, model_extra = Qwen3Config, {}
     if TIE:
