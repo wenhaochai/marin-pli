@@ -27,6 +27,7 @@ PY=$MAIN/.venv/bin/python
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 LOGDIR=$MAIN/logs/slurm
 cd "$WT"
+module load proxy/default  # wandb only: without it the pair fetch below sat in wandb's retry loop with the GPUs idle (w433)
 source scripts/della/wandb_guard.sh
 nvidia-smi -L
 echo "PAR START $(date +%H:%M:%S) $(git -C $WT log --oneline -1)"
@@ -45,7 +46,7 @@ for i in "${!ARMS[@]}"; do
 done
 for i in "${!ARMS[@]}"; do
   [ "$i" -gt 0 ] && [ -n "${RID[0]}" ] && [ -n "${RID[$i]}" ] || continue
-  $PY - "${RID[0]}" "${RID[$i]}" <<'PY'
+  timeout 180 $PY - "${RID[0]}" "${RID[$i]}" <<'PY'
 import sys
 import numpy as np
 import wandb
