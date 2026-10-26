@@ -62,6 +62,8 @@ case $CFG in
   5504post) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 ;;
   4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
   v8klong) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 SMOKE_STEPS=200 ;;   # the w160 shape, 200 steps
+  v8kpostfull) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 SMOKE_STEPS=120 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 SMOKE_FULL_EVAL=1 ;;   # 8K (w393 shape) with full Paloma evals and checkpoints mid-run
+  4480postfull) export SIZE=300m SEQ_LEN=4480 VOCAB_K=32000 SMOKE_STEPS=120 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 SMOKE_FULL_EVAL=1 ;;   # 32K charwin (w125 shape) with full Paloma evals and checkpoints mid-run
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
 export SMOKE_STEPS=${SMOKE_STEPS:-60}
