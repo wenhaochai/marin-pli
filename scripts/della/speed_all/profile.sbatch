@@ -49,6 +49,7 @@ fail=0
 ARMS=("${@:2}"); [ ${#ARMS[@]} -ge 1 ] || ARMS=(base jax fa4)
 for ARM in "${ARMS[@]}"; do
   unset XLA_FLAGS ATTN_BACKEND REMAT
+  export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   # attribution: no command buffers in any arm (each kernel then names its own HLO instruction; kernel times are the
   # same), and the step's optimized HLO dumped for scripts/della/speed_all/trace_families.py
   mkdir -p $OUT/$ARM/hlo
