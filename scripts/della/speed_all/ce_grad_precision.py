@@ -1,7 +1,7 @@
 """CE gradient precision and speed by path on one H100 (speed test, 2026-10-26). For B rows, H 768 and each vocabulary V,
 with labels drawn from the model's own softmax (Gumbel-max), the mean-loss gradients of x and w from:
-  default  = linear_softmax_cross_entropy_loss_batched_xla with its custom backward (v-tiled below 65536 entries,
-             b-tiled from the logsumexp above),
+  default  = the kernel API with its default implementations (loss.py's path when the GIF path is not taken: the
+             XLA streaming path below 65536 entries, the b-tiled path from the logsumexp above),
   gif_kern = _full_vocab_b_tiled_forward_with_grads with the Triton lse kernel (bf16 logits; the 128K production path),
   gif_bf16 = the same without the kernel (f32 GEMM, logits rounded to bf16 for the backward),
   gif_f32  = the same with LEVANTER_CE_BTILED_F32_LOGITS=1 (the backward reads the f32 logits),
@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from levanter.kernels.pallas.fused_cross_entropy_loss import batched_xla as bx
+from levanter.kernels.pallas.fused_cross_entropy_loss import fused_cross_entropy_loss_and_logsumexp_penalty as api_ce
 
 B, H, BLK = int(os.environ.get("CHECK_B", 65536)), 768, 8192
 
@@ -75,8 +76,7 @@ for V in (8256, 32256, 128256):
         return jax.jit(run)
 
     def default_path(x, w):
-        f = lambda x, w: jnp.mean(bx.linear_softmax_cross_entropy_loss_batched_xla(
-            x, labels, w, dtype=jnp.float32, precision=jax.lax.Precision.DEFAULT)[0])
+        f = lambda x, w: api_ce(x, labels, w, reduction="mean", dtype=jnp.float32, precision=None)   # loss.py's fallback
         loss, (gx, gw) = jax.value_and_grad(f, argnums=(0, 1))(x, w)
         return loss, gx, gw
 
