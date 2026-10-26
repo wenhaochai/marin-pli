@@ -128,9 +128,20 @@ def _ce_with_gradient_carrier(x, labels, w, g, b_block_size, dtype, logit_soft_c
     return loss, jnp.zeros(x.shape[:1], jnp.float32)
 
 
+# LEVANTER_CE_SKIP_UNUSED_DX=1 (speed work, 2026-10-26; read at import): the rule learns which inputs take part in the
+# differentiation (JAX symbolic zeros), so an input under stop_gradient (a probe readout of a detached backbone) gets no
+# input-gradient GEMM; the gradients that are used do not change.
+_CE_SKIP_UNUSED_DX = os.environ.get("LEVANTER_CE_SKIP_UNUSED_DX", "0") == "1"
+
+
 def _ce_with_gradient_carrier_fwd(x, labels, w, g, b_block_size, dtype, logit_soft_cap, precision):
+    need_grad_x = True
+    if _CE_SKIP_UNUSED_DX:  # each array argument arrives as CustomVJPPrimal(value, perturbed)
+        need_grad_x = x.perturbed
+        x, labels, w, g = x.value, labels.value, w.value, g.value
     loss, _, grad_x, grad_w = _full_vocab_b_tiled_forward_with_grads(
-        x, labels, w, g, b_block_size=b_block_size, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=precision
+        x, labels, w, g, b_block_size=b_block_size, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=precision,
+        need_grad_x=need_grad_x,
     )
     return (loss, jnp.zeros(x.shape[:1], jnp.float32)), (grad_x, grad_w, g)
 
@@ -138,12 +149,16 @@ def _ce_with_gradient_carrier_fwd(x, labels, w, g, b_block_size, dtype, logit_so
 def _ce_with_gradient_carrier_bwd(b_block_size, dtype, logit_soft_cap, precision, residuals, cotangents):
     grad_x, grad_w, g = residuals
     _, carrier_ct = cotangents  # the loss output is used under stop_gradient; its cotangent is zero
+    if isinstance(carrier_ct, jax.custom_derivatives.SymbolicZero):  # the carrier is not differentiated either
+        return None, None, None, None
     c = carrier_ct[0]  # every example's carrier gets the same cotangent (the caller sums the carriers)
     scale = lambda t: (t.astype(jnp.float32) * c).astype(t.dtype)
-    return scale(grad_x), None, scale(grad_w), jnp.zeros_like(g)
+    return (scale(grad_x) if grad_x is not None else None), None, scale(grad_w), jnp.zeros_like(g)
 
 
-_ce_with_gradient_carrier.defvjp(_ce_with_gradient_carrier_fwd, _ce_with_gradient_carrier_bwd)
+_ce_with_gradient_carrier.defvjp(
+    _ce_with_gradient_carrier_fwd, _ce_with_gradient_carrier_bwd, symbolic_zeros=_CE_SKIP_UNUSED_DX
+)
 
 
 def _mean_ce_grad_in_forward(

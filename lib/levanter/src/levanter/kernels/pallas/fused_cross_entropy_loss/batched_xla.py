@@ -655,7 +655,7 @@ def _lse_kernel(x_block: jax.Array, w: jax.Array, labels: jax.Array):
     )
 
 
-@partial(jax.jit, static_argnames=["b_block_size", "dtype", "logit_soft_cap", "precision"])
+@partial(jax.jit, static_argnames=["b_block_size", "dtype", "logit_soft_cap", "precision", "need_grad_x"])
 def _full_vocab_b_tiled_forward_with_grads(
     x: Float[Array, "B H"],
     labels: Int[Array, "B"],
@@ -666,7 +666,8 @@ def _full_vocab_b_tiled_forward_with_grads(
     dtype: Optional[jnp.dtype],
     logit_soft_cap: Optional[float],
     precision: jax.lax.PrecisionLike,
-) -> tuple[Float[Array, "B"], Float[Array, "B"], Float[Array, "B H"], Float[Array, "H V"]]:
+    need_grad_x: bool = True,
+) -> tuple[Float[Array, "B"], Float[Array, "B"], Optional[Float[Array, "B H"]], Float[Array, "H V"]]:
     """The b-tiled forward and backward in one pass over the batch blocks, from one logits GEMM per block.
 
     Returns the per-example loss and logsumexp of ``_linear_softmax_cross_entropy_loss_full_vocab_b_tiled`` and the
@@ -689,7 +690,8 @@ def _full_vocab_b_tiled_forward_with_grads(
 
     loss_init = jnp.zeros((b_pad,), dtype=out_dtype)
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
-    grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32)
+    # need_grad_x=False (an input under stop_gradient, e.g. a probe readout): no input-gradient GEMM and no grad_x carry
+    grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32) if need_grad_x else None
     grad_w_init = jnp.zeros((h_dim, v_dim), dtype=jnp.float32)
     use_kernel = (
         os.environ.get("LEVANTER_CE_LSE_KERNEL", "0") == "1"
@@ -763,12 +765,14 @@ def _full_vocab_b_tiled_forward_with_grads(
             dlogits = dlogits * soft_cap_grad
 
         dlogits_for_matmul = dlogits.astype(x.dtype)
-        grad_x_block = jax.lax.dot_general(
-            dlogits_for_matmul,
-            w,
-            (((1,), (1,)), ((), ())),
-            precision=precision,
-        ).astype(jnp.float32)
+        if need_grad_x:
+            grad_x_block = jax.lax.dot_general(
+                dlogits_for_matmul,
+                w,
+                (((1,), (1,)), ((), ())),
+                precision=precision,
+            ).astype(jnp.float32)
+            grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
         grad_w_block = jax.lax.dot_general(
             x_block,
             dlogits_for_matmul,
@@ -776,14 +780,14 @@ def _full_vocab_b_tiled_forward_with_grads(
             precision=precision,
         ).astype(jnp.float32)
 
-        grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
         grad_w = grad_w + grad_w_block
         return loss, lse, grad_x, grad_w
 
     loss, lse, grad_x, grad_w = jax.lax.fori_loop(
         0, num_b_blocks, body, (loss_init, lse_init, grad_x_init, grad_w_init)
     )
-    return loss[:b_dim], lse[:b_dim], grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
+    grad_x = grad_x[:b_dim].astype(x.dtype) if need_grad_x else None
+    return loss[:b_dim], lse[:b_dim], grad_x, grad_w.astype(w.dtype)
 
 
 @partial(jax.jit, static_argnames=["v_block_size", "logit_soft_cap", "precision"])
