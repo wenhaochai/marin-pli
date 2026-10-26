@@ -38,4 +38,19 @@ export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-1}
 # lse merge summation order; lse within 5.8e-8 of float64). H100 at 300m 128K: -5.9% (w280: 1213 -> 1142 ms), loss within
 # bf16 noise. No effect below 65536.
 export LEVANTER_CE_LSE_KERNEL=${LEVANTER_CE_LSE_KERNEL:-1}
-echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL ATTN_BACKEND=${ATTN_BACKEND:-fa4 (code default)} REMAT=${REMAT:-flash (code default)}"
+
+# LEVANTER_ASYNC_STEP=1 (speed, owner popup 2026-10-26): Trainer.training_steps dispatches step N+1 before it reads step
+# N's loss and runs its hooks, so the host's work between steps (hooks, logging, the next dispatch) overlaps the devices'
+# work instead of leaving them idle; the train step keeps its input state instead of donating it (one more copy of the
+# trainer state, ~1 GB per GPU at 300m) and a NaN loss stops the run one step later. Same computation: losses within
+# noise. 4 H100s, 300m, wall per step: 128K 558.5 -> 523.7 ms (-6.2%, w331), 8K 437.6 -> 408.2 ms (-6.7%, w332); full
+# evaluations and checkpoints every 20 steps pass (w325). Not with REMAT=fdots: at 128K the next step's 37 GiB buffer
+# did not fit beside the running step's (w324, w325).
+export LEVANTER_ASYNC_STEP=${LEVANTER_ASYNC_STEP:-1}
+# LEVANTER_EMBED_GRAD_F32=1 (speed and numerics, owner popup 2026-10-26, no baseline reruns): the input embedding's
+# gradient is summed in f32 and cast once, in place of a bf16 scatter-add that rounds once per occurrence of a token
+# (17-20% relative error on the most frequent rows of 131072 Zipf ids, w327). Changes training: the train loss over the
+# first 200 steps is 0.002 nats lower at 128K and 0.0013 at 8K, so runs from 2026-10-26 ~10:40 on are not bitwise
+# comparable to earlier ones. -1.7% (128K) and -1.3% (8K) per step on top of the above.
+export LEVANTER_EMBED_GRAD_F32=${LEVANTER_EMBED_GRAD_F32:-1}
+echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL async_step=$LEVANTER_ASYNC_STEP embed_grad_f32=$LEVANTER_EMBED_GRAD_F32 ATTN_BACKEND=${ATTN_BACKEND:-code default: fa4thd at 130m/300m, fa4 above} REMAT=${REMAT:-flash (code default)}"
