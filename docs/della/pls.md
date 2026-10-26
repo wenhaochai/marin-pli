@@ -816,3 +816,9 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 - w76/w77 完成：独立头 3.026，probes 2.926，第 48 层代价 0.0999；Sinkhorn mHC 是 0.1016，相差 0.0017，在种子噪声（约 0.003）内。
 - 结论：mHC 的代价（约 0.10，与多数结构相同；HC 只有 0.048）不来自它的残差混合矩阵。HC 与 mHC 的差别要在其他部分找（读写权重的约束、归一化等）。
 - 站点：图 38 填入，图注改为陈述结果（pretrain-practice 68f0b46，artifact v107）。
+
+## 2026-10-26 下午：上线与新实验（所有者弹窗）
+
+- 生产 job 脚本新开：`PLS_FOLD_NORM=1`（probes 模型折叠读出 RMSNorm 缩放，Pre-LN probes −16%，HC probes −14%；用于所有排队的 probes run）和 `LEVANTER_NORM_GUARD=1e-3`（范数保护，停下后以 99 退出，从上一个 checkpoint 恢复）。
+- HC/AttnRes 的 CE 新路径（b-tiled + 串行读出 + GIF barrier）：HC 20.56 → 10.12 s/步（w370），AttnRes 28.50 → 18.17（w373），HC probes 加折叠 8.93（w378）；显存 24.9 GiB（w369，原路径 27.4）。数值：两条路径的梯度到 f32 都在 bf16 量级（w372）；40 步轨迹差别超出两次相同运行（w374–w376），旧路径在第 2 步最后几层损失上升，新路径不升。所以先跑一对验证（w387/w388，图 39 空心点）。
+- 新实验：HC 读写 = sigmoid（w389/w390，图 38）：mHC 的残差混合已排除，检验它有界、为正的读写映射。
