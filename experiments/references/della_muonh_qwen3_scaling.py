@@ -88,6 +88,12 @@ LOG_JAXPR = os.environ.get("LOG_JAXPR", "1") == "1"
 if os.environ.get("XLA_CMD_BUFFER_WHILE", "0") == "1" and "xla_gpu_enable_command_buffer" not in os.environ.get("XLA_FLAGS", ""):
     os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL").strip()
 
+# ATTN_BACKEND=fa4 (the Tokenizer Size session's 6497ef5720): attention through levanter's grug FA4/CuTe segmented
+# kernel (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop; same mask, different kernel, so the math
+# changes at bf16 level. Run tag -fa4 (speed work 2026-10-26). Default jax_flash: every run id unchanged.
+ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "jax_flash")
+if ATTN_BACKEND not in ("jax_flash", "fa4"):
+    raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4")
 VERSION = "2026.09.13"
 # NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the
 # microbatch, stay the size's. Run ids carry della{NUM_GPUS}x. (Ported from pls-mtp for the 8-GPU L1 / L2 runs.)
@@ -347,7 +353,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in ("ov", "ovss"):
         variant_tags += f"-ov{OV_M / 1e6:g}m" + (f"od{OV_OD_W:g}" if OV_OD_W != 0.1 else "")
     if VARIANT == "pls":
-        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-mhcid" if MHC_RES == "identity" else "") + (f"-vis{PLS_VIS:g}" if PLS_VIS != 1 else "") + (f"-qclip{AR_QCLIP:g}" if AR_QCLIP else "") + ("-vnorm" if AR_VNORM else "") + (f"-hcs{HC_STREAMS}" if HC_STREAMS != 4 else "") + (f"-arb{AR_BLOCKS}" if AR_BLOCKS != 8 else "") + ("-os" if PLS_OPT_SPLIT else "")
+        variant_tags += f"-pls{PLS_W:g}" + (f"m{PLS_MON}" if PLS_W == 0 and PLS_MON != 16 else "") + ("-dh" if PLS_DETACH else "") + ("-sep" if PLS_SEP else "") + ("-bbfrozen" if PLS_DETACH_BB else "") + ("-local" if PLS_LOCAL else "") + ("-shdepth" if PLS_SHAPE == "depth" else "") + ("-pcg" if PLS_PCGRAD else "") + ((f"-off{PLS_OFF_END}" if PLS_OFF_START == PLS_OFF_END else f"-off{PLS_OFF_START}-{PLS_OFF_END}") if PLS_OFF_END else "") + ((f"-on{PLS_ON_END}" if PLS_ON_START == PLS_ON_END else f"-on{PLS_ON_START}-{PLS_ON_END}") if PLS_ON_END else "") + ("-probe" if PLS_PROBE else "") + ("" if PLS_EVAL else "-noev") + (f"-a{ARCH}" if ARCH else "") + ("-rstatic" if ROUTE == "static" else "") + {"one": "", "lns": "-gilns", "lns_bf16": "-gilnsbf"}[GAIN_INIT] + ("-slns" if GAIN_STEP == "lns" else "") + ("-mhcid" if MHC_RES == "identity" else "") + (f"-vis{PLS_VIS:g}" if PLS_VIS != 1 else "") + (f"-qclip{AR_QCLIP:g}" if AR_QCLIP else "") + ("-vnorm" if AR_VNORM else "") + (f"-hcs{HC_STREAMS}" if HC_STREAMS != 4 else "") + (f"-arb{AR_BLOCKS}" if AR_BLOCKS != 8 else "") + ("-os" if PLS_OPT_SPLIT else "") + ("-fa4" if ATTN_BACKEND == "fa4" else "")
     if VARIANT in ("ss", "ovss"):
         variant_tags += "-ss" + "-".join(f"{p // 1024}k{f:g}".replace("k0.", "k.") if p % 1024 == 0 else f"{p}p{f:g}".replace("p0.", "p.") for f, p in SS_SCHEDULE)
     if VARIANT == "dn":
@@ -453,7 +459,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         num_kv_heads=s["kv"],
         hybrid_norm=True,
         # No Transformer Engine on Della, so the GPU default (NVTE) would fall back to unfused O(S^2) attention.
-        attn_backend=AttentionBackend.JAX_FLASH,
+        attn_backend=AttentionBackend.FA4_CUTE if ATTN_BACKEND == "fa4" else AttentionBackend.JAX_FLASH,
         **model_extra,
     )
     # Designs that add parameters (hc, mhc, attnres*) give those their own Adam (depth_arch_qwen3.DepthArchMuonHConfig);

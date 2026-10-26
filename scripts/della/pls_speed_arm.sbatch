@@ -21,6 +21,7 @@
 #   a1gif  both
 #   xoh    LEVANTER_CE_XLA_ONEHOT=1 (label term as a select in the xla streaming CE backward: microbatch 1)
 #   cbw    XLA_CMD_BUFFER_WHILE=1 (while/conditional loops as CUDA-graph commands); xohcbw: both
+#   fa4    ATTN_BACKEND=fa4 (FA4/CuTe attention; changes the math, run tag -fa4); fa4cbw: with CUDA-graph loops
 #   a1     with -prof: the profiling round on today's production knobs (A1 on)
 #   evalbase  20 steps, then 160 eval batches at the train microbatch (640 sequences for a microbatch-1 design)
 #   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
@@ -54,6 +55,8 @@ case $knobs in
   a1gif) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
   xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
   cbw) ON="XLA_CMD_BUFFER_WHILE=1";;
+  fa4) ON="ATTN_BACKEND=fa4";;
+  fa4cbw) ON="ATTN_BACKEND=fa4 XLA_CMD_BUFFER_WHILE=1";;
   xohcbw) ON="LEVANTER_CE_XLA_ONEHOT=1 XLA_CMD_BUFFER_WHILE=1";;
   evalbase) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=160";;
   evalpdp) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=40 EVAL_PDP=4";;
