@@ -51,7 +51,10 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #   LOG_JAXPR=0  no jaxpr / StableHLO text dumps (the same compiled programs; 35-213 s of idle GPUs per process start)
 #   CKPT_MIN=30  temporary checkpoints every 30 min instead of 10 (each save blocks the loop ~20 s); the training task
 #                also saves once at LEVANTER_CKPT_DEADLINE, 150 s before its time limit, so a segment end redoes ~no work
-export LOG_JAXPR=0 CKPT_MIN=30
+#   LEVANTER_CE_BTILED_ONEHOT=1  the label term of the b-tiled CE backward as a select, not a scatter: one fused pass
+#                instead of three over each 8192 x 128256 block (bitwise equal on H100: det A/B wq w205 vs w206, every
+#                logged metric over 40 steps, 2026-10-25); the microbatch-1 designs take another CE path and are unchanged
+export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
