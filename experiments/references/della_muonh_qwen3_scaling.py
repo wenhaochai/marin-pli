@@ -900,6 +900,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         backend_steps=5,
         muon_epsilon=1e-5,
         max_grad_norm=s["max_grad_norm"],
+        # MuonH reads no weight decay (owner popup 2026-10-26, "只加注释"): its matrices and the AdamH head keep a fixed
+        # norm, and the Adam group (embeddings, vectors) has no decay; the upstream recipe passes none either. The 0.1 only
+        # reaches the logged config, so no note or page should describe these runs as using weight decay 0.1.
         weight_decay=0.1,
         lr_schedule=s["schedule"],
         decay=s["decay"],
