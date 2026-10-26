@@ -48,7 +48,16 @@ by default. GIF went on at 01:50 and off again at 02:50: its fallback crashes un
 b-tiled CE path, and every vocabulary below 65536 does (pls bug report; no truncated-vocab main run started with it);
 back on after the pls fix and an 8K check. Profile w249 (FA4, 2 GPUs): CE + head 37%, FA4 16%, MLP 15%, remat
 recompute 14% (FA4 forward 5%), projections 8%, norms 5%, collectives 2%, embedding 2%, optimizer 1%; GPU busy 93%
-with command buffers off. Open: w253 (FA4 residuals saved under REMAT=flash), w254 (FA4 at 5504, charwin v8k).
+with command buffers off.
+
+**Defaults since 2026-10-26 04:30 (H100, 2 GPUs at 32 sequences per device, 60 steps).** GIF fix: w256 at 8K (det flags,
+JAX flash) gives GIF on bitwise equal to off, per step and in the final train and eval loss, so GIF is on again; below
+65536 the flag does nothing, above it it saves one logits GEMM. REMAT=flash under FA4 (the FA4 forward now names its
+output and logsumexp): 1350 ms against 1402 ms (-3.7%, w253), loss within bf16 noise, so REMAT=flash is the code
+default (REMAT=full gives the old policy; A/B and profile arms that name no REMAT pin full). FA4 at SEQ_LEN 5504 (charwin
+v8k, w254): 1372 ms against the old 3971 ms (-65%), loss within bf16 noise. The launcher's speed settings now live in
+`scripts/della/speed_env.sh`, sourced by the launcher and by `over_vocab_smoke.sbatch`: until now the smokes ran python
+without them, so a smoke could pass while its main run crashed (how the GIF bug slipped past the vocab smokes).
 
 ## Measured baseline (logs, 4x H100)
 
