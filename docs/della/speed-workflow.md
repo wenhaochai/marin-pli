@@ -195,6 +195,33 @@ w343 with 1e-3: 516 ms on and off, no false stop over 6 evals and 7 checkpoints.
 code default at 300m fmlp up to SEQ_LEN 4096, fgate above (81bdd4f5a8), and LEVANTER_NORM_GUARD=1e-3 in speed_env.sh
 (5ab7a4e9a5), for jobs that start after 13:09; w158 reruns as w342 (RUN_TAG=-rerun).
 
+**Where the time goes now, and the next round (2026-10-26 14:00-17:00).** A whole run on the live defaults (w117, 128K,
+11444 steps, 1:42:20 including its smoke) splits into the smoke 90 s, startup 49 s (first step 11 s with the compile cache),
+12 full Paloma evals of 24 s each (288 s, 4.6%), checkpoints ~2 s each and the train steps (0.496 s each). Profiles of the
+live stack before fmlp (w350 128K, w351 8K; 2 traces, graphs off): 128K summed kernels 498 ms = CE 31% (lse kernel 55 ms,
+the two gradient GEMMs 33 + 33 ms, the dlogits pass 25 ms, the f32 grad_w add 5 ms), MLP 20% (GEMMs at ~750 TFLOP/s; the
+SwiGLU elementwise passes 31 ms), attention projections 11%, attention 10%, remat recompute 8%, norms 8%, collectives
+4.8% (24 ms; summed kernels 498 ms against 487 ms busy, so they barely overlap), optimizer 3%, layer-scan bookkeeping 3%.
+The layer scan copies each layer's saved gate and up outputs from the GEMM's buffer into the stacked buffers (2 x 5.7
+ms) and fills both stacked buffers with zeros first (5.3 ms; jax's scan lowering broadcasts a zero scalar). The async
+host loop allocates the next step's temp buffer while the running step holds its own, so every GiB saved per layer
+costs twice: fmlp's 28 GiB temp fits twice in 71 GiB, fdots' 37 GiB does not. Lse kernel v3 (lse_logits_mgpu.py,
+Pallas Mosaic GPU, warp-specialized TMA + wgmma with the logsumexp partials in the epilogue): per 8192-row block at K
+768 2.92 ms against 3.20 for the Triton kernel and 2.16 for cuBLAS (w371); of its 0.47 ms over the plain Pallas GEMM,
+0.27 ms is the exp epilogue (MUFU-bound: 16 exp per clock per SM) and 0.19 ms the label gather-dot (w379); in training
+-1.0% (w368), and past full evals and checkpoints every 20 steps 499 -> 494 ms median, eval loss within noise (w384).
+Training gathers the head physically as [H, V] (its all-gather output has layout {0,1}), so a row gather of w.T may stay
+strided (631b5a3dac; w396 bench, w397 A/B). B-tiled CE below 65536 entries (LEVANTER_CE_BTILED_MIN_VOCAB=4096; the
+v-tiled path's GEMMs ran at 4.7-13.3 ms against ~2.5 for their FLOPs, w351): past full evals and checkpoints 8K 389 ->
+383 ms (w394), 32K at SEQ_LEN 4480 474 -> 419 ms (-11.6%, w395). Its backward reads bf16 logits, while the v-tiled path's
+bf16 dot feeds an f32 convert that XLA may compute in f32, so 8K/32K gradients may lose precision against every earlier
+8K/32K run; LEVANTER_CE_BTILED_F32_LOGITS=1 keeps f32 logits (d49d9708ed; precision by path w409, speed w410/w411).
+Not adopted: LEVANTER_SCAN_EMPTY (lax.empty's AllocateBuffer instead of the zero fill): XLA's SPMD partitioner does not
+shard AllocateBuffer, so each GPU asked for the unsharded buffers, 65.5 GiB (w402). Queued: plain data parallelism
+instead of FSDP (MESH=dp) and XLA dynamic-slice fusion (w398), the f32 grad_w GEMM with its sum folded into cuBLAS
+(LEVANTER_CE_GRADW_F32, asked by pls; w403), XLA's DUS-accumulator zero-init elimination, programmatic dependent launch
+and NCCL user buffers (w408), and the three CE items together past full evals and checkpoints (w405-w407).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
