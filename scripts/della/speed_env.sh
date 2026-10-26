@@ -38,4 +38,4 @@ export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-1}
 # lse merge summation order; lse within 5.8e-8 of float64). H100 at 300m 128K: -5.9% (w280: 1213 -> 1142 ms), loss within
 # bf16 noise. No effect below 65536.
 export LEVANTER_CE_LSE_KERNEL=${LEVANTER_CE_LSE_KERNEL:-1}
-echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL ATTN_BACKEND=${ATTN_BACKEND:-fa4 (code default)} REMAT=${REMAT:-code default: fdots at 130m/300m, else flash}"
+echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL ATTN_BACKEND=${ATTN_BACKEND:-fa4 (code default)} REMAT=${REMAT:-flash (code default)}"

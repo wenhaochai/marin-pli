@@ -119,8 +119,8 @@ FLASH_BLOCK = None if SEQ_LEN % 1024 == 0 else next((b for b in range(1024, 15, 
 if SEQ_LEN % 1024 and FLASH_BLOCK is None:
     raise ValueError(f"SEQ_LEN={SEQ_LEN}: a multiple of 16 for the flash-attention blocks")
 # REMAT: per-layer gradient checkpointing. "full" (default until 2026-10-26) saves only the layer carry, so
-# the backward pass re-runs each layer's whole forward, flash-attention while-loops included. "flash" (the default above
-# 300m since 2026-10-26) also saves the attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py and
+# the backward pass re-runs each layer's whole forward, flash-attention while-loops included. "flash" (the default
+# since 2026-10-26) also saves the attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py and
 # in the FA4 forward, _fa4_cute_backend.py), so the backward pass re-runs norms, projections and the MLP but not the
 # attention forward. Same math (bf16 rounding differs); ~+2.5 GiB per device at 300m. H100 at 300m 128K: -14% under
 # JAX flash (w203), -3.7% under FA4 (w253, 2 GPUs: 1402 -> 1350 ms), loss within bf16 noise. Speed only: no run tag, so
@@ -133,9 +133,10 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # token per layer more memory (~31 GiB at 300m, 32 x 4096 per device). H100 w248 under FA4: -2.5% (the saved outputs cost
 # ~40 ms of layer-scan copies per 2-GPU step). "fdots" (speed, 2026-10-26): dots plus the attention output and logsumexp,
 # so the backward pass recomputes no matmul and no attention forward: on top of flash -3.3% at 4096 (w265: 1233 -> 1192
-# ms) and -3.6% at 5504 (w274: 1276 -> 1230 ms), loss within bf16 noise; the default at 130m and 300m since 2026-10-26
-# (larger models keep flash: the saved matmul outputs grow with width and depth, and no larger size was checked).
-REMAT = os.environ.get("REMAT", "fdots" if os.environ.get("SIZE", "130m") in ("130m", "300m") else "flash")
+# ms) and -3.6% at 5504 (w274: 1276 -> 1230 ms), loss within bf16 noise. It was the default at 130m/300m for half an hour
+# on 2026-10-26 and is not any more: the first production run with it (w160, 300m 8K) ran out of memory 14 min in, the
+# train step asking for one 40 GiB block after an eval and checkpoint (the 60-step A/Bs never ran a step after an eval).
+REMAT = os.environ.get("REMAT", "flash")
 if REMAT not in ("full", "flash", "none", "dots", "fdots"):
     raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots")
 
