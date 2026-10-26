@@ -222,16 +222,22 @@ instead of FSDP (MESH=dp) and XLA dynamic-slice fusion (w398), the f32 grad_w GE
 (LEVANTER_CE_GRADW_F32, asked by pls; w403), XLA's DUS-accumulator zero-init elimination, programmatic dependent launch
 and NCCL user buffers (w408), and the three CE items together past full evals and checkpoints (w405-w407).
 
-**Idea, not built: the CE backward from unnormalized probabilities (2026-10-26 17:10).** At 128K a GIF block (8192
-rows) is the lse kernel 3.5 ms, the dlogits pass 1.5 ms (read the bf16 logits, write the bf16 dlogits), two gradient
-GEMMs 2.1 ms each and the f32 grad_w add 0.3 ms. If the lse kernel's epilogue stored P = bf16(exp(z - c)) for a fixed
-per-row offset c instead of bf16(z), and summed exp(z - c) for the logsumexp, the gradients would be plain cuBLAS GEMMs
-on P with the row factor a_r = g_r exp(c - lse_r) moved onto the other side: grad_x = diag(a) (P W^T) - g_r W[label_r],
-grad_w = (diag(a) x)^T P - g_r x_r added at column label_r. The dlogits pass goes away (~25 ms of the 496 ms step), and
-the stored probability carries bf16's 2^-9 relative error instead of exp of a bf16-rounded logit (an absolute error
-|z| 2^-9 in the exponent), the reason bf16 logits double the gradient error (w409/w414). Open: c = 0 needs every logit
-below ~88 and the row maximum above ~-87 (a guard with lax.cond back to the current path), and the label terms are a
-strided gather and scatter on the [H, V] layout (~0.2 ms per block each, measured for the gather in w379).
+**The CE backward from unnormalized probabilities (LEVANTER_CE_UNNORM, async-hooks 90a6f7c73f..1bf8f97776, 2026-10-26
+17:10-17:40).** At 128K a GIF block (8192 rows) is the lse kernel 3.5 ms, the dlogits pass 1.5 ms (read the bf16
+logits, write the bf16 dlogits), two gradient GEMMs 2.1 ms each and the f32 grad_w add 0.3 ms. Now lse kernel v3 takes
+each row's label logit c (an f32 gather-dot before the kernel) as a row offset and stores P = bf16(exp(z - c)), clamped
+at 60, with the f32 row sums S of the same exps (probs_and_sum_mgpu); the loss is log S. Since P at the label is exp(0) =
+1 and S >= 1, nothing overflows unless a token's loss passes 60 nats, and nothing underflows. The gradients are plain
+cuBLAS GEMMs on P: dlogits = (g / S) P minus g at the label, with g / S moved onto x for grad_w and onto the output rows
+for grad_x. Mode 1 folds the label term into P (1 - S at the label); mode 2 adds it apart in f32 (-g w_label to grad_x,
+g x summed into a [V, H] f32 table subtracted from grad_w after the loop). The dlogits pass goes away, and P carries
+bf16's relative rounding of a probability instead of exp of a bf16-rounded logit. Checks: the gradient algebra on CPU
+with an XLA stand-in for the kernel (V 66000, f64 reference); the kernel at 2.80 ms per block (v3 2.95, cuBLAS GEMM
+2.21), row sums within 1.7e-6, P within bf16 rounding (w426). One H100, 65536 rows at 128K, against an f32 reference
+(w427): the live path 76.7 ms with gradient error 3.2e-3 (grad_x) / 3.6e-3 (grad_w); mode 1 62.9 ms, 2.4e-3 / 3.3e-3;
+mode 2 64.6 ms, 1.7e-3 / 1.7e-3 (the bf16 gradient outputs alone set ~1.1e-3); f32 logits 96 ms, 1.9e-3 / 2.5e-3.
+One GPU, 200 steps of 4 microbatches: 1904 -> 1790 ms per step with mode 1 (-6.0%, w425). Queued: 4 GPUs past full
+evals and checkpoints with the CE items together (w428), mode 2 on one GPU (w429).
 
 ## Measured baseline (logs, 4x H100)
 
