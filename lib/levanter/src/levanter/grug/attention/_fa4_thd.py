@@ -781,7 +781,10 @@ def fa4_thd_attention_backward(
 
 def _cutlass_thd_forward_specs(modules: _UpstreamFa4CuteModules) -> tuple[tuple[Any, ...], Any]:
     tensor_spec = modules.cjax.TensorSpec
-    qkv_spec = tensor_spec(mode=(0, 1, 2), divisibility=(1, 1, 8), static=True)
+    # dynamic shapes: upstream FA4's varlen kernels build ragged TMA tensors (quack create_ragged_tensor_for_tma) with
+    # sentinel extents near 2**31 on top of these layouts; on static layouts that aborts in cute.make_tensor
+    # (std::bad_variant_access, H100 w281), on dynamic ones (as upstream's torch path passes them) it runs (w272)
+    qkv_spec = tensor_spec(mode=(0, 1, 2), divisibility=(1, 1, 8), static=False)
     cu_spec = tensor_spec(mode=(0,), divisibility=(1,), static=True)
     lse_spec = tensor_spec(mode=(0, 1), divisibility=(1, 1), static=True)
     return (qkv_spec, qkv_spec, qkv_spec, cu_spec), (qkv_spec, lse_spec)
@@ -789,7 +792,10 @@ def _cutlass_thd_forward_specs(modules: _UpstreamFa4CuteModules) -> tuple[tuple[
 
 def _cutlass_thd_backward_specs(modules: _UpstreamFa4CuteModules) -> tuple[tuple[Any, ...], Any]:
     tensor_spec = modules.cjax.TensorSpec
-    qkv_spec = tensor_spec(mode=(0, 1, 2), divisibility=(1, 1, 8), static=True)
+    # dynamic shapes: upstream FA4's varlen kernels build ragged TMA tensors (quack create_ragged_tensor_for_tma) with
+    # sentinel extents near 2**31 on top of these layouts; on static layouts that aborts in cute.make_tensor
+    # (std::bad_variant_access, H100 w281), on dynamic ones (as upstream's torch path passes them) it runs (w272)
+    qkv_spec = tensor_spec(mode=(0, 1, 2), divisibility=(1, 1, 8), static=False)
     cu_spec = tensor_spec(mode=(0,), divisibility=(1,), static=True)
     lse_spec = tensor_spec(mode=(0, 1), divisibility=(1, 1), static=True)
     scratch_spec = tensor_spec(mode=(0, 1), divisibility=(1, 1), static=True)
