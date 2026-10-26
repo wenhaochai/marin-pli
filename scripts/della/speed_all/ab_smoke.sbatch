@@ -2,7 +2,8 @@
 #SBATCH --job-name=speedall-ab
 #SBATCH --account=pli
 #SBATCH --partition=pli-c
-#SBATCH --qos=pli-cp
+#SBATCH --qos=pli-short
+#SBATCH --comment=fetchable
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:4
@@ -10,6 +11,7 @@
 #SBATCH --mem-per-gpu=24G
 #SBATCH --time=00:45:00
 #SBATCH --output=/scratch/gpfs/GROUP/USER/project/marin/logs/slurm/%x_%j.out
+#FETCHABLE self-contained: needs nothing from the submitting shell; run through wq --prio 10 (owner 2026-10-25: tests go to wq, not pli-cp)
 
 # H100 check of branch speed-all (owner 2026-10-25 "全部都上"): one 300m config (SEQ_LEN, VOCAB_K from the submit line's
 # --export-free defaults below), SMOKE_STEPS steps at the real batch, three arms in turn on the same 4 GPUs:
@@ -38,6 +40,7 @@ case $CFG in
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
 export SMOKE_STEPS=${SMOKE_STEPS:-60}
+JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}   # wq guest: SLURM_JOB_ID is the host's
 LOGDIR=$MAIN/logs/slurm
 nvidia-smi -L
 fail=0
@@ -49,14 +52,14 @@ for ARM in old jax fa4; do
     jax) export REMAT=flash XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL" ;;
     fa4) export ATTN_BACKEND=fa4 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL" ;;
   esac
-  export RUN_TAG=-abspd${ARM}-j${SLURM_JOB_ID}
+  export RUN_TAG=-abspd${ARM}-j${JID}
   cd "$DIR"
   got=$(PYTHONPATH=$PP $PY -c 'import levanter; print(levanter.__file__)')
   echo "ARM $ARM dir=$DIR levanter=$got XLA_FLAGS=${XLA_FLAGS:-} ATTN_BACKEND=${ATTN_BACKEND:-} REMAT=${REMAT:-}"
   run_id=$(PYTHONPATH=$PP DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p' | head -1)
-  case "$run_id" in *-abspd${ARM}-j${SLURM_JOB_ID}*) ;; *) echo "ARM $ARM: dry run gave '$run_id'"; fail=1; continue ;; esac
+  case "$run_id" in *-abspd${ARM}-j${JID}*) ;; *) echo "ARM $ARM: dry run gave '$run_id'"; fail=1; continue ;; esac
   RID[$ARM]=$run_id
-  log=$LOGDIR/speedall-ab_${SLURM_JOB_ID}_${run_id}.log
+  log=$LOGDIR/speedall-ab_${JID}_${run_id}.log
   echo "SMOKE $run_id START $(date +%H:%M:%S)"
   nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -l 2 > $log.mem &
   mpid=$!
@@ -81,7 +84,7 @@ try:
 except Exception as e:
     print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} wandb_error={str(e)[:160]} err='{err}'", flush=True)
 PY
-  case "$run_id" in *-abspd*-j${SLURM_JOB_ID}*) rm -rf "$MARIN_PREFIX/speedrun/$run_id" ;; esac
+  case "$run_id" in *-abspd*-j${JID}*) rm -rf "$MARIN_PREFIX/speedrun/$run_id" ;; esac
 done
 cd "$WT"
 for ARM in jax fa4; do
