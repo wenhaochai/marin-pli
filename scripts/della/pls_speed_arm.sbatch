@@ -23,6 +23,7 @@
 #   cbw    XLA_CMD_BUFFER_WHILE=1 (while/conditional loops as CUDA-graph commands); xohcbw: both
 #   fa4    ATTN_BACKEND=fa4 (FA4/CuTe attention; changes the math, run tag -fa4); fa4cbw: with CUDA-graph loops
 #   bt4k   microbatch-1 shards on the b-tiled CE (LEVANTER_CE_BTILED_MIN_BATCH=4096) with A1 and GIF; fa4bt4k: plus FA4
+#          (both OOM on hc/attnres: 96-98 GiB, w266-w269); bt4ka1: the b-tiled CE with A1, no GIF
 #   a1     with -prof: the profiling round on today's production knobs (A1 on)
 #   evalbase  20 steps, then 160 eval batches at the train microbatch (640 sequences for a microbatch-1 design)
 #   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
@@ -59,6 +60,7 @@ case $knobs in
   fa4) ON="ATTN_BACKEND=fa4";;
   fa4cbw) ON="ATTN_BACKEND=fa4 XLA_CMD_BUFFER_WHILE=1";;
   bt4k) ON="LEVANTER_CE_BTILED_MIN_BATCH=4096 LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
+  bt4ka1) ON="LEVANTER_CE_BTILED_MIN_BATCH=4096 LEVANTER_CE_BTILED_ONEHOT=1";;
   fa4bt4k) ON="ATTN_BACKEND=fa4 LEVANTER_CE_BTILED_MIN_BATCH=4096 LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
   xohcbw) ON="LEVANTER_CE_XLA_ONEHOT=1 XLA_CMD_BUFFER_WHILE=1";;
   evalbase) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=160";;
