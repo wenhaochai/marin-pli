@@ -628,11 +628,15 @@ def _backward_b_tiled_from_lse(
             (((1,), (1,)), ((), ())),
             precision=precision,
         ).astype(jnp.float32)
+        # LEVANTER_CE_GRADW_F32=1 (speed, 2026-10-26; the Tokenizer Size session's 80fea265eb): the weight-gradient GEMM
+        # returns f32, so XLA can fold the running sum into the GEMM (cuBLAS beta = 1) instead of an f32 add pass over [H, V]
+        # per block, and each block's partial sum is not rounded to bf16 before it is added.
         grad_w_block = jax.lax.dot_general(
             x_block,
             dlogits_for_matmul,
             (((0,), (0,)), ((), ())),
             precision=precision,
+            preferred_element_type=jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None,
         ).astype(jnp.float32)
 
         grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
@@ -782,11 +786,15 @@ def _full_vocab_b_tiled_forward_with_grads(
                 precision=precision,
             ).astype(jnp.float32)
             grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
+        # LEVANTER_CE_GRADW_F32=1 (speed, 2026-10-26; the Tokenizer Size session's 80fea265eb): the weight-gradient GEMM
+        # returns f32, so XLA can fold the running sum into the GEMM (cuBLAS beta = 1) instead of an f32 add pass over [H, V]
+        # per block, and each block's partial sum is not rounded to bf16 before it is added.
         grad_w_block = jax.lax.dot_general(
             x_block,
             dlogits_for_matmul,
             (((0,), (0,)), ((), ())),
             precision=precision,
+            preferred_element_type=jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None,
         ).astype(jnp.float32)
 
         grad_w = grad_w + grad_w_block
