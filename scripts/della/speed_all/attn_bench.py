@@ -7,11 +7,13 @@ from a lognormal with mean ~1000 tokens, cut to the window) and 'one' (one docum
 Backends:
   jax_flash  levanter dot_product_attention, AttentionBackend.JAX_FLASH, block FLASH (default 1024): today's path
   fa4        levanter dot_product_attention, AttentionBackend.FA4_CUTE (branch speed-all)
+  fa4thd     levanter dot_product_attention, AttentionBackend.FA4_THD (branch fa4-sm90: upstream FA4 varlen, native SM90)
   pallas     jax.experimental.pallas.ops.gpu.attention.mha (Triton), causal + segment_ids
   cudnn      jax._src.cudnn.fused_attention_stablehlo.dot_product_attention, packed documents (q/kv offsets, MAXSEG per row)
 Per backend and layout: median ms of fwd+bwd (value_and_grad of sum(out * cotangent) w.r.t. q, k, v) and of fwd only,
 over ITERS timed calls after warmup; relative L2 error of out, dq, dk, dv against an fp32 dense reference on the first
-REF rows. One JSON line per result to stdout. Contains no training; synthetic inputs only.
+REF rows; bitwise_rerun says whether a second forward + backward on the same inputs gives bitwise the same dq, dk, dv.
+One JSON line per result to stdout. Contains no training; synthetic inputs only.
 """
 import json
 import os
@@ -67,7 +69,7 @@ Batch, Pos, KPos, Heads, Key = Axis("batch", B), Axis("position", T), Axis("key_
 
 
 def levanter_attn(backend):
-    be = {"jax_flash": AttentionBackend.JAX_FLASH, "fa4": AttentionBackend.FA4_CUTE}[backend]
+    be = {"jax_flash": AttentionBackend.JAX_FLASH, "fa4": AttentionBackend.FA4_CUTE, "fa4thd": AttentionBackend.FA4_THD}[backend]
 
     def f(q, k, v, seg):
         qn = hax.named(q, (Batch, Pos, Heads, Key))
@@ -128,7 +130,7 @@ for layout in LAYOUTS:
     (_, rg), ro = rf(q[:REF], k[:REF], v[:REF]), jax.jit(lambda q, k, v: reference(q, k, v, seg[:REF]))(q[:REF], k[:REF], v[:REF])
     for be in BACKENDS:
         try:
-            f = levanter_attn(be) if be in ("jax_flash", "fa4") else {"pallas": pallas_attn, "cudnn": cudnn_attn}[be]
+            f = levanter_attn(be) if be in ("jax_flash", "fa4", "fa4thd") else {"pallas": pallas_attn, "cudnn": cudnn_attn}[be]
             fwd = jax.jit(lambda q, k, v, s: f(q, k, v, s))
             vg = jax.jit(jax.value_and_grad(lambda q, k, v, s: jnp.sum(f(q, k, v, s).astype(jnp.float32) * ct.astype(jnp.float32)), argnums=(0, 1, 2)))
             t_f, out = timed(fwd, q, k, v, seg)
@@ -137,10 +139,13 @@ for layout in LAYOUTS:
             o_s = jax.jit(lambda q, k, v, s: f(q, k, v, s))
             errs = {"out": rel(out[:REF], ro)}
             # gradient of the REF-row loss = the first REF rows of the full gradient (rows are independent)
+            # run-to-run determinism: the same inputs again, every gradient compared bitwise
+            _, g2 = vg(q, k, v, seg)
+            det = {name: bool(jnp.array_equal(a, b)) for name, a, b in zip(("dq", "dk", "dv"), g, g2)}
             for name, a, r in zip(("dq", "dk", "dv"), g, rg):
                 errs[name] = rel(a[:REF], r)
             print(json.dumps({"layout": layout, "backend": be, "fwd_ms": round(t_f, 2), "fwd_bwd_ms": round(t_fb, 2),
-                              "rel_err": {k2: float(f"{v2:.2e}") for k2, v2 in errs.items()}}), flush=True)
+                              "rel_err": {k2: float(f"{v2:.2e}") for k2, v2 in errs.items()}, "bitwise_rerun": det}), flush=True)
         except Exception as e:
             print(json.dumps({"layout": layout, "backend": be, "error": f"{type(e).__name__}: {str(e)[:300]}"}), flush=True)
             traceback.print_exc(file=sys.stderr)
