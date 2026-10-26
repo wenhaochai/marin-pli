@@ -1,0 +1,7 @@
+{"inline": {
+ "en": {"base_title": "training (simplified)", "ours_title": "re-evaluation (simplified; the Code link has the real code)",
+        "base": ["for t in range(T):", "    batch = stream[t]", "    loss[t] = loss_fn(theta, batch)", "    theta = optimizer.step(theta, batch)"],
+        "ours": ["for t in range(T):", "    batch = stream[t]", "    # score batch t with the final weights; nothing is updated", "    trec[t] = loss_fn(theta_final, batch)"]},
+ "zh": {"base_title": "训练（简化）", "ours_title": "再评估（简化；真实代码见“代码”链接）",
+        "base": ["for t in range(T):", "    batch = stream[t]", "    loss[t] = loss_fn(theta, batch)", "    theta = optimizer.step(theta, batch)"],
+        "ours": ["for t in range(T):", "    batch = stream[t]", "    # 用最终权重给第 t 批打分，不再更新参数", "    trec[t] = loss_fn(theta_final, batch)"]}}}
