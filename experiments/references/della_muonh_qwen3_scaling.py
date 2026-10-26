@@ -122,9 +122,11 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # flash-attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py), so the backward pass
 # re-runs norms, projections and the MLP but not the attention forward. Same math (bf16 rounding differs); ~+2-3 GiB
 # per device at 300m. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag remat-flash.
+# "none" (speed, 2026-10-25): no per-layer checkpointing; the backward pass reuses every saved forward value (300m peak is
+# 12-14 of 71 GiB with full remat, so the saved activations may fit). Same math up to bf16 rounding.
 REMAT = os.environ.get("REMAT", "full")
-if REMAT not in ("full", "flash"):
-    raise ValueError(f"REMAT={REMAT}: full | flash")
+if REMAT not in ("full", "flash", "none"):
+    raise ValueError(f"REMAT={REMAT}: full | flash | none")
 # PROFILE=<start>:<steps> (speed, 2026-10-25): a JAX profiler trace of that many train steps from that step, kept locally under
 # logs/<run id>/profiler (perfetto trace too). Off by default; changes nothing else.
 PROFILE = os.environ.get("PROFILE", "")
@@ -686,6 +688,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_cls, model_extra = Qwen3Config, {}
     if REMAT == "flash":
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
+    elif REMAT == "none":
+        model_extra = dict(model_extra, gradient_checkpointing=False)
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
@@ -815,7 +819,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in OV_VARIANTS else "muonh-qwen3-focal-della" if VARIANT == "focal" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "fa4_cute" if ATTN_BACKEND == "fa4" else "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *(["remat-flash"] if REMAT == "flash" else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "fa4_cute" if ATTN_BACKEND == "fa4" else "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *([f"remat-{REMAT}"] if REMAT != "full" else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,
