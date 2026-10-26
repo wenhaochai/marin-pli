@@ -26,7 +26,7 @@ OUT=/scratch/gpfs/GROUP/USER/tmp/speed_wt/profiles/fa4thd-debug-$JID
 mkdir -p $OUT
 nvidia-smi -L
 fail=0
-for s in fwd128 bwd128 fwd64 bwd64 local64; do
+for s in fwd64 bwd64 local64 paths64; do
   echo "DEBUG $s START $(date +%H:%M:%S)"
   PYTHONFAULTHANDLER=1 timeout 8m $PY scripts/della/speed_all/fa4thd_debug.py $s > $OUT/$s.log 2>&1; echo "DEBUG $s rc=$?"
   grep -E "^STEP|^config|^forward" $OUT/$s.log; grep -B2 -A14 -E "Fatal Python|Traceback|Error" $OUT/$s.log | grep -vE "^\s*$" | tail -30
