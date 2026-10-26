@@ -981,6 +981,67 @@ def thd_cu_seqlens_from_segment_ids(segment_ids: Int[Array, "B S"], *, max_docum
     return cu_seqlens, jnp.sum(starts, dtype=jnp.int32)
 
 
+def _segment_lower_bounds(segment_ids: Int[Array, "B S"]) -> Int[Array, "B S"]:
+    """Per query, the first key of its segment (as levanter.layers.attention._fa4_segment_lower_bounds)."""
+    seq_len = segment_ids.shape[1]
+    positions = jnp.arange(seq_len, dtype=jnp.int32)[None, :]
+    previous = jnp.concatenate([segment_ids[:, :1], segment_ids[:, :-1]], axis=1)
+    starts = (positions == 0) | (segment_ids != previous)
+    return jax.lax.cummax(jnp.where(starts, positions, 0), axis=1).astype(jnp.int32)
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(4, 5))
+def _jax_fa4_thd_packed(
+    q: Float[Array, "B S H D"],
+    k: Float[Array, "B S Hkv D"],
+    v: Float[Array, "B S Hkv D"],
+    segment_ids: Int[Array, "B S"],
+    softmax_scale: float,
+    max_documents: int,
+) -> Float[Array, "B S H D"]:
+    # without a gradient (evaluation): the segmented FA4/CuTe kernel, exact for any number of documents; Paloma rows hold
+    # up to ~290 (twitterAAE), past any static THD bound
+    from levanter.grug.attention._fa4_cute import _segmented_kernel_config  # noqa: PLC0415
+    from levanter.grug.attention._fa4_cute_backend import fa4_cute_attention_forward  # noqa: PLC0415
+
+    valid = jnp.ones(q.shape[:2], dtype=jnp.bool_)
+    return fa4_cute_attention_forward(
+        q, k, v, _segment_lower_bounds(segment_ids), valid, sm_scale=softmax_scale,
+        kernel_config=_segmented_kernel_config(q.shape[-1]),
+    )
+
+
+def _jax_fa4_thd_packed_fwd(q, k, v, segment_ids, softmax_scale, max_documents):
+    batch, seq_len, heads, head_dim = q.shape
+    cu_seqlens, num_documents = thd_cu_seqlens_from_segment_ids(segment_ids, max_documents=max_documents)
+    q_t, k_t, v_t = (x.reshape(batch * seq_len, x.shape[2], head_dim) for x in (q, k, v))
+    out, lse = fa4_thd_attention_forward(
+        q_t, k_t, v_t, cu_seqlens, softmax_scale=softmax_scale, kernel_config=_thd_kernel_config(head_dim),
+        sliding_window=None,
+    )
+    # the names the segmented FA4 backend and levanter's flash attention give these residuals, so a remat policy that
+    # saves flash_o / flash_ell keeps them and the backward pass does not run the attention forward again
+    out = checkpoint_name(out, "flash_o")
+    lse = checkpoint_name(lse, "flash_ell")
+    # more documents than max_documents would leave the last ones merged into one sequence: one NaN instead (a NaN loss)
+    flagged = out.at[0, 0, 0].set(jnp.where(num_documents > max_documents, jnp.asarray(jnp.nan, out.dtype), out[0, 0, 0]))
+    return flagged.reshape(batch, seq_len, heads, head_dim), (q_t, k_t, v_t, out, lse, cu_seqlens)
+
+
+def _jax_fa4_thd_packed_bwd(softmax_scale, max_documents, residuals, cotangent):
+    q_t, k_t, v_t, out, lse, cu_seqlens = residuals
+    batch, seq_len = cotangent.shape[:2]
+    dq, dk, dv = fa4_thd_attention_backward(
+        q_t, k_t, v_t, out, cotangent.reshape(q_t.shape).astype(q_t.dtype), lse, cu_seqlens,
+        softmax_scale=softmax_scale, kernel_config=_thd_kernel_config(q_t.shape[-1]), sliding_window=None,
+    )
+    return (dq.reshape(batch, seq_len, *dq.shape[1:]), dk.reshape(batch, seq_len, *dk.shape[1:]),
+            dv.reshape(batch, seq_len, *dv.shape[1:]), None)
+
+
+_jax_fa4_thd_packed.defvjp(_jax_fa4_thd_packed_fwd, _jax_fa4_thd_packed_bwd)
+
+
 def fa4_thd_local_attention(
     q: Float[Array, "B S H D"],
     k: Float[Array, "B S H D"],
@@ -990,23 +1051,12 @@ def fa4_thd_local_attention(
     softmax_scale: float,
     max_documents: int,
 ) -> Float[Array, "B S H D"]:
-    """Causal attention inside packed documents on one device, through upstream FA4's varlen kernels (SM90 at
-    head_dim <= 64: wgmma/TMA forward and backward). One output element is NaN when the rows hold more than
-    ``max_documents`` documents, so an undersized bound fails loudly (a NaN loss) without a host check inside the step
-    and without a pass over the output."""
-    batch, seq_len, heads, head_dim = q.shape
-    cu_seqlens, num_documents = thd_cu_seqlens_from_segment_ids(segment_ids, max_documents=max_documents)
-    out = _jax_fa4_thd_attention(
-        q.reshape(batch * seq_len, heads, head_dim),
-        k.reshape(batch * seq_len, k.shape[2], head_dim),
-        v.reshape(batch * seq_len, v.shape[2], head_dim),
-        cu_seqlens,
-        softmax_scale,
-        _thd_kernel_config(head_dim),
-        None,
-    )
-    out = out.at[0, 0, 0].set(jnp.where(num_documents > max_documents, jnp.asarray(jnp.nan, out.dtype), out[0, 0, 0]))
-    return out.reshape(batch, seq_len, heads, head_dim)
+    """Causal attention inside packed documents on one device. Under a gradient (training) the forward and backward run
+    upstream FA4's varlen kernels (SM90 at head_dim <= 64: wgmma/TMA) on a THD batch of at most ``max_documents``
+    sequences; one output element is NaN when the rows hold more, so an undersized bound fails loudly (a NaN loss)
+    without a host check inside the step. Without a gradient (evaluation) it runs the segmented FA4/CuTe kernel, exact
+    for any number of documents."""
+    return _jax_fa4_thd_packed(q, k, v, segment_ids, softmax_scale, max_documents)
 
 
 def gpu_fa4_thd_attention(

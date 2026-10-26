@@ -5,6 +5,8 @@ first fa4thd call. One step per process (argv[1]), so an abort names its step:
   fwd128    levanter's original path: head_dim 128, 16 query heads over 4 KV heads (GQA), forward
   bwd128    the same, backward
   local64   fa4_thd_local_attention (cu_seqlens from segment ids, padded), forward + grad
+  paths64   the no-gradient path (segmented kernel) against the gradient path's forward (THD); 30 documents per row
+            must give NaN on the gradient path only
 Prints STEP <name> OK with a checksum, or the exception; an abort shows as the step's missing OK line."""
 import sys
 
@@ -42,3 +44,15 @@ elif step == "local64":
     f = lambda q, k, v: jnp.sum(t.fa4_thd_local_attention(q, k, v, seg, softmax_scale=scale, max_documents=20).astype(jnp.float32))
     val, g = jax.jit(jax.value_and_grad(f, argnums=(0, 1, 2)))(qb, kb, vb)
     print("STEP", step, "OK", float(val), *(float(jnp.sum(x.astype(jnp.float32))) for x in g), flush=True)
+elif step == "paths64":
+    # the no-gradient path (segmented kernel) against the gradient path's forward (THD), and the overflow guard
+    qb, kb, vb = (x.reshape(B, S, x.shape[1], d) for x in (q, k, v))
+    local = lambda q, k, v, seg: t.fa4_thd_local_attention(q, k, v, seg, softmax_scale=scale, max_documents=20)
+    for name, seg in (("ok", np.repeat(np.array([[0, 1, 2], [3, 4, 5]]), [1000, 1500, 1596], axis=1)),
+                      ("overflow", np.repeat((np.arange(S) * 30 // S)[None, :], B, axis=0))):
+        seg = jnp.asarray(seg, jnp.int32)
+        prim = jax.jit(local)(qb, kb, vb, seg)
+        train, _ = jax.jit(lambda q, k, v, s: jax.vjp(lambda q, k, v: local(q, k, v, s), q, k, v))(qb, kb, vb, seg)
+        diff = jnp.abs(prim.astype(jnp.float32) - train.astype(jnp.float32))
+        print("STEP", step, name, "OK", "primal_nan", bool(jnp.isnan(prim).any()), "train_nan", bool(jnp.isnan(train).any()),
+              "max_abs_diff", float(jnp.nanmax(diff)), "rel_l2", float(jnp.sqrt(jnp.nansum(diff ** 2) / jnp.sum(prim.astype(jnp.float32) ** 2))), flush=True)
