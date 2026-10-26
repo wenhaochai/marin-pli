@@ -56,6 +56,7 @@ case $CFG in
   4480) export SIZE=300m SEQ_LEN=4480 VOCAB_K=32000 ;;
   5504) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 ;;   # charwin v8k (w138)
   4096post) export SIZE=300m SEQ_LEN=4096 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20; unset VOCAB_K ;;   # train steps after evals and checkpoints
+  4096long) export SIZE=300m SEQ_LEN=4096 SMOKE_STEPS=200; unset VOCAB_K ;;   # 200 steps, one eval at the end: steady-state wall per step
   5504post) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 ;;
   4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
   *) echo "unknown config $CFG"; exit 2 ;;
@@ -132,7 +133,9 @@ try:
     rows = sorted((r for r in run.scan_history(keys=["_step", "_runtime", "throughput/duration"]) if r["_step"] >= 3), key=lambda r: r["_step"])
     d = [r["throughput/duration"] for r in rows]
     wall = (rows[-1]["_runtime"] - rows[0]["_runtime"]) / max(1, rows[-1]["_step"] - rows[0]["_step"])   # evals and checkpoints included
-    print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} step_ms={np.mean(d) * 1e3:.0f}(n={len(d)}) median_step_ms={np.median(d) * 1e3:.0f} wall_ms={wall * 1e3:.0f} "
+    mid = [r for r in rows if 20 <= r["_step"] <= 190]
+    wall_mid = (mid[-1]["_runtime"] - mid[0]["_runtime"]) / max(1, mid[-1]["_step"] - mid[0]["_step"]) if len(mid) > 1 else float("nan")
+    print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} step_ms={np.mean(d) * 1e3:.0f}(n={len(d)}) median_step_ms={np.median(d) * 1e3:.0f} wall_ms={wall * 1e3:.0f} wall_mid_ms={wall_mid * 1e3:.1f} "
           f"loss={s.get('train/loss')} eval_loss={s.get('eval/loss')} err='{err}'", flush=True)
 except Exception as e:
     print(f"SUMMARY {run_id} rc={rc} peak_mem_MiB={peak} wandb_error={str(e)[:160]} err='{err}'", flush=True)
