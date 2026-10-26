@@ -174,6 +174,27 @@ baseline reruns. Not adopted: REMAT=fdots and the cuda_async allocator (out of m
 REMAT=fproj (no gain), the XLA dot merger (slower), the lse kernel in evaluation (~0.6% of a run; its numerics were not
 checked on one checkpoint). Told the pls and terminal sessions.
 
+**MLP outputs saved, a silent corruption, a guard (2026-10-26 12:20-13:10).** On the new defaults (async + f32 embedding
+gradient), saving part of the MLP fits beside the async loop where fdots did not: REMAT=fgate (flash + the MLP gate
+output, ~8.5 GB) and fmlp (+ gate and up, ~17 GB; LlamaMlp names them mlp_gate / mlp_up, no-ops for other policies).
+200 steps: 128K 522.4 -> 514.7 / 509.9 ms (w335), 8K 402.4 -> 393.6 / 388.3 (w336). Full Paloma evals and checkpoints
+every 20 steps (median): 128K 516 -> 511 / 505 (w339), 8K unismooth 399 -> 392 / 386 (w340); SEQ_LEN 5504 (charwin
+v8k shape): fgate 530 -> 522, fmlp out of memory (one 38.89 GiB block, w341). Silent corruption: the vocab run w158
+(unismooth 128K 0.02, the stack of 10:17, sync loop) collapsed at step 3171 to near-uniform predictions (loss 3.556 ->
+11.597, final bpb 3.24) because its lm_head norm, which AdamH recomputes every step and keeps constant, went 353.33 ->
+3.556 in one update: the value of that step's train loss. Not at a save, eval, resume or fetch; only lm_head moved (the
+next of 92 constant-norm keys 5.6e-7); no NaN. A scan of every reself/marin-della run since 10-20 (375 runs,
+tmp_plots/vocab/flip/norm_jumps.py; pls ran its own over 25 runs) finds no other jump: healthy constant norms move ~1e-6
+between watch steps. The bad update ran in the hooks variant of the step (3170 is a watch step); its compiled HLO (w345,
+the w158 config) packs 317 scalars into one in-place async all-reduce (all-reduce-start.54, output aliased to input) whose
+element 0 is a jnp.linalg.norm sum (AdamH's lm_head path) and elements 1-2 the forward pass's loss sums, so a mix-up or an
+early read in that buffer would give exactly what w158 shows; one event in ~400 runs does not separate the capture, the
+async collectives and the kernels. LEVANTER_NORM_GUARD=<rel> (watch.py, d394c5f26e): the watch hook raises when a
+constant-norm weight moves by more than <rel> between watch steps, so the job's retry resumes from its last checkpoint;
+w343 with 1e-3: 516 ms on and off, no false stop over 6 evals and 7 checkpoints. **Adopted (owner popup ~13:07):** REMAT
+code default at 300m fmlp up to SEQ_LEN 4096, fgate above (81bdd4f5a8), and LEVANTER_NORM_GUARD=1e-3 in speed_env.sh
+(5ab7a4e9a5), for jobs that start after 13:09; w158 reruns as w342 (RUN_TAG=-rerun).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
