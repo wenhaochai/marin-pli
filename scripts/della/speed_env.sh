@@ -32,4 +32,10 @@ export LEVANTER_CE_BTILED_ONEHOT=${LEVANTER_CE_BTILED_ONEHOT:-1}
 # 2026-10-26: its fallback crashed under shard_map for shards off the b-tiled path (every vocabulary below 65536). The pls
 # fix (6935700283) runs those shards through the ordinary fused CE; H100 det check w256 at 8K: bitwise equal to GIF off.
 export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-1}
-echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD ATTN_BACKEND=${ATTN_BACKEND:-fa4 (code default)} REMAT=${REMAT:-flash (code default)}"
+# LEVANTER_CE_LSE_KERNEL=1 (speed, 2026-10-26; Triton kernel by this session, integrated by the pls session b3f40f216f):
+# in the gradient-in-forward CE block (vocabularies >= 65536), one Triton GEMM writes the bf16 logits, each row's f32 label
+# logit and per-tile logsumexp partials, so no f32 logits reach HBM and the two lse passes go away. Not bitwise (GEMM and
+# lse merge summation order; lse within 5.8e-8 of float64). H100 at 300m 128K: -5.9% (w280: 1213 -> 1142 ms), loss within
+# bf16 noise. No effect below 65536.
+export LEVANTER_CE_LSE_KERNEL=${LEVANTER_CE_LSE_KERNEL:-1}
+echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL ATTN_BACKEND=${ATTN_BACKEND:-fa4 (code default)} REMAT=${REMAT:-code default: fdots at 130m/300m, else flash}"

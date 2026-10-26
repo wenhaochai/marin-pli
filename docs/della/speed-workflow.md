@@ -59,6 +59,30 @@ v8k, w254): 1372 ms against the old 3971 ms (-65%), loss within bf16 noise. The 
 `scripts/della/speed_env.sh`, sourced by the launcher and by `over_vocab_smoke.sbatch`: until now the smokes ran python
 without them, so a smoke could pass while its main run crashed (how the GIF bug slipped past the vocab smokes).
 
+**Real runs and the next round (2026-10-26 05:00).** The first vocab runs on the new stack train 2.1x (128K, w46: 0.716
+s/step against 1.506, a whole run 2:18 against 4:47) and 2.3x (8K, w216: 0.571 against 1.291) faster than the old code,
+eval and checkpoints included, with full remat. Profiles of the defaults (w263 128K, w264 8K; 2 GPUs, command buffers
+off, summed kernel time 1213 / 914 ms): 128K = output head and CE 31%, attention 19%, MLP 18%, remat recompute 10%,
+projections 9%, norms 6.5%; 8K = attention 27%, MLP 23%, remat 12%, projections 11%, CE 9%, norms 9%. Items:
+- REMAT=fdots (saved matmul outputs on top of flash): -3.3% at 4096 (w265, 1233 -> 1192 ms), -3.6% at 5504 (w274, 1276
+  -> 1230 ms, fits), loss within noise: the default at 130m/300m.
+- XLA collective pipelining + latency-hiding scheduler: 1210 against 1207 ms (w279), no gain; not adopted.
+- FP8 Linear layers: no speedup at hidden 512-1024 and +0.0026 bpb at 130m (logs/kaiyue_fp8_qwen3_h100x4.yaml,
+  2026-09-14); dropped.
+- CE logsumexp kernel (branch ce-lse-kernel, for the pls session): a Triton logits GEMM whose epilogue writes the bf16
+  logits, the f32 label logit and per-tile logsumexp partials (w271, 8192 x 768 x 128256): 3.28 ms against 7.33 ms for
+  the XLA ops with the same outputs; lse within 5.8e-8 of float64 (two-pass logsumexp 5.6e-8); f32 logits bitwise equal
+  to cuBLAS; GEMM part 1.47x the XLA bf16 GEMM. pls integrated it (b3f40f216f, LEVANTER_CE_LSE_KERNEL=1, default off;
+  here 57f176bcb8); vocab A/B w280.
+- Attention: on H100 the segmented FA4/CuTe kernel is Ampere-style (forward) and the 64x64 sm120 path (backward).
+  Upstream FA4's native SM90 varlen kernels (flash_attn.cute, wgmma + TMA) at 32 x 4096 x 12 x 64 with packed documents:
+  1.19 ms forward, 3.49 ms forward + backward, against 2.39 / 7.31 (torch bench w272; errors 2.0-2.5e-3 against fp32,
+  as the segmented kernel); one document per row 2.07 / 6.80 against 5.45 / 17.68. Zero-length padding of cu_seqlens
+  costs (w273): 256 sequences 3.58 ms, 512 3.94, 1024 5.37, 2048 11.0; fineweb-edu rows hold 4-5 documents (max 17 over
+  ~2.4M windows; 32 rows 163 +- 14, max 240 in 200K draws; tmp_plots/vocab/docs_per_row.py), so 10 per row is safe.
+  Backend ATTN_BACKEND=fa4thd / AttentionBackend.FA4_THD on branch fa4-sm90: its first H100 call aborts in C++
+  (std::bad_variant_access, w276/w277); debug job w281.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
