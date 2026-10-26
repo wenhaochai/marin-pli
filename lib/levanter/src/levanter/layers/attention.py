@@ -729,7 +729,7 @@ def _fa4_cute_attention(
 
     ``thd``: the same attention through upstream FA4's varlen kernels instead (AttentionBackend.FA4_THD): per device
     each packed document is one sequence of a THD batch with a static sequence count, LEVANTER_FA4_THD_DOCS_PER_ROW
-    per row (default 32); more documents on a device give a NaN, never a wrong mask.
+    per row (default 10); more documents on a device give a NaN, never a wrong mask.
     """
     from levanter.grug.attention._fa4_cute import _segmented_kernel_config  # noqa: PLC0415  # optional CUDA deps
     from levanter.grug.attention._fa4_cute_backend import fa4_cute_attention_forward  # noqa: PLC0415
@@ -810,7 +810,10 @@ def _fa4_cute_attention(
     if thd:
         from levanter.grug.attention._fa4_thd import fa4_thd_local_attention  # noqa: PLC0415  # optional CUDA deps
 
-        docs_per_row = int(os.environ.get("LEVANTER_FA4_THD_DOCS_PER_ROW", "32"))
+        # 10 per row: fineweb-edu rows hold 4-5 documents on average and at most 17 (all ~2.4M windows, every
+        # tokenizer); 32 rows sum to 163 +- 14, max 240 in 200K draws (tmp_plots/vocab/docs_per_row.py). Padding to a
+        # larger count costs (FA4 SM90 varlen, w273): 3.49 ms exact, 3.94 at 512, 5.37 at 1024 sequences.
+        docs_per_row = int(os.environ.get("LEVANTER_FA4_THD_DOCS_PER_ROW", "10"))
 
         def _local_attention(q, k, v, seg):
             return fa4_thd_local_attention(
