@@ -45,6 +45,7 @@ case $CFG in
   4096) export SIZE=300m SEQ_LEN=4096; unset VOCAB_K ;;
   4480) export SIZE=300m SEQ_LEN=4480 VOCAB_K=32000 ;;
   5504) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 ;;   # charwin v8k (w138)
+  4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
 export SMOKE_STEPS=${SMOKE_STEPS:-60}
