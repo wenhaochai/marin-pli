@@ -11,7 +11,6 @@ import time
 
 import jax
 import jax.numpy as jnp
-
 from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu as hm
 from levanter.kernels.pallas.fused_cross_entropy_loss.lse_logits_triton import lse_and_logits
 
