@@ -338,6 +338,7 @@ class Trainer:
 
         self._cmanagers = []
         self._logged_jaxprs: set[str] = set()
+        self._last_loss_ready: Optional[float] = None   # host time the last finished step's loss was read
 
     @cached_property
     def loss_fn(self) -> WrappedLossFunction:
@@ -569,6 +570,15 @@ class Trainer:
         """Waits for a dispatched step's loss, then runs the hooks and logs the step's metrics."""
         result = dispatched.result
         loss = result.loss.item()
+        now = time.perf_counter()
+        # Under LEVANTER_ASYNC_STEP=1 a step is dispatched while the one before it runs, so dispatch-to-loss spans about two
+        # steps; the time between two consecutive losses is the step's own wall time (hooks between them included, an
+        # evaluation too). The first step keeps dispatch-to-loss.
+        if _ASYNC_STEP and self._last_loss_ready is not None:
+            duration = now - self._last_loss_ready
+        else:
+            duration = now - dispatched.start
+        self._last_loss_ready = now
         self.hooks.emit_event(ProgressEvent.TRAIN_STEP_FINISHED)
 
         # math, not jnp: the loss is a host float, and a jnp check is a device computation that waits behind every step
@@ -579,9 +589,7 @@ class Trainer:
         if self.config.crash_on_inf and math.isinf(loss):
             raise RuntimeError("Loss is Inf")
 
-        info = StepInfo(
-            result.new_state, loss, time.perf_counter() - dispatched.start, _event_handler=self.hooks.emit_event
-        )
+        info = StepInfo(result.new_state, loss, duration, _event_handler=self.hooks.emit_event)
 
         with capture_time() as hook_time:
             self.run_hooks(info)
@@ -635,6 +643,7 @@ class Trainer:
             return
 
         host_step = int(state.step)
+        self._last_loss_ready = None
         pending: Optional[_DispatchedStep] = None
         while host_step < self.num_train_steps:
             with capture_time() as loading_time:
