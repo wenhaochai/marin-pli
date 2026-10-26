@@ -799,3 +799,14 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 
 - profile（w239，Pre-LN d48，开 A1，关 command buffer）：每步 GPU 时间里读出头和 CE 占 68%（矩阵乘 4.09 s，lse 两次规约 1.70 s，A1 的 dlogits 一遍 1.02 s），attention 占 20%（2.05 s）。
 - det 轮的教训：两次完全相同的 run 也不逐位一致（GEMM 自动调优按计时选算法，run 分成“调优类”）；判断一个开关要和两个基线比，看是否在两次基线的差别以内（速度计划的 G4），或固定调优（`--xla_gpu_autotune_level=0`）。
+
+## 速度：新组合上线（2026-10-26）
+
+| 项 | 结果 | 结论 |
+|---|---|---|
+| Triton lse kernel（`LEVANTER_CE_LSE_KERNEL=1`） | Pre-LN d48：12.13 → 10.06 s/步（w299）；梯度与 XLA 路径相对差 1.5e-6 到 1.6e-5，两者到 f32 参考都是 2e-3 到 1.3e-2，偏差约 1e-10（w306）；第 20 步 eval 和 checkpoint 之后正常训练（w299、w301） | 所有者弹窗：对所有 pls job 打开（e90ce97a02） |
+| fa4thd（上游 FA4 的 SM90 varlen kernel） | Pre-LN：JAX flash 14.96、fa4 12.50、fa4thd 12.16 s/步（w288）；HC：24.69、21.30（fa4 + CUDA graph）、20.44（w289）；eval 走 segmented kernel（Paloma 一行最多约 290 个文档） | 新对照要先过验证对 |
+| 新组合（生产设置 + kernel + fa4thd） | Pre-LN 7.39（w300），probes 模型 7.31（w301），HC 20.56（w302），AttnRes 28.50（w303）s/步；都过了第 20 步的 eval 和 checkpoint | 所有者弹窗：fa4 验证对 w261/w262 取消，改为新组合的一对 w333/w334；代价与 JAX flash 的 0.089/0.092 在种子噪声内一致后，新对照用新组合 |
+
+- 上线前检查（控制会话 2026-10-26 提醒）：前向算梯度和 `REMAT=fdots` 都通过了短测试，却在真实 run 里出错；所以每个速度项上线前，测试要在训练中途做一次 eval 和 checkpoint，再继续训练（`SMOKE_MID=20`，4ab01211ab）。
+- 固定调优（`--xla_gpu_autotune_level=0`）不能让 run 可重复：两个相同对照（w292、w294）第 0 步就不同。
