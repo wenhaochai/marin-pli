@@ -146,6 +146,25 @@ every 20 steps (128K, 8K unismooth), w324 / w325 the combined stack (async + fdo
 evaluation (LEVANTER_CE_LSE_KERNEL_EVAL=1; evaluation's forward-only CE still takes the XLA path, 7.33 against 3.28 ms
 per 8192-row block at 128K, and evaluations are ~4.4% of a 128K run).
 
+**Results of that round (2026-10-26 09:00-10:20; 4 GPUs, 300m, 200 steps, wall per step over steps 20-190; each
+comparison within one job).** Async host loop: 128K 555.8 -> 523.8 ms (-5.8%, w324), 558.5 -> 523.7 (-6.2%, w331); 8K
+441.2 -> 410.1 (-7.0%, w328), 437.6 -> 408.2 (-6.7%, w332); losses within noise; with full Paloma evals and checkpoints
+every 20 steps (w325) 6 evals and 7 checkpoints, no OOM, median step 525 ms. The host fixes alone in the sync loop: 560.1
+-> 558.1 (w320). fdots + cuda_async in the sync loop: 128K -3.9% (w321), and it passes full evals and checkpoints at
+128K (w322, median 537 -> 512) and 8K unismooth (w323, 420 -> 394). Async + fdots + cuda_async: 128K out of memory at
+step 28 in both w324 and w325 (cuMemAllocAsync of 37.18 GiB failed with 3.96 GiB in use: the driver still held the
+previous step's buffer), 489 ms per step until then; at 8K it ran 200 steps at 380.0 ms (-13.9%, w328). Not adopted:
+unexplained memory failure at 128K. REMAT=fproj (flash plus the q/k/v/o projection outputs, 14d5455732): nothing
+(128K async 522.7 -> 521.9, w329; 8K 410.3 -> 409.6, w330), so fdots' gain is the MLP recompute. XLA dot merger: +1.7%
+slower (w319). Lse kernel in evaluation: each full eval 23-24 s -> 20-22 s (w326), ~0.6% of a 128K run. Input-embedding
+gradient: FSDP shards the table along embed, so XLA lays the gradient out column-major and the backward is a bf16
+scatter-add of rows 128256 elements apart; one H100 (w327, 131072 Zipf ids): bf16 scatter 93-465 ms with 17-20% relative
+error on the 16 most frequent rows against an f32 sum, f32 scatter 0.7 ms, sort + segment sum 0.25-0.64 ms.
+LEVANTER_EMBED_GRAD_F32=1 (591359b069, the gradient summed in f32 and cast once): 128K 558.5 -> 548.8 (-1.7%), with the
+async loop 515.4 (-7.7% from live); 8K 437.6 -> 431.8 (-1.3%), with async 402.9 (-7.9%); it changes training: the train
+loss over the first 200 steps is 0.002 nats lower at 128K and 0.0013 at 8K (async alone: 0.0001-0.0003 either way).
+Figure: tmp_plots/vocab/flip/speed_async.png.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
