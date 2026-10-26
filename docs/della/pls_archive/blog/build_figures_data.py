@@ -1017,16 +1017,34 @@ figs["fig-weight"] = dict(title={"en": "Separate-heads cost by intermediate-loss
 print("Fig 42 cost by weight", W42)
 # Figure 43 (owner popup 2026-10-25, wq w194-w197): HC 48 layers with 1 / 2 residual streams instead of 4, each against its
 # own probes run; 1 stream is Pre-LN plus HC's token-dependent scalar gates. x = log2(streams); the cost as in Fig 38.
-S43 = {1: sep_cost("ahc-hcs1-vs-d48"), 2: sep_cost("ahc-hcs2-vs-d48"), 4: sep_cost("ahc-vs-d48-g4")}
+# 8 streams (queue fill, wq w221/w222; placeholder: owner popup 2026-10-25) extends the curve.
+S43 = {1: sep_cost("ahc-hcs1-vs-d48"), 2: sep_cost("ahc-hcs2-vs-d48"), 4: sep_cost("ahc-vs-d48-g4"), 8: sep_cost("ahc-hcs8-vs-d48")}
 w43 = [str(m) for m, v in S43.items() if v is None]
 figs["fig-hc-streams"] = dict(title={"en": "Separate-heads cost by residual stream count, Hyper-Connections, 48 layers", "zh": "独立头代价与残差流数，Hyper-Connections，48 层"},
                               legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "dot"]],
                               quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
                               xlabel={"en": "Residual streams", "zh": "残差流数"}, height=200, cols=1,
-                              panels=[dict(xlim=[-0.4, 2.4], ylim=[-0.05, 0.15], xticks=[[0, "1"], [1, "2"], [2, "4"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
+                              panels=[dict(xlim=[-0.4, 3.4], ylim=[-0.05, 0.15], xticks=[[0, "1"], [1, "2"], [2, "4"], [3, "8"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
                                            label={"en": "Layer 48" + (" · " + ", ".join(w43) + " stream" + ("s" if w43 != ["1"] else "") + " queued" if w43 else ""), "zh": "第 48 层" + (" · " + "、".join(w43) + " 条流排队中" if w43 else "")},
-                                           marks=[dict(type="dots", color=BLUE7, pts=[[{1: 0, 2: 1, 4: 2}[m], v] for m, v in S43.items() if v is not None])])])
+                                           marks=[dict(type="dots", color=BLUE7, pts=[[{1: 0, 2: 1, 4: 2, 8: 3}[m], v] for m, v in S43.items() if v is not None])])])
 print("Fig 43 cost by stream count", S43)
+# Figure 44 (queue fill, wq w223/w224; placeholder: owner popup 2026-10-25): AttnRes separate-heads cost by the number of
+# sources each read mixes: Block with 8 blocks (the 48-layer pair), Block with 24 blocks, Full (every sublayer; two seeds;
+# seed 0's ordinary model spiked, so its cost is low for that reason).
+S44 = [("Block 8", {"en": "Block, 8 blocks", "zh": "Block，8 个块"}, sep_cost("aattnres_block-vs-d48-g4")),
+       ("Block 24", {"en": "Block, 24 blocks", "zh": "Block，24 个块"}, sep_cost("aattnres_block-arb24-vs-d48")),
+       ("Full s0", {"en": "Full, seed 0", "zh": "Full，种子 0"}, sep_cost("aattnres-vs-d48-g4")),
+       ("Full s1", {"en": "Full, seed 1", "zh": "Full，种子 1"}, sep_cost("aattnres-vs-d48-s1-g4"))]
+X44 = {"Block 8": 0, "Block 24": 1, "Full s0": 2, "Full s1": 2}
+w44 = [k for k, _, v in S44 if v is None]
+figs["fig-ar-sources"] = dict(title={"en": "Separate-heads cost by the sources each read mixes, AttnRes, 48 layers", "zh": "独立头代价与每次读取混合的源，AttnRes，48 层"},
+                              legend=[[{"en": "AttnRes", "zh": "AttnRes"}, BLUE7, "dot"]],
+                              quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
+                              xlabel={"en": "Sources", "zh": "源"}, height=200, cols=1,
+                              panels=[dict(xlim=[-0.4, 2.4], ylim=[-0.05, 0.15], xticks=[[0, "Block, 8"], [1, "Block, 24"], [2, "Full"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
+                                           label={"en": "Layer 48" + (" · 24 blocks queued" if "Block 24" in w44 else ""), "zh": "第 48 层" + (" · 24 个块排队中" if "Block 24" in w44 else "")},
+                                           marks=[dict(type="dots", color=BLUE7, pts=[[X44[k], v] for k, _, v in S44 if v is not None])])])
+print("Fig 44 cost by AttnRes sources", {k: v for k, _, v in S44})
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

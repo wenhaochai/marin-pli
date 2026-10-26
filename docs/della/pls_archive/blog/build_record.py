@@ -41,7 +41,7 @@ RUNS = [
     (PROBE, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100-pls1-sep-bbfrozen"), "5"),
     # 48 layers (-vs-d48-g4): each design's pair-job chain; the earlier 8-GPU FSDP runs (-d48) are superseded, so other
     *[(n if tag == "" else S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 4,
-       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6, 9, 10, 11, 16" if tag == "" else ("7, 8, 17" if tag == "attnres" else ("7, 9, 10, 17" if tag in ("attnres_block", "moda") else "7, 9, 10, 11, 17")))
+       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6, 9, 10, 11, 16" if tag == "" else ("7, 8, 17, 44" if tag == "attnres" else ("7, 9, 10, 17, 44" if tag == "attnres_block" else ("7, 9, 10, 17" if tag == "moda" else ("7, 9, 10, 11, 17, 43" if tag == "hc" else "7, 9, 10, 11, 17")))))
       for a, tag, jobs in [("Sandwich-LN", "", [15266143, 15266144, 15273924]), ("Pre-LN", "preln", [15266145, 15266146, 15273925]),
                            ("LayerNorm Scaling", "lns", [15266147, 15266148]), ("DeepNorm", "deepnorm", [15266149, 15266150]), ("KEEL", "keel", [15266151, 15266152]),
                            ("Hyper-Connections", "hc", [15266153, 15266154, 15341053, 15341054]), ("mHC", "mhc", [15266155, 15266156, 15341055, 15341056]),
@@ -50,7 +50,7 @@ RUNS = [
       for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # AttnRes (Full), second init seed (Figure 8; owner popup 2026-10-13)
     *[(S(f"AttnRes (Full), seed 1: {n['en'].lower()}", f"AttnRes (Full)，种子 1：{n['zh']}"), "130m", 48, 2.6, 4,
-       ("chain", [15520124, 15520125, 15520126, 15538869], f"130m-della4xh100-pls1-sep{bb}-aattnres-vs-d48-s1-g4"), "8") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
+       ("chain", [15520124, 15520125, 15520126, 15538869], f"130m-della4xh100-pls1-sep{bb}-aattnres-vs-d48-s1-g4"), "8, 44") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # HC with positive writes (Figure 11; owner popup 2026-10-14): the causal test of HC's half last-layer cost
     *[(S(f"HC with positive writes: {n['en'].lower()}", f"写入为正的 HC：{n['zh']}"), "130m", 48, 2.6, 4,
        ("chain", [15536266, 15536267], f"130m-della4xh100-pls1-sep{bb}-ahc_pos-vs-d48-g4"), "11") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
@@ -116,6 +116,12 @@ RUNS = [
     (S("Hyper-Connections, 1 residual stream: probes only", "Hyper-Connections，1 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w195", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs1-vs-d48"), "43"),
     (S("Hyper-Connections, 2 residual streams: separate heads", "Hyper-Connections，2 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w196", "130m-della4xh100-pls1-sep-ahc-hcs2-vs-d48"), "43"),
     (S("Hyper-Connections, 2 residual streams: probes only", "Hyper-Connections，2 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w197", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs2-vs-d48"), "43"),
+    # queue fill (owner 2026-10-25 via terminal, no popup for these four; placeholders: owner popup 2026-10-25): HC with 8
+    # streams (Figure 43) and AttnRes Block with 24 blocks (Figure 44), each against its own probes run
+    (S("Hyper-Connections, 8 residual streams: separate heads", "Hyper-Connections，8 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w221", "130m-della4xh100-pls1-sep-ahc-hcs8-vs-d48"), "43"),
+    (S("Hyper-Connections, 8 residual streams: probes only", "Hyper-Connections，8 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w222", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs8-vs-d48"), "43"),
+    (S("AttnRes (Block), 24 blocks: separate heads", "AttnRes (Block)，24 个块：独立头"), "130m", 48, 2.6, 4, ("wq", "w223", "130m-della4xh100-pls1-sep-aattnres_block-arb24-vs-d48"), "44"),
+    (S("AttnRes (Block), 24 blocks: probes only", "AttnRes (Block)，24 个块：只加探针"), "130m", 48, 2.6, 4, ("wq", "w224", "130m-della4xh100-pls1-sep-bbfrozen-aattnres_block-arb24-vs-d48"), "44"),
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),
