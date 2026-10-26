@@ -94,7 +94,7 @@ for r in $ROUNDS; do
     time) pr=;;   # no profile here: with command buffers on, jax.profiler.stop_trace hung and left GPUs idle (w237/w238, 2026-10-26)
     # prof: no command buffers (each kernel then shows in the trace under its own HLO instruction) and the optimized HLO
     # dumped, for trace_families.py (the Tokenizer Size session's speed-all 7b2eba3a51); its step time is not the measure
-    prof) pr="PROFILE=20:2"; xf="--xla_gpu_enable_command_buffer= --xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/pls_speed/hlo_${NAME}_${JID} --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*";;
+    prof) pr="PROFILE=25:2"; xf="--xla_gpu_enable_command_buffer= --xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/pls_speed/hlo_${NAME}_${JID} --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*";;
   esac
   # shellcheck disable=SC2086
   env $BASE $ON $pr ${xf:+"XLA_FLAGS=$xf"} RUN_TAG=-j${JID}$r timeout 40m "$PY" -m experiments.references.della_muonh_qwen3_scaling \
