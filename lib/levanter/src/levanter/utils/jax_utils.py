@@ -595,3 +595,35 @@ def sharded_tree_size(
             return jnp.dtype(type(x)).itemsize
 
     return sum(jax.tree.leaves(jax.tree.map(_size, tree, is_leaf=is_named_array)))
+
+
+def patch_scan_empty_outputs():
+    """Start lax.scan's stacked outputs as XLA AllocateBuffer (unwritten memory) instead of a zero fill.
+
+    jax lowers a scan to a while loop that writes slice i of every stacked output at iteration i, after filling each
+    stacked output with zeros (lax.control_flow.loops._empty_array broadcasts a zero scalar). The loop writes every slice,
+    so the fill is never read. At 300m with REMAT=fmlp the forward layer scan stacks two 8.5 GB buffers of saved MLP
+    activations, and their fill took 5.3 ms of a 558 ms step (profile w350). lax.empty lowers to AllocateBuffer on GPU,
+    which jax's own TODO in _empty_array means to use. Outputs in another memory space keep the zero fill."""
+    from jax._src import core as jcore
+    from jax._src.lax import lax as jlax
+    from jax._src.lax.control_flow import loops
+    from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
+
+    original = loops._empty_array
+    if getattr(original, "_levanter_empty", False):
+        return
+
+    def _empty_array(prefix, length_spec, aval):
+        if aval.memory_space != jcore.MemorySpace.Device:
+            return original(prefix, length_spec, aval)
+        mesh = get_abstract_mesh() if aval.sharding.mesh.empty else aval.sharding.mesh
+        sharding = aval.sharding.update(
+            mesh=mesh, spec=aval.sharding.spec.update(partitions=(*length_spec, *aval.sharding.spec.partitions))
+        )
+        with use_abstract_mesh(sharding.mesh):
+            out = jlax.empty((*prefix, *aval.shape), aval.dtype, out_sharding=sharding)
+        return jcore.pvary(out, tuple(aval.mat.varying))
+
+    _empty_array._levanter_empty = True  # type: ignore[attr-defined]
+    loops._empty_array = _empty_array
