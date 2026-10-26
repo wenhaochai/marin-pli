@@ -20,6 +20,8 @@
 #   cb      = CUDA-graph while loops
 #   jax     = REMAT=flash + cb        none    = REMAT=none (no per-layer remat) + cb
 #   fa4     = FA4/CuTe attention + cb  fa4none = FA4 + REMAT=none + cb
+#   a1      = CE label term as a select (pls 5ab04d3e45)   gif = a1 + CE gradient in the forward
+#   dbase, dbase2, da1, dgif = base, base again, a1, gif with --xla_gpu_exclude_nondeterministic_ops (per-step loss bitwise?)
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
 # PAIR line, its per-step train/loss minus the first arm's (same seed, data, schedule; bf16 noise is ~1e-3).
 set -uo pipefail
@@ -52,7 +54,8 @@ fail=0
 declare -A RID
 for ARM in "${ARMS[@]}"; do
   if [ $ARM = old ]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old = the main checkout; every other arm = speed-all
-  unset XLA_FLAGS ATTN_BACKEND REMAT
+  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT
+  DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
   CB="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
   case $ARM in
     old) ;;
@@ -62,12 +65,17 @@ for ARM in "${ARMS[@]}"; do
     none) export REMAT=none XLA_FLAGS="$CB" ;;
     fa4) export ATTN_BACKEND=fa4 XLA_FLAGS="$CB" ;;
     fa4none) export ATTN_BACKEND=fa4 REMAT=none XLA_FLAGS="$CB" ;;
+    a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
+    gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
+    dbase|dbase2) export XLA_FLAGS="$DET" ;;
+    da1) export XLA_FLAGS="$DET" LEVANTER_CE_BTILED_ONEHOT=1 ;;
+    dgif) export XLA_FLAGS="$DET" LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     *) echo "unknown arm $ARM"; fail=1; continue ;;
   esac
   export RUN_TAG=-abspd${ARM}-j${JID}
   cd "$DIR"
   got=$(PYTHONPATH=$PP $PY -c 'import levanter; print(levanter.__file__)')
-  echo "ARM $ARM dir=$DIR levanter=$got XLA_FLAGS=${XLA_FLAGS:-} ATTN_BACKEND=${ATTN_BACKEND:-} REMAT=${REMAT:-}"
+  echo "ARM $ARM dir=$DIR levanter=$got XLA_FLAGS=${XLA_FLAGS:-} ATTN_BACKEND=${ATTN_BACKEND:-} REMAT=${REMAT:-} CE: onehot=${LEVANTER_CE_BTILED_ONEHOT:-0} gif=${LEVANTER_CE_GRAD_IN_FWD:-0}"
   run_id=$(PYTHONPATH=$PP DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p' | head -1)
   case "$run_id" in *-abspd${ARM}-j${JID}*) ;; *) echo "ARM $ARM: dry run gave '$run_id'"; fail=1; continue ;; esac
   RID[$ARM]=$run_id
@@ -112,7 +120,7 @@ try:
     h = {r: {x["_step"]: x["train/loss"] for x in api.run(f"marin-della/{r}").scan_history(keys=["_step", "train/loss"])} for r in (a, b)}
     steps = sorted(set(h[a]) & set(h[b]))
     d = np.array([h[b][t] - h[a][t] for t in steps])
-    print(f"PAIR {b} - {a}: steps={len(steps)} max_abs_loss_diff={np.max(np.abs(d)):.5f} mean_diff={d.mean():+.5f} "
+    print(f"PAIR {b} - {a}: steps={len(steps)} max_abs_loss_diff={np.max(np.abs(d)):.3e} bitwise={bool(np.all(d == 0))} mean_diff={d.mean():+.5f} "
           f"last10_mean_diff={d[-10:].mean():+.5f} first5={np.round(d[:5], 5).tolist()}", flush=True)
 except Exception as e:
     print(f"PAIR {a} {b}: wandb_error={str(e)[:160]}", flush=True)
