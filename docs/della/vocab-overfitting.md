@@ -126,7 +126,11 @@ parameter-count control (low-rank tables, Q9) ran on 2026-10-12: cost 0.036 with
   (LEVANTER_EMBED_GRAD_F32=1, owner popup "改，不重跑"): the earlier bf16 scatter-add rounds once per occurrence of a token,
   and the f32 sum lowers the train loss over the first 200 steps by ~0.002 nats at 128K (0.0013 at 8K). The plain
   baselines are from the earlier code and were not rerun, so a new run's difference from them carries this change; the
-  async host loop that came with it changes no numbers. docs/della/speed-workflow.md has the measurements.
+  async host loop that came with it changes no numbers. docs/della/speed-workflow.md has the measurements. Runs that
+  start after 19:45 (owner popup ~19:15, "全部设为默认，不重跑") also take the CE gradients from P = exp(z - z_label)
+  with the label terms in f32 at 128K (gradient error against f32 3.2e-3 -> 1.7e-3), the b-tiled CE with f32 logits
+  below 65536 entries (8K 4.2e-3 -> 2.0e-3), and three same-math speed items; -9% to -13% per step. The plain
+  baselines on this code are the -nc1026 runs (w392, w393), queued before this change and started after it.
 - Q8 keeps every TPP=20 hyperparameter (the speedrun recipe was tuned at TPP=20; 130m: linear schedule, decay 0.8, no warmup). Each pass of the 2.6-pass data repeats the same permutation (levanter RESTART, no reshuffle), as in every rep run. The smoke copies do not exercise the TPP step math (SMOKE_STEPS overrides it); the dry-run configs were checked instead.
 
 - Bytes keep the 1000-step warmup of every run here: 1/54 of training at 300m against 1/11 at 128K. Consistent with the
