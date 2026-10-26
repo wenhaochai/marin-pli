@@ -136,9 +136,13 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # ms) and -3.6% at 5504 (w274: 1276 -> 1230 ms), loss within bf16 noise. It was the default at 130m/300m for half an hour
 # on 2026-10-26 and is not any more: the first production run with it (w160, 300m 8K) ran out of memory 14 min in, the
 # train step asking for one 40 GiB block after an eval and checkpoint (the 60-step A/Bs never ran a step after an eval).
+# "fproj" (speed, 2026-10-26): flash plus the attention projections' outputs (q, k, v, o), so the backward pass
+# recomputes the MLP matmuls but no projection; ~10 GB more than flash at 300m (32 x 4096 per device) against fdots'
+# ~29 GB. Under the async host loop the next step's buffers are allocated while the running step's are held, and
+# fdots' 37 GiB twice does not fit (w324); fproj's does.
 REMAT = os.environ.get("REMAT", "flash")
-if REMAT not in ("full", "flash", "none", "dots", "fdots"):
-    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots")
+if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj"):
+    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj")
 
 
 class _DotsCheckpointPolicy(ScanCheckpointPolicy):
@@ -150,6 +154,30 @@ class _DotsCheckpointPolicy(ScanCheckpointPolicy):
         return jax.checkpoint_policies.save_from_both_policies(
             jax.checkpoint_policies.save_only_these_names(carry_name, *(self.save_block_internals or ())),
             jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
+
+
+@dataclasses.dataclass(frozen=True)
+class _ProjCheckpointPolicy(ScanCheckpointPolicy):
+    """REMAT=fproj: REMAT=flash plus the outputs of the matmuls with no batch dimension that have no operand with the MLP
+    axis (size mlp_dim): the attention projections, not the MLP's gate, up and down."""
+
+    mlp_dim: int = 0
+
+    def _to_jax_policy(self, carry_name: str, input_name: str):
+        import jax
+        from jax._src.lax import lax as lax_internal
+
+        mlp_dim = self.mlp_dim
+
+        def projection_dots(prim, *avals, **params):
+            if prim is not lax_internal.dot_general_p:
+                return False
+            (_, _), (lhs_batch, _) = params["dimension_numbers"]
+            return not lhs_batch and all(mlp_dim not in a.shape for a in avals)
+
+        return jax.checkpoint_policies.save_from_both_policies(
+            jax.checkpoint_policies.save_only_these_names(carry_name, *(self.save_block_internals or ())),
+            projection_dots)
 # PROFILE=<start>:<steps> (speed, 2026-10-25): a JAX profiler trace of that many train steps from that step, kept locally under
 # logs/<run id>/profiler (perfetto trace too). Off by default; changes nothing else.
 PROFILE = os.environ.get("PROFILE", "")
@@ -751,6 +779,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy())
     elif REMAT == "fdots":
         model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
+    elif REMAT == "fproj":
+        model_extra = dict(model_extra, gradient_checkpointing=_ProjCheckpointPolicy(
+            save_block_internals=["flash_o", "flash_ell"], mlp_dim=s["inter"]))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
