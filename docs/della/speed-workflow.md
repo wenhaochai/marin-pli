@@ -8,6 +8,18 @@ Owner decision (10-24, via the terminal session): the vocab and pls studies keep
 below is switched on or A/B-tested; the findings go to the nanomarin session. Worktrees stay in
 `/scratch/gpfs/GROUP/USER/tmp/speed_wt/`. Every speed number is from an A40/A100 on a shared vis node or an estimate
 from logs, never an H100 measurement. Raw agent outputs: the workflow journal
+
+**Update 2026-10-25 (owner, via the marin.cpp session and a popup: 「应上尽上，尽可能快」, then 「全部都上」).** The 10-24
+decision is reversed: every candidate goes in after one H100 check. Branch `speed-all` (worktree
+`tmp/speed_wt/all`) = vocab-overfitting + the three branches above + the flash-block rule (largest divisor of
+SEQ_LEN <= 1024 and a multiple of 16) + REMAT=none + PROFILE=<start>:<steps> + the pls session's CE knobs and checkpoint
+deadline (LEVANTER_CKPT_DEADLINE = SLURM_JOB_END_TIME - 150 s in the launcher). H100 checks in wq at prio 10:
+w203/w204/w212 A/B (old checkout vs new arms, step time and per-step loss), w227/w228 CE time and determinism, w231
+per-family profile (scripts/della/speed_all/trace_families.py), w210 attention kernels (JAX flash, FA4, Pallas
+Triton, cuDNN packed). Live already: A1, the CE label term as a select (bitwise equal on H100 in the pls det round),
+on by default in the launcher since 0f2a3941b0. First H100 number (w202): 300m 128K at 4 GPUs 1.233 s/step with
+REMAT=flash and CUDA-graph loops, against 1.51-1.56 s on the old code in recent runs; per-GPU throughput is flat
+from 1 to 4 GPUs within 2% (130m 232-243K, 300m 106-108K tokens/s/GPU).
 (`~/.claude/projects/-home-USER/c574d901-7815-4be8-b851-ba33c8717449/subagents/workflows/wf_cb88f9ae-72b/journal.jsonl`).
 
 ## Measured baseline (logs, 4x H100)
