@@ -53,4 +53,13 @@ export LEVANTER_ASYNC_STEP=${LEVANTER_ASYNC_STEP:-1}
 # first 200 steps is 0.002 nats lower at 128K and 0.0013 at 8K, so runs that start after 2026-10-26 12:17 are not bitwise
 # comparable to earlier ones. -1.7% (128K) and -1.3% (8K) per step on top of the above.
 export LEVANTER_EMBED_GRAD_F32=${LEVANTER_EMBED_GRAD_F32:-1}
-echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL async_step=$LEVANTER_ASYNC_STEP embed_grad_f32=$LEVANTER_EMBED_GRAD_F32 ATTN_BACKEND=${ATTN_BACKEND:-code default: fa4thd at 130m/300m, fa4 above} REMAT=${REMAT:-flash (code default)}"
+# LEVANTER_NORM_GUARD=1e-3 (safety, owner popup 2026-10-26 ~13:07): the watch hook stops the run when the norm of a weight
+# that AdamH or MuonH keeps constant (lm_head, attention and MLP projections) moves by more than 0.1% between two watch
+# steps, so the job resumes from its last checkpoint. w158's update read a wrong lm_head norm at step 3171 (353.33 ->
+# 3.556, the step's loss value) and the run collapsed silently; healthy runs move these norms by ~1e-6 (375 runs). Same
+# step time with it on (w343: 516 ms), no false stop over 6 evaluations and 7 checkpoints.
+export LEVANTER_NORM_GUARD=${LEVANTER_NORM_GUARD:-1e-3}
+# REMAT has no knob here: its code default (della_muonh_qwen3_scaling.py, owner popup 2026-10-26 ~13:07) at 300m is fmlp
+# up to SEQ_LEN 4096 and fgate above it (flash plus the MLP's gate/up outputs saved: -2.1% at 128K, -3.3% at 8K, w339,
+# w340; fmlp runs out of memory at 5504, w341); other sizes keep flash.
+echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL async_step=$LEVANTER_ASYNC_STEP embed_grad_f32=$LEVANTER_EMBED_GRAD_F32 norm_guard=$LEVANTER_NORM_GUARD ATTN_BACKEND=${ATTN_BACKEND:-code default: fa4thd at 130m/300m, fa4 above} REMAT=${REMAT:-code default: fmlp at 300m to SEQ_LEN 4096, fgate above, flash at other sizes}"
