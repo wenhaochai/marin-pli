@@ -3,7 +3,9 @@
 Shape: B sequences (default 32, the per-device microbatch of the 300m runs), T tokens (default 4096), 12 heads, head_dim 64,
 bf16, causal attention inside documents (levanter's block_cross_document_attention: segment ids = cumsum of document
 starts, so each query sees the keys of its own document up to itself). Two document layouts: 'docs' (lengths drawn
-from a lognormal with mean ~1000 tokens, cut to the window) and 'one' (one document per row, plain causal).
+from a lognormal with mean ~1000 tokens, cut to the window) and 'one' (one document per row, plain causal); with LAYOUTS also
+'dense' (docs with row 0 cut into 24 documents) and 'overflow' (12 documents in every row: past fa4thd's bound, so its
+output must hold a NaN; nan_out reports it).
 Backends:
   jax_flash  levanter dot_product_attention, AttentionBackend.JAX_FLASH, block FLASH (default 1024): today's path
   fa4        levanter dot_product_attention, AttentionBackend.FA4_CUTE (branch speed-all)
@@ -40,6 +42,12 @@ print(json.dumps({"devices": [str(d) for d in jax.devices()], "jax": jax.__versi
 
 
 def segments(layout, rng):
+    if layout == "overflow":   # 12 equal documents in every row: 12 * B sequences, past fa4thd's default bound of 10 per row
+        return np.repeat((np.arange(T) * 12 // T)[None, :], B, axis=0).astype(np.int32)
+    if layout == "dense":   # the docs layout with row 0 cut into 24 documents (fineweb-edu rows hold at most 17)
+        seg = segments("docs", rng)
+        seg[0] = np.arange(T) * 24 // T
+        return seg
     if layout == "one":
         return np.zeros((B, T), np.int32)
     seg = np.zeros((B, T), np.int32)
@@ -145,7 +153,7 @@ for layout in LAYOUTS:
             for name, a, r in zip(("dq", "dk", "dv"), g, rg):
                 errs[name] = rel(a[:REF], r)
             print(json.dumps({"layout": layout, "backend": be, "fwd_ms": round(t_f, 2), "fwd_bwd_ms": round(t_fb, 2),
-                              "rel_err": {k2: float(f"{v2:.2e}") for k2, v2 in errs.items()}, "bitwise_rerun": det}), flush=True)
+                              "rel_err": {k2: float(f"{v2:.2e}") for k2, v2 in errs.items()}, "bitwise_rerun": det, "nan_out": bool(jnp.isnan(out).any())}), flush=True)
         except Exception as e:
             print(json.dumps({"layout": layout, "backend": be, "error": f"{type(e).__name__}: {str(e)[:300]}"}), flush=True)
             traceback.print_exc(file=sys.stderr)
