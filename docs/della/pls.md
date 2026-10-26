@@ -810,3 +810,9 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 
 - 上线前检查（控制会话 2026-10-26 提醒）：前向算梯度和 `REMAT=fdots` 都通过了短测试，却在真实 run 里出错；所以每个速度项上线前，测试要在训练中途做一次 eval 和 checkpoint，再继续训练（`SMOKE_MID=20`，4ab01211ab）。
 - 固定调优（`--xla_gpu_autotune_level=0`）不能让 run 可重复：两个相同对照（w292、w294）第 0 步就不同。
+
+## mHC 残差混合 = I（2026-10-26）
+
+- w76/w77 完成：独立头 3.026，probes 2.926，第 48 层代价 0.0999；Sinkhorn mHC 是 0.1016，相差 0.0017，在种子噪声（约 0.003）内。
+- 结论：mHC 的代价（约 0.10，与多数结构相同；HC 只有 0.048）不来自它的残差混合矩阵。HC 与 mHC 的差别要在其他部分找（读写权重的约束、归一化等）。
+- 站点：图 38 填入，图注改为陈述结果（pretrain-practice 68f0b46，artifact v107）。
