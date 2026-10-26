@@ -35,17 +35,16 @@ for K in (768, 512):
     forms = {
         "xla_dot_bf16": jax.jit(lambda x, w: jnp.dot(x, w)),
         "xla_dot_f32": jax.jit(lambda x, w: jnp.dot(x, w, preferred_element_type=jnp.float32)),
-        "triton_lse_prod": jax.jit(lambda x, w: lse_and_logits(
+        "triton_lse_prod": jax.jit(lambda x, w, labels=labels: lse_and_logits(
             x, w, labels, out_dtype=jnp.bfloat16, block_m=128, block_n=256, block_k=64, num_warps=8, num_stages=3,
             accurate_exp=False)),
     }
-    for tm, tn, steps, minor, width, wgd in itertools.product((128,), (128, 64), (4, 3), (hm.MatmulDimension.M, hm.MatmulDimension.N),
-                                                         (4, 8, 16), (hm.MatmulDimension.N, hm.MatmulDimension.M)):
+    dims = (hm.MatmulDimension.M, hm.MatmulDimension.N)
+    for tm, tn, steps, minor, width, wgd in itertools.product((128,), (128, 64), (4, 3), dims, (4, 8, 16), dims[::-1]):
         cfg = hm.TuningConfig(tile_m=tm, tile_n=tn, tile_k=64, max_concurrent_steps=steps, epi_tile_n=64, epi_tile_m=64,
                               grid_minor_dim=minor, grid_tile_width=width, wg_dimension=wgd)
         forms[f"pallas_mgpu_m{tm}_n{tn}_s{steps}_{minor}{width}_wg{wgd}"] = jax.jit(
             lambda x, w, cfg=cfg: hm.matmul(x, w, None, cfg))
-    ref = None
     for name, fn in forms.items():
         try:
             ms = bench(fn, x, w)
