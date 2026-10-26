@@ -35,6 +35,7 @@ from haliax.partitioning import ResourceAxis
 from haliax.quantization import QuantizationConfig
 from levanter.optim.model_averaging import EmaModelAveragingConfig
 from levanter.checkpoint import CheckpointerConfig
+from levanter.callbacks.profiler import ProfilerConfig, XprofUploadConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
 from levanter.models.qwen import Qwen3Config
@@ -75,6 +76,10 @@ if "della-proxy" in os.environ.get("https_proxy", ""):
 # (its kernel jaxpr is unavailable), so every run and resume segment re-sweeps: ~10 min at 1_2b before the first step.
 # Block sizes only change tiling, not the loss, so use the inferred sizes.
 os.environ.setdefault("LEVANTER_PALLAS_CE_AUTOTUNE_ON_MISS", "0")
+PROFILE = os.environ.get("PROFILE", "")
+# LOG_JAXPR=0 skips levanter's jaxpr / StableHLO text dumps of each program (minutes of host work with the GPUs idle);
+# the compiled programs are the same (speed work 2026-10-24).
+LOG_JAXPR = os.environ.get("LOG_JAXPR", "1") == "1"
 
 VERSION = "2026.09.13"
 # NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the
@@ -498,9 +503,14 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 quantization=QuantizationConfig(fp8=True) if PRECISION == "fp8" else None,
                 train_batch_size=s["batch"],
                 per_device_parallelism=pdp,  # PDP=<n>: microbatch per device
+                # EVAL_PDP=<n>: eval sequences per device (default -1: the train microbatch). The microbatch-1 designs
+                # evaluate in fewer, larger batches at 4; zero-weight padding keeps the evaluated tokens the same (speed work 2026-10-24).
+                per_device_eval_parallelism=int(os.environ.get("EVAL_PDP", "-1")),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
-                max_eval_batches=1 if SMOKE_STEPS else None,
+                # SMOKE_EVAL_BATCHES=<n>: a smoke evaluates n batches instead of 1 (an A/B of EVAL_PDP sets n so both arms
+                # see the same sequences).
+                max_eval_batches=int(os.environ.get("SMOKE_EVAL_BATCHES", "1")) if SMOKE_STEPS else None,
                 checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
@@ -515,6 +525,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 seed=SEED,
                 model_averaging=EmaModelAveragingConfig(beta=EMA_BETA) if EMA_BETA > 0 else None,
                 allow_nondivisible_batch_size=True,
+                log_jaxprs=LOG_JAXPR,
+                log_xla_hlo=LOG_JAXPR,
+                # PROFILE="<start>:<steps>" traces those train steps with jax.profiler into <log_dir>/<run id>/profiler (kept
+                # local); measurement only, the run's math is unchanged (speed work, owner 2026-10-24).
+                **({"profiler": ProfilerConfig(enabled=True, start_step=int(PROFILE.split(":")[0]), num_steps=int(PROFILE.split(":")[1]),
+                                               upload=XprofUploadConfig(enabled=False))} if PROFILE else {}),
             ),
             train_seq_len=SEQ_LEN,
             initialize_model_from_checkpoint_path=HEADS_FROM,

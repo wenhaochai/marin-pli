@@ -6,6 +6,7 @@ from __future__ import annotations
 from functools import partial
 from typing import NamedTuple, Optional
 
+import os
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Int
@@ -600,7 +601,13 @@ def _backward_b_tiled_from_lse(
         safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
         row_indices = jnp.arange(b_block_size, dtype=jnp.int32)
         label_grad = jnp.where(valid_rows, -g_loss_block, 0.0)
-        dlogits = dlogits.at[row_indices, safe_labels].add(label_grad)
+        if os.environ.get("LEVANTER_CE_BTILED_ONEHOT", "0") == "1":
+            # The same add on the label entry as a select: no scatter, so XLA can fuse exp, mul, the label term and the
+            # bf16 convert into one kernel instead of writing and re-reading the f32 dlogits (speed work, 2026-10-24).
+            hit = jnp.arange(v_dim, dtype=jnp.int32)[None, :] == safe_labels[:, None]
+            dlogits = jnp.where(hit, dlogits + label_grad[:, None], dlogits)
+        else:
+            dlogits = dlogits.at[row_indices, safe_labels].add(label_grad)
 
         if logit_soft_cap is not None:
             cap = jnp.asarray(logit_soft_cap, dtype=jnp.float32)
