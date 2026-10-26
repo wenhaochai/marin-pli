@@ -770,3 +770,16 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 - 离线 H100 编译（`tmp/pls_speed/ce_hlo.py`）：每个 8192 行块，现在约 36 GB 流量、4 个 logits 大小的矩阵乘；A1 约 19 GB；A1 加前向算梯度约 19 GB、3 个矩阵乘。xla 路径（microbatch 1）的 select 去掉每个词表块的 scatter 一遍。
 - 一次读完 logits 的在线 logsumexp（XLA 的 variadic reduce）：CPU 上对 float64 真值的相对误差 1.4e-5，两遍法 5.9e-8；不上线。要无损地把 lse 并进矩阵乘需要 Triton kernel；Tokenizer Size session 不需要，pls 只有换新组合时才用得上。
 - Tokenizer Size session 的结果（它的 300m，宽度 768）：FA4 attention 加 CUDA graph 循环每步快 50%（4096）到 77%（4480），结果在 bf16 噪声内但不逐位；它已用作默认。pls 已移植 FA4（`ATTN_BACKEND=fa4`，run tag -fa4，0ac7a45464）和 CUDA graph 循环（`XLA_CMD_BUFFER_WHILE=1`，38c771313a），都默认关；测速在排队（w237、w238、w242–w244）。
+
+## MuonH 更新效率：不是 HC 代价低的原因（2026-10-26，`scripts/della/pls_muon_eff.py`，vis1 CPU，1×1024 token）
+
+- 问题：MuonH 对每个矩阵用 polar(梯度) 定方向，步长与梯度大小无关。独立头的更新方向是 polar(g_fin + g_int)。它让最后一层损失下降多少，相对于只看最后一层的最佳方向 polar(g_fin)？HC 的代价低，是不是因为它的这个比例更高？
+- 量：η = Σ_W |W| ⟨g_fin, polar(g_sep)⟩/|polar| ÷ Σ_W |W| ⟨g_fin, polar(g_fin)⟩/|polar|，对所有 Linear 权重（MuonH 更新的参数）求和；1 表示没有损失。一阶近似，在训练结束的独立头检查点上测。
+
+  | 检查点 | 代价 | η | 第 1–12 层 | 13–24 | 25–36 | 37–48 |
+  |---|---|---|---|---|---|---|
+  | Pre-LN 48 层 | 0.089 | 0.966 | 0.961 | 0.979 | 0.992 | 0.998 |
+  | HC 48 层 | 0.048 | 0.954 | 0.937 | 0.976 | 0.993 | 0.998 |
+
+- 结果：两者每步只损失 3–5% 的最后一层下降，损失集中在下层；HC 的 η 反而更低。“HC 的更新浪费得少”不成立。到此排除的解释：梯度方向（偏角）、读出看不到的状态（隐藏份额）、MuonH 的更新效率。剩下：多条流本身或门控（w194–w197，Fig 43）。
+- 注意：都在终点检查点上测；一阶近似；1024 个 token。
