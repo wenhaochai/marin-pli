@@ -80,11 +80,31 @@ for V in (8256, 32256, 128256):
         loss, (gx, gw) = jax.value_and_grad(f, argnums=(0, 1))(x, w)
         return loss, gx, gw
 
+    def unnorm(x, w):
+        """The CE backward from unnormalized probabilities P = bf16(exp(z)) (offset c = 0; speed doc idea, 2026-10-26):
+        cuBLAS-shaped GEMMs on P with the row factor a = g exp(-lse) on the other side and the label terms apart."""
+        losses, gxs, gw = [], [], jnp.zeros((H, V), jnp.float32)
+        for i in range(B // BLK):
+            xb, lab = x[i * BLK:(i + 1) * BLK], labels[i * BLK:(i + 1) * BLK]
+            z = jnp.dot(xb, w, preferred_element_type=jnp.float32)
+            p = jnp.exp(z).astype(jnp.bfloat16)
+            lse = jnp.log(jnp.sum(jnp.exp(z), axis=1))
+            losses.append(lse - z[jnp.arange(BLK), lab])
+            g = jnp.full((BLK,), 1.0 / B, jnp.float32)
+            a = g * jnp.exp(-lse)
+            wl = jnp.take(w, lab, axis=1).T.astype(jnp.float32)   # [BLK, H]: each row's label column
+            gx = a[:, None] * jnp.dot(p, w.T, preferred_element_type=jnp.float32) - g[:, None] * wl
+            gw_b = jnp.dot((a[:, None] * xb.astype(jnp.float32)).astype(jnp.bfloat16).T, p, preferred_element_type=jnp.float32)
+            gw_b = gw_b.at[:, lab].add(-(g[:, None] * xb.astype(jnp.float32)).T)
+            gxs.append(gx); gw = gw + gw_b
+        return jnp.mean(jnp.concatenate(losses)), jnp.concatenate(gxs), gw
+
     paths = {
         "default": jax.jit(default_path),
         "gif_kern": gif({"LEVANTER_CE_LSE_KERNEL": "1", "LEVANTER_CE_BTILED_ONEHOT": "1"}),
         "gif_bf16": gif({"LEVANTER_CE_LSE_KERNEL": "0", "LEVANTER_CE_BTILED_ONEHOT": "1"}),
         "gif_f32": gif({"LEVANTER_CE_LSE_KERNEL": "1", "LEVANTER_CE_BTILED_ONEHOT": "1", "LEVANTER_CE_BTILED_F32_LOGITS": "1"}),
+        "unnorm": jax.jit(unnorm),
     }
     for name, fn in paths.items():
         try:
