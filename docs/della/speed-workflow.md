@@ -222,6 +222,17 @@ instead of FSDP (MESH=dp) and XLA dynamic-slice fusion (w398), the f32 grad_w GE
 (LEVANTER_CE_GRADW_F32, asked by pls; w403), XLA's DUS-accumulator zero-init elimination, programmatic dependent launch
 and NCCL user buffers (w408), and the three CE items together past full evals and checkpoints (w405-w407).
 
+**Idea, not built: the CE backward from unnormalized probabilities (2026-10-26 17:10).** At 128K a GIF block (8192
+rows) is the lse kernel 3.5 ms, the dlogits pass 1.5 ms (read the bf16 logits, write the bf16 dlogits), two gradient
+GEMMs 2.1 ms each and the f32 grad_w add 0.3 ms. If the lse kernel's epilogue stored P = bf16(exp(z - c)) for a fixed
+per-row offset c instead of bf16(z), and summed exp(z - c) for the logsumexp, the gradients would be plain cuBLAS GEMMs
+on P with the row factor a_r = g_r exp(c - lse_r) moved onto the other side: grad_x = diag(a) (P W^T) - g_r W[label_r],
+grad_w = (diag(a) x)^T P - g_r x_r added at column label_r. The dlogits pass goes away (~25 ms of the 496 ms step), and
+the stored probability carries bf16's 2^-9 relative error instead of exp of a bf16-rounded logit (an absolute error
+|z| 2^-9 in the exponent), the reason bf16 logits double the gradient error (w409/w414). Open: c = 0 needs every logit
+below ~88 and the row maximum above ~-87 (a guard with lax.cond back to the current path), and the label terms are a
+strided gather and scatter on the [H, V] layout (~0.2 ms per block each, measured for the gather in w379).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
