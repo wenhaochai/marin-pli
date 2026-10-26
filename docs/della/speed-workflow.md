@@ -165,6 +165,15 @@ async loop 515.4 (-7.7% from live); 8K 437.6 -> 431.8 (-1.3%), with async 402.9 
 loss over the first 200 steps is 0.002 nats lower at 128K and 0.0013 at 8K (async alone: 0.0001-0.0003 either way).
 Figure: tmp_plots/vocab/flip/speed_async.png.
 
+**Adopted (owner popup 2026-10-26 ~12:15).** "设为默认" for the async host loop with the host-path fixes, "改，不重跑" for the
+f32 embedding gradient: both default in scripts/della/speed_env.sh (LEVANTER_ASYNC_STEP=1, LEVANTER_EMBED_GRAD_F32=1;
+merge cc5727a36c into vocab-overfitting, aaed00bef7), for every job that starts after 12:17; check_plans passes on the
+queued plans. Runs that started earlier (w156-w158) keep the old code. The f32 gradient changes numerics, so a run that
+starts after 12:17 is not bitwise comparable to one before (~0.002 nats lower train loss early); the owner chose no
+baseline reruns. Not adopted: REMAT=fdots and the cuda_async allocator (out of memory beside the async loop at 128K),
+REMAT=fproj (no gain), the XLA dot merger (slower), the lse kernel in evaluation (~0.6% of a run; its numerics were not
+checked on one checkpoint). Told the pls and terminal sessions.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
