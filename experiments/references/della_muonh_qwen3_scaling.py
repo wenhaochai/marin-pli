@@ -168,6 +168,11 @@ if ATTN_BACKEND not in ("jax_flash", "fa4", "fa4thd"):
     raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4 | fa4thd")
 BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
+# SMOKE_EVAL_EVERY / SMOKE_CKPT_SECONDS (speed checks, 2026-10-26): a smoke that also evaluates every that many steps and
+# saves its temporary checkpoint every that many seconds, so train steps run after an eval and a checkpoint (w160: a
+# change that passed a 60-step smoke ran out of memory after its first eval). Smoke runs only; 0 = off.
+SMOKE_EVAL_EVERY = int(os.environ.get("SMOKE_EVAL_EVERY", "0"))
+SMOKE_CKPT_SECONDS = int(os.environ.get("SMOKE_CKPT_SECONDS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
@@ -883,7 +888,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 train_batch_size=s["batch"],
                 per_device_parallelism=PDP or PER_DEVICE_PARALLELISM.get(size, -1),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
-                steps_per_eval=SMOKE_STEPS or eval_every,
+                steps_per_eval=(SMOKE_EVAL_EVERY or SMOKE_STEPS) if SMOKE_STEPS else eval_every,
                 max_eval_batches=1 if SMOKE_STEPS else None,
                 # OV checkpoints carry the n-gram tables with their Adam state (79 GB at 300m, 112 GB at 520m, ~227 GB at
                 # 1_2b), so OV variants (a) keep no step-interval checkpoints (the GROUP fileset was 96% full on
@@ -891,7 +896,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # to host (300m ov: ~70 s per save, ~11% of wall-clock at the 10-minute interval). The final checkpoint is
                 # unchanged and training is unaffected; a killed job loses at most an hour.
                 checkpointer=CheckpointerConfig(
-                    save_interval=timedelta(minutes=60 if VARIANT in OV_VARIANTS else 10),
+                    save_interval=timedelta(seconds=SMOKE_CKPT_SECONDS) if SMOKE_STEPS and SMOKE_CKPT_SECONDS else timedelta(minutes=60 if VARIANT in OV_VARIANTS else 10),
                     # TPP != 20 (owner, 2026-10-11): no step-interval checkpoints either (~40 GB at TPP=200 otherwise);
                     # the final and the temporary (resume) checkpoints stay
                     keep=[] if VARIANT in OV_VARIANTS or TPP != 20 else [dict(every=10000)],

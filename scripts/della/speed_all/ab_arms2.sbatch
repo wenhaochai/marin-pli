@@ -27,6 +27,8 @@
 #   nowpipe2 = nowpipe with while-loop double buffering
 #   nowlse  = now with LEVANTER_CE_LSE_KERNEL=1 (the Triton logits + logsumexp kernel in the GIF block)
 #   nowthd  = now with ATTN_BACKEND=fa4thd (upstream FA4 varlen kernels, native SM90)
+#   live    = the live defaults since 2026-10-26 05:41 (fa4thd, REMAT=flash, CE A1 + GIF + lse kernel, cb); configs
+#             4096post / 5504post run 80 steps with an eval every 20 and a checkpoint every 20 s
 #   full    = the defaults since 2026-10-26 05:40 (fa4thd, REMAT=fdots, CE A1 + GIF + lse kernel, cb); fullnocb = full with
 #             XLA's default command buffers (no while/conditional capture)
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
@@ -47,12 +49,14 @@ export MARIN_PREFIX=/scratch/gpfs/GROUP/USER/marin_store_big
 export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
-unset VARIANT DATA_EPOCHS PASS_DATA TOTAL_STEPS INIT_FROM SEED BATCH PDP NUM_GPUS TIE PRECISION XLA_FLAGS ATTN_BACKEND REMAT
+unset VARIANT DATA_EPOCHS PASS_DATA TOTAL_STEPS INIT_FROM SEED BATCH PDP NUM_GPUS TIE PRECISION XLA_FLAGS ATTN_BACKEND REMAT SMOKE_EVAL_EVERY SMOKE_CKPT_SECONDS
 export NUM_GPUS=2 PDP=32   # the 2-GPU copy: 32 sequences per device per microbatch as on 4 GPUs (2 microbatches); per-GPU throughput matches 4 GPUs within 2% (w202)
 case $CFG in
   4096) export SIZE=300m SEQ_LEN=4096; unset VOCAB_K ;;
   4480) export SIZE=300m SEQ_LEN=4480 VOCAB_K=32000 ;;
   5504) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 ;;   # charwin v8k (w138)
+  4096post) export SIZE=300m SEQ_LEN=4096 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20; unset VOCAB_K ;;   # train steps after evals and checkpoints
+  5504post) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 ;;
   4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
@@ -88,6 +92,7 @@ for ARM in "${ARMS[@]}"; do
     nowpipe) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE" ;;
     nowpipe2) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE --xla_gpu_enable_while_loop_double_buffering=true" ;;
     nowthd) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
+    live) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # the live defaults since 2026-10-26 05:41
     full) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;
     fullnocb) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
