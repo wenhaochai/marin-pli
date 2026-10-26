@@ -70,7 +70,7 @@ nvidia-smi -L
 fail=0
 declare -A RID
 for ARM in "${ARMS[@]}"; do
-  if [ $ARM = old ]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old = the main checkout; every other arm = speed-all
+  if [ $ARM = old ] || [[ $ARM == main* ]]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old and main* = the main checkout; every other arm = this worktree
   unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP XLA_PYTHON_CLIENT_ALLOCATOR
   export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   export ATTN_BACKEND=fa4   # an arm that names no backend keeps the segmented FA4 kernel (the code default at 300m is fa4thd since 2026-10-26)
@@ -96,6 +96,7 @@ for ARM in "${ARMS[@]}"; do
     nowpipe2) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE --xla_gpu_enable_while_loop_double_buffering=true" ;;
     nowthd) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
     live) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # the live defaults since 2026-10-26 05:41
+    mainlive) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # live flags on the main checkout (without this branch's host fixes)
     liveasync) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="$CB" ;;   # live with the async host loop
     livefdots) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # live with fdots (w160 ran out of memory)
     livedm) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB --xla_gpu_dot_merger_threshold_mb=4096 --xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/speed_wt/profiles/dm-$JID --xla_dump_hlo_module_re=jit__train_step" ;;   # XLA merges dots that share an operand (q/k/v, gate/up) up to 4 GiB

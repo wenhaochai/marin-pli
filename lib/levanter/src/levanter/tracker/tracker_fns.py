@@ -70,6 +70,11 @@ def log(metrics: typing.Mapping[str, LoggableValue | Any], *, step: Optional[int
         jit_log(metrics, step=step)
     else:
         # TODO: do we need to coerce to np here?
+        # Start every array's device-to-host copy before a tracker reads one: the trackers' per-scalar .item() otherwise
+        # waits for one copy at a time (about 120 scalars a step at 0.14 ms each, all between two train steps).
+        for leaf in jax.tree.leaves(metrics):
+            if isinstance(leaf, jax.Array) and leaf.is_fully_addressable:
+                leaf.copy_to_host_async()
         tracker.log(metrics, step=step, commit=commit)
 
 
