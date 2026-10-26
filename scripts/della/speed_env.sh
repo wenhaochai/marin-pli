@@ -1,0 +1,35 @@
+# Speed settings of the 300m runs (sourced by muonh_qwen3_h100x4.sbatch and the smokes, 2026-10-26), so a smoke runs the
+# main run's code paths: until now the smokes ran python without these, so a smoke could pass while the main run crashed
+# (the GIF fallback bug). Each knob keeps an environment override; 0 gives the old path.
+
+# XLA_CMD_BUFFER_WHILE=1 (speed, 2026-10-24; default 1 since 2026-10-26 after the H100 A/B w203/w204, 0 = the old launch):
+# XLA also captures while/conditional loops in CUDA graphs. The JAX_FLASH inner causal loops have data-dependent trip
+# counts; without this each iteration copies its predicate to the host and relaunches its kernels (~55 us per iteration in
+# the charwin logs: 20K-34K iterations per step at flash block 128). Same kernels in the same order, so the same math. The
+# NCCL watchdog flag is repeated here because marin's training env adds it only when XLA_FLAGS is unset
+# (os.environ.setdefault), so the job keeps it.
+if [ "${XLA_CMD_BUFFER_WHILE:-1}" = 1 ]; then
+  case " ${XLA_FLAGS:-} " in *xla_gpu_nccl_termination_timeout_seconds*) ;; *) XLA_FLAGS="${XLA_FLAGS:-} --xla_gpu_nccl_termination_timeout_seconds=600" ;; esac
+  case " ${XLA_FLAGS} " in *xla_gpu_enable_command_buffer*) ;; *) XLA_FLAGS="${XLA_FLAGS} --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL" ;; esac
+  export XLA_FLAGS
+  echo "XLA_CMD_BUFFER_WHILE=1: XLA_FLAGS=$XLA_FLAGS"
+fi
+# LEVANTER_CKPT_DEADLINE (speed, 2026-10-25; levanter commit from the pls session): one temporary checkpoint 150 s before
+# this job's end, SLURM_JOB_END_TIME (Slurm's own, or the host's end for a wq guest), so a resumable run that the end stops
+# redoes almost no work on resume. No end time: no effect.
+if [ -n "${SLURM_JOB_END_TIME:-}" ]; then
+  export LEVANTER_CKPT_DEADLINE=$((SLURM_JOB_END_TIME - 150))
+  echo "LEVANTER_CKPT_DEADLINE=$LEVANTER_CKPT_DEADLINE ($(date -d @$LEVANTER_CKPT_DEADLINE +%F' '%T))"
+fi
+# LEVANTER_CE_BTILED_ONEHOT=1 (speed, 2026-10-25; the pls session's CE commit, bitwise equal to the scatter on H100 in its
+# deterministic A/B): the cross-entropy label term as a select instead of a scatter, so XLA fuses the dlogits pass. The
+# same additions on the same values: every run's numbers are unchanged.
+export LEVANTER_CE_BTILED_ONEHOT=${LEVANTER_CE_BTILED_ONEHOT:-1}
+# LEVANTER_CE_GRAD_IN_FWD=1 (speed, 2026-10-26; the pls session's CE commit): the fused cross-entropy computes its
+# gradients in the forward from the same logits GEMM per block (3 logits GEMMs instead of 4). Not bitwise: H100 det round
+# w245 at 300m 128K gives per-step loss within 1.9e-6 of the base over 58 steps, far inside the run-to-run spread of
+# GEMM autotuning (pls w205 vs w229: 0.076). -4.7% step time on top of A1 under FA4 (w227). Off from 02:51 to 04:20 on
+# 2026-10-26: its fallback crashed under shard_map for shards off the b-tiled path (every vocabulary below 65536). The pls
+# fix (6935700283) runs those shards through the ordinary fused CE; H100 det check w256 at 8K: bitwise equal to GIF off.
+export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-1}
+echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD ATTN_BACKEND=${ATTN_BACKEND:-fa4 (code default)} REMAT=${REMAT:-flash (code default)}"
