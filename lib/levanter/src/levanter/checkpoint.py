@@ -596,6 +596,13 @@ class Checkpointer:
         # saves a checkpoint for the next step, etc. This leads to partial checkpoints, no good.
         # we fix by having process 0 make the decision
         checkpoint_requested = self._consume_checkpoint_request()
+        # LEVANTER_CKPT_DEADLINE=<epoch seconds>: save one (temporary) checkpoint at the first step at or after it, so a run
+        # that its job's time limit stops soon after redoes almost no work on resume (speed work, owner 2026-10-25).
+        deadline = os.environ.get("LEVANTER_CKPT_DEADLINE")
+        if deadline and not getattr(self, "_deadline_saved", False) and time.time() >= float(deadline):
+            self._deadline_saved = True
+            checkpoint_requested = True
+            logger.info(f"Checkpoint deadline {deadline} reached at step {step}.")
         my_should_save = force or checkpoint_requested
         my_save_permanent_ckpt = force
 
