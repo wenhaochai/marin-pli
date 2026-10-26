@@ -8,6 +8,7 @@ Owner decision (10-24, via the terminal session): the vocab and pls studies keep
 below is switched on or A/B-tested; the findings go to the nanomarin session. Worktrees stay in
 `/scratch/gpfs/GROUP/USER/tmp/speed_wt/`. Every speed number is from an A40/A100 on a shared vis node or an estimate
 from logs, never an H100 measurement. Raw agent outputs: the workflow journal
+(`~/.claude/projects/-home-USER/c574d901-7815-4be8-b851-ba33c8717449/subagents/workflows/wf_cb88f9ae-72b/journal.jsonl`).
 
 **Update 2026-10-25 (owner, via the marin.cpp session and a popup: 「应上尽上，尽可能快」, then 「全部都上」).** The 10-24
 decision is reversed: every candidate goes in after one H100 check. Branch `speed-all` (worktree
@@ -20,7 +21,6 @@ Triton, cuDNN packed). Live already: A1, the CE label term as a select (bitwise 
 on by default in the launcher since 0f2a3941b0. First H100 number (w202): 300m 128K at 4 GPUs 1.233 s/step with
 REMAT=flash and CUDA-graph loops, against 1.51-1.56 s on the old code in recent runs; per-GPU throughput is flat
 from 1 to 4 GPUs within 2% (130m 232-243K, 300m 106-108K tokens/s/GPU).
-(`~/.claude/projects/-home-USER/c574d901-7815-4be8-b851-ba33c8717449/subagents/workflows/wf_cb88f9ae-72b/journal.jsonl`).
 
 ## Measured baseline (logs, 4x H100)
 
