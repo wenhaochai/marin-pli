@@ -446,7 +446,7 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
 脚本：`scripts/della/pls_opt_effective.py`（CPU，构建真实的优化器类，常数取自 -vs-d48-g4 run 的 W&B config）和
 `docs/della/pls_archive/blog/opt_clip_groups.py`（读本地 W&B 文件里每 10 步记录的原始梯度范数）。
 
-1. weight_decay = 0.1 写在 config 里，但没有任何组用到它：0.1 和 0.0 的一步更新逐位相同。车主弹窗 2026-10-26（TREC 会话提出）：只在启动脚本加注释，值保留，W&B config 不变（e284dfec16）。
+1. weight_decay = 0.1 写在 config 里，但没有任何组用到它：0.1 和 0.0 的一步更新逐位相同。用户弹窗 2026-10-26（TREC 会话提出）：只在启动脚本加注释，值保留，W&B config 不变（e284dfec16）。
 2. AdamH 组（lm_head 和全部探针/独立头）用 MuonH 的学习率 0.02，不用 adam_lr 0.008。Adam 组（embedding、所有 norm
    增益、探针 norm）和 adam_new（HC/AttnRes 的路由参数）用 adam_lr。48 层：不 warmup，前 20% 恒定，后 80% 线性降到 0。
 3. 每组按自己的全局范数裁剪（阈值 1.0）。探针和 lm_head 同在 AdamH 组，探针 norm 和最终 norm 同在 Adam 组。
