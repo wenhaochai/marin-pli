@@ -714,8 +714,14 @@ def _full_vocab_b_tiled_forward_with_grads(
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
     grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32)
     grad_w_init = jnp.zeros((h_dim, v_dim), dtype=jnp.float32)
+    # LEVANTER_CE_BTILED_F32_LOGITS=1 (speed test, 2026-10-26): the backward reads the GEMM's f32 logits instead of their
+    # bf16 rounding (so no lse kernel, whose logits are bf16). Below 65536 entries the v-tiled path's bf16 dot feeds an
+    # f32 convert that XLA computes in f32 (excess precision); this keeps that precision for a small vocabulary moved
+    # onto this path by LEVANTER_CE_BTILED_MIN_VOCAB.
+    f32_logits = os.environ.get("LEVANTER_CE_BTILED_F32_LOGITS", "0") == "1"
     use_kernel = (
         os.environ.get("LEVANTER_CE_LSE_KERNEL", "0") == "1"
+        and not f32_logits
         and x.dtype == jnp.bfloat16
         and w.dtype == jnp.bfloat16
         and logit_soft_cap is None
@@ -764,7 +770,9 @@ def _full_vocab_b_tiled_forward_with_grads(
 
             # backward: _backward_b_tiled_from_lse's body on the same GEMM (its logits are the GEMM's bf16 output)
             # the bf16 rounding as reduce_precision: XLA may drop an f32 -> bf16 -> f32 convert pair (excess precision)
-            if x.dtype == jnp.bfloat16:
+            if f32_logits:
+                logits_raw = logits_f32
+            elif x.dtype == jnp.bfloat16:
                 logits_raw = jax.lax.reduce_precision(logits_f32, exponent_bits=8, mantissa_bits=7)
             else:
                 logits_raw = logits_f32.astype(x.dtype).astype(jnp.float32)
