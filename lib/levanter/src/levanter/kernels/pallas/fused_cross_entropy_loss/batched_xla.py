@@ -337,6 +337,19 @@ def _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
 
     loss_init = jnp.zeros((b_pad,), dtype=out_dtype)
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
+    # LEVANTER_CE_LSE_KERNEL_EVAL=1 (speed, 2026-10-26; the Tokenizer Size session's c6886d9b2b): this forward-only path
+    # (evaluation's per-token losses) uses the training path's lse kernel too (v3 with LEVANTER_CE_LSE_MGPU=1); its
+    # logsumexp and label logit come from the same f32 GEMM accumulators, so the loss differs only by the GEMM's and the
+    # lse merge's summation order (the kernel's bf16 logits are not used here).
+    use_kernel = (
+        os.environ.get("LEVANTER_CE_LSE_KERNEL_EVAL", "0") == "1"
+        and v_dim >= _LARGE_VOCAB_THRESHOLD
+        and x.dtype == jnp.bfloat16
+        and w.dtype == jnp.bfloat16
+        and logit_soft_cap is None
+        and (dtype is None or jnp.dtype(dtype) == jnp.float32)
+        and h_dim % 64 == 0
+    )
 
     def body(block_index, state):
         loss, lse = state
@@ -346,16 +359,20 @@ def _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
 
         valid_rows = labels_block >= 0
         safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
-        reference_out = linear_softmax_cross_entropy_loss_reference(
-            x_block,
-            safe_labels,
-            w,
-            dtype=dtype,
-            logit_soft_cap=logit_soft_cap,
-            precision=precision,
-        )
-        loss_block = reference_out[0]
-        lse_block = reference_out[1]
+        if use_kernel:
+            _, lse_block, label_logits = _lse_kernel(x_block, w, safe_labels)
+            loss_block = lse_block - label_logits
+        else:
+            reference_out = linear_softmax_cross_entropy_loss_reference(
+                x_block,
+                safe_labels,
+                w,
+                dtype=dtype,
+                logit_soft_cap=logit_soft_cap,
+                precision=precision,
+            )
+            loss_block = reference_out[0]
+            lse_block = reference_out[1]
 
         loss_block = jnp.where(valid_rows, loss_block, 0.0).astype(out_dtype)
         lse_block = jnp.where(valid_rows, lse_block, 0.0).astype(out_dtype)
@@ -647,6 +664,13 @@ def _backward_b_tiled_from_lse(
     return grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
+def _lse_mgpu_supported(m: int, k: int, n: int) -> bool:
+    """Whether lse kernel v3 (lse_logits_mgpu.py) takes an [m, k] x [k, n] block (imported here: Mosaic GPU only)."""
+    from .lse_logits_mgpu import supported
+
+    return supported(m, k, n)
+
+
 def _lse_kernel(x_block: jax.Array, w: jax.Array, labels: jax.Array):
     """bf16 logits, f32 logsumexp and f32 label logits of one block from the Triton kernel (imported here: jax_triton
     resets TRITON_CACHE_DIR at import, so default runs never import it). Config: the fastest at all four benchmarked
@@ -714,6 +738,65 @@ def _full_vocab_b_tiled_forward_with_grads(
         and (dtype is None or jnp.dtype(dtype) == jnp.float32)
         and h_dim % 64 == 0
     )
+    # LEVANTER_CE_UNNORM=2 (speed, 2026-10-26; the Tokenizer Size session's f7c00c17e2 and 1bf8f97776 as in c6886d9b2b,
+    # merged here with need_grad_x): lse kernel v3 stores P = exp(z - z_label) (lse_logits_mgpu.probs_and_sum_mgpu, the
+    # shifted logits clamped at 60) and the gradients are GEMMs on P with the row factor g / S outside them, S the row sum
+    # of P: dlogits = g (P / S - onehot). No pass turns logits into dlogits, and P carries bf16's relative rounding of a
+    # probability instead of exp of a bf16-rounded logit. The label terms are added apart in f32: -g w_label to grad_x, and
+    # -g x into a [V, H] f32 sum of label rows that is subtracted from grad_w after the loop (its w422 prototype: gradient
+    # error 2.0e-4 / 2.8e-4 at 128K against 3.2e-3 / 3.6e-3 for the path below). LEVANTER_CE_UNNORM=1 folds the label
+    # term into P instead (1 - S at the label, rounded to bf16). Without need_grad_x neither the P @ W^T GEMM nor the
+    # -g w_label term runs. Padded rows (label -1, x 0) give P = 1 and S = V, and their factor and label term are 0.
+    use_unnorm = (
+        os.environ.get("LEVANTER_CE_UNNORM", "0") in ("1", "2")
+        and use_kernel
+        and _lse_mgpu_supported(b_block_size, h_dim, v_dim)
+    )
+    unnorm_fold = os.environ.get("LEVANTER_CE_UNNORM", "0") == "1"
+    gradw_type = jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None
+
+    def unnorm_body(block_index, state):
+        from .lse_logits_mgpu import probs_and_sum_mgpu
+
+        loss, lse, grad_x, grad_w, *label_acc = state
+        b_start = block_index * b_block_size
+        x_block = jax.lax.dynamic_slice(x_pad, (b_start, 0), (b_block_size, h_dim))
+        labels_block = jax.lax.dynamic_slice(labels_pad, (b_start,), (b_block_size,))
+        g_loss_block = jax.lax.dynamic_slice(g_loss_pad, (b_start,), (b_block_size,)).astype(jnp.float32)
+        valid_rows = labels_block >= 0
+        safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
+
+        w_label = jnp.take(w, safe_labels, axis=1)   # [H, B]: each row's label column
+        label_logits = jnp.sum(x_block.astype(jnp.float32) * w_label.T.astype(jnp.float32), axis=1)
+        probs, row_sum, _ = probs_and_sum_mgpu(x_block, w, label_logits)
+        log_sum = jnp.log(row_sum)   # the loss: logsumexp - label logit
+        loss = jax.lax.dynamic_update_slice(loss, jnp.where(valid_rows, log_sum, 0.0).astype(out_dtype), (b_start,))
+        lse = jax.lax.dynamic_update_slice(lse, jnp.where(valid_rows, label_logits + log_sum, 0.0).astype(out_dtype), (b_start,))
+
+        row_indices = jnp.arange(b_block_size, dtype=jnp.int32)
+        if unnorm_fold:
+            probs = probs.at[row_indices, safe_labels].set((1.0 - row_sum).astype(probs.dtype))
+        factor = jnp.where(valid_rows, g_loss_block / row_sum, 0.0)
+        g_valid = jnp.where(valid_rows, g_loss_block, 0.0)
+        if need_grad_x:
+            grad_x_block = factor[:, None] * jax.lax.dot_general(
+                probs, w, (((1,), (1,)), ((), ())), precision=precision, preferred_element_type=jnp.float32
+            )
+            if not unnorm_fold:
+                grad_x_block = grad_x_block - g_valid[:, None] * w_label.T.astype(jnp.float32)
+            grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
+        grad_w_block = jax.lax.dot_general(
+            (factor[:, None] * x_block.astype(jnp.float32)).astype(x.dtype),
+            probs,
+            (((0,), (0,)), ((), ())),
+            precision=precision,
+            preferred_element_type=gradw_type,
+        ).astype(jnp.float32)
+        if not unnorm_fold:
+            # each label's g x as a row of a [V, H] f32 sum (contiguous rows, like the input-embedding gradient; a
+            # column scatter into grad_w would touch one element per cache line), subtracted from grad_w after the loop
+            label_acc = [label_acc[0].at[safe_labels].add(g_valid[:, None] * x_block.astype(jnp.float32))]
+        return (loss, lse, grad_x, grad_w + grad_w_block, *label_acc)
 
     def body(block_index, state):
         loss, lse, grad_x, grad_w = state
@@ -800,9 +883,14 @@ def _full_vocab_b_tiled_forward_with_grads(
         grad_w = grad_w + grad_w_block
         return loss, lse, grad_x, grad_w
 
-    loss, lse, grad_x, grad_w = jax.lax.fori_loop(
-        0, num_b_blocks, body, (loss_init, lse_init, grad_x_init, grad_w_init)
-    )
+    init = (loss_init, lse_init, grad_x_init, grad_w_init)
+    if use_unnorm:
+        label_init = () if unnorm_fold else (jnp.zeros((v_dim, h_dim), dtype=jnp.float32),)
+        loss, lse, grad_x, grad_w, *label_acc = jax.lax.fori_loop(0, num_b_blocks, unnorm_body, init + label_init)
+        if label_acc:
+            grad_w = grad_w - label_acc[0].T
+    else:
+        loss, lse, grad_x, grad_w = jax.lax.fori_loop(0, num_b_blocks, body, init)
     grad_x = grad_x[:b_dim].astype(x.dtype) if need_grad_x else None
     return loss[:b_dim], lse[:b_dim], grad_x, grad_w.astype(w.dtype)
 
