@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
+import os
 from dataclasses import dataclass
 from typing import Literal, Sequence, TypeVar, Union, cast
 
@@ -20,6 +21,15 @@ Target = Literal["grads", "params", "opt_state", "updates"]
 M = TypeVar("M", bound=PyTree)
 S = TypeVar("S", bound=TrainerState)
 VALID_WATCH_TARGETS = {"grads", "params", "opt_state", "updates"}
+
+# LEVANTER_NORM_GUARD=<relative> (2026-10-26, after the marin vocab run w158): stop the run when the norm of a weight that
+# AdamH or MuonH keeps constant (the lm_head and the attention and MLP projections) moves by more than <relative> between
+# two watch steps. In w158 one update read a wrong norm (that step's loss value): the lm_head norm went 353.33 -> 3.556 and
+# the run collapsed to near-uniform predictions without a NaN. Between healthy watch steps these norms move by ~1e-6
+# (f32 rounding; 375 runs scanned). 0 (the default) turns the check off.
+_NORM_GUARD = float(os.environ.get("LEVANTER_NORM_GUARD", "0") or 0)
+_CONSTANT_NORM_WEIGHTS = ("lm_head.weight", "q_proj.weight", "k_proj.weight", "v_proj.weight", "o_proj.weight",
+                          "gate_proj.weight", "up_proj.weight", "down_proj.weight")
 
 
 def _validate_watch_targets(watch_targets: Sequence[str]) -> None:
@@ -195,4 +205,24 @@ class WatchCallback(JitCallback[S, M, dict[str, jax.Array | SummaryStats]]):
         )
 
     def on_step(self, step_info: S, cb_info: dict[str, jax.Array | SummaryStats]):
+        if _NORM_GUARD > 0:
+            self._check_constant_norms(int(step_info.step), cb_info)
         levanter.tracker.log(cb_info, step=int(step_info.step))
+
+    def _check_constant_norms(self, step: int, cb_info: dict[str, jax.Array | SummaryStats]):
+        """Raises when a weight that the optimizer keeps at a constant norm moved by more than LEVANTER_NORM_GUARD."""
+        current = {
+            k: float(v)
+            for k, v in cb_info.items()
+            if k.startswith("params/norm/") and k.endswith(_CONSTANT_NORM_WEIGHTS) and isinstance(v, jax.Array)
+        }
+        previous = getattr(self, "_constant_norms", {})
+        for k, v in current.items():
+            before = previous.get(k)
+            if before is not None and before > 0 and abs(v - before) / before > _NORM_GUARD:
+                raise RuntimeError(
+                    f"norm guard: {k} moved from {before:.6g} to {v:.6g} by step {step} (relative "
+                    f"{abs(v - before) / before:.2e} > {_NORM_GUARD:g}); its optimizer keeps it constant, so an update "
+                    "read a wrong value. Stopping so that the run resumes from its last checkpoint."
+                )
+        self._constant_norms = current

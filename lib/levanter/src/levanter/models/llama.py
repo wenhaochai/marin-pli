@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+from jax.ad_checkpoint import checkpoint_name
 from jaxtyping import PRNGKeyArray
 
 import haliax as hax
@@ -289,9 +290,9 @@ class LlamaMlp(eqx.Module):
     @named_call
     def __call__(self, x: NamedArray, *, key=None) -> NamedArray:
         k_gate, k_up, k_down = maybe_rng_split(key, 3)
-        hidden_states = self.gate_proj(x, key=k_gate)
+        hidden_states = _checkpoint_name(self.gate_proj(x, key=k_gate), "mlp_gate")
         hidden_states = self.act(hidden_states)
-        hidden_states = hidden_states * self.up_proj(x, key=k_up)
+        hidden_states = hidden_states * _checkpoint_name(self.up_proj(x, key=k_up), "mlp_up")
         outputs = self.down_proj(hidden_states, key=k_down)
         return outputs
 
@@ -494,6 +495,12 @@ def _take_rows_f32_grad_bwd(res, g):
 
 
 _take_rows_f32_grad.defvjp(_take_rows_f32_grad_fwd, _take_rows_f32_grad_bwd)
+
+
+def _checkpoint_name(x: NamedArray, name: str) -> NamedArray:
+    """Names ``x`` for a remat policy that saves values by name (the MLP's matmul outputs: mlp_gate, mlp_up); a no-op for
+    every other policy."""
+    return hax.named(checkpoint_name(x.array, name), x.axes)
 
 
 def _embed_f32_grad(token_embeddings: hnn.Embedding, input_ids: NamedArray) -> NamedArray:
