@@ -35,7 +35,7 @@ from haliax.partitioning import ResourceAxis
 from haliax.quantization import QuantizationConfig
 from levanter.optim.model_averaging import EmaModelAveragingConfig
 from levanter.checkpoint import CheckpointerConfig
-from levanter.callbacks.profiler import ProfilerConfig, XprofUploadConfig
+from levanter.callbacks.profiler import ProfileOptionsConfig, ProfilerConfig, XprofUploadConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
 from levanter.models.qwen import Qwen3Config
@@ -544,7 +544,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 log_xla_hlo=LOG_JAXPR,
                 # PROFILE="<start>:<steps>" traces those train steps with jax.profiler into <log_dir>/<run id>/profiler (kept
                 # local); measurement only, the run's math is unchanged (speed work, owner 2026-10-24).
-                **({"profiler": ProfilerConfig(enabled=True, start_step=int(PROFILE.split(":")[0]), num_steps=int(PROFILE.split(":")[1]),
+                # No Python tracer, and one step for the microbatch-1 designs: their 3-step traces never finished writing
+                # (wq w207/w208 hung in stop_trace until the 40-min limit, 2026-10-25).
+                **({"profiler": ProfilerConfig(enabled=True, start_step=int(PROFILE.split(":")[0]),
+                                               num_steps=min(int(PROFILE.split(":")[1]), 1 if ARCH in PARAM_MAP_PDP1 else 99),
+                                               profile_options=ProfileOptionsConfig(python_tracer_level=0),
                                                upload=XprofUploadConfig(enabled=False))} if PROFILE else {}),
             ),
             train_seq_len=SEQ_LEN,
