@@ -362,9 +362,15 @@ def _linear_softmax_cross_entropy_loss_streaming_bwd(
             in_block = (labels_block >= start) & (labels_block < start + block_size)
             label_idx = labels_block - start
             safe_idx = jnp.where(in_block, label_idx, 0)
-            delta = delta.at[row_indices, safe_idx].add(
-                jnp.where(in_block, -dout_loss_block.astype(logits.dtype), 0.0)
-            )
+            label_grad = jnp.where(in_block, -dout_loss_block.astype(logits.dtype), 0.0)
+            if os.environ.get("LEVANTER_CE_XLA_ONEHOT", "0") == "1":
+                # The same add on the label entry as a select (no scatter), so XLA can fuse the exp, the products, the
+                # label term and the soft-cap factor into one pass over the f32 delta (speed work, 2026-10-25; the
+                # b-tiled path's LEVANTER_CE_BTILED_ONEHOT). Rows whose label is outside this block add nothing.
+                hit = jnp.arange(block_size, dtype=safe_idx.dtype)[None, :] == safe_idx[:, None]
+                delta = jnp.where(hit, delta + label_grad[:, None], delta)
+            else:
+                delta = delta.at[row_indices, safe_idx].add(label_grad)
             delta = (delta * cap_deriv).astype(logits.dtype)
 
             gx_block = jax.lax.dot_general(
