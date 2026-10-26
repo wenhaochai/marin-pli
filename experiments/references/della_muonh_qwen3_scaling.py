@@ -173,6 +173,9 @@ SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 # change that passed a 60-step smoke ran out of memory after its first eval). Smoke runs only; 0 = off.
 SMOKE_EVAL_EVERY = int(os.environ.get("SMOKE_EVAL_EVERY", "0"))
 SMOKE_CKPT_SECONDS = int(os.environ.get("SMOKE_CKPT_SECONDS", "0"))
+# SMOKE_FULL_EVAL=1: the smoke's evaluations run every Paloma batch, as a real run's do (by default a smoke evaluates one
+# batch), so a memory check sees the real eval's allocations.
+SMOKE_FULL_EVAL = os.environ.get("SMOKE_FULL_EVAL", "0") == "1"
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
@@ -889,7 +892,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 per_device_parallelism=PDP or PER_DEVICE_PARALLELISM.get(size, -1),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=(SMOKE_EVAL_EVERY or SMOKE_STEPS) if SMOKE_STEPS else eval_every,
-                max_eval_batches=1 if SMOKE_STEPS else None,
+                max_eval_batches=1 if SMOKE_STEPS and not SMOKE_FULL_EVAL else None,
                 # OV checkpoints carry the n-gram tables with their Adam state (79 GB at 300m, 112 GB at 520m, ~227 GB at
                 # 1_2b), so OV variants (a) keep no step-interval checkpoints (the GROUP fileset was 96% full on
                 # 2026-09-30) and (b) save the temporary (resume) checkpoint hourly: a save stalls training while it stages
