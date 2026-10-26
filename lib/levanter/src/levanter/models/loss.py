@@ -132,6 +132,11 @@ def _ce_with_gradient_carrier(x, labels, w, g, b_block_size, dtype, logit_soft_c
 # differentiation (JAX symbolic zeros), so an input under stop_gradient (a probe readout of a detached backbone) gets no
 # input-gradient GEMM; the gradients that are used do not change.
 _CE_SKIP_UNUSED_DX = os.environ.get("LEVANTER_CE_SKIP_UNUSED_DX", "0") == "1"
+# LEVANTER_CE_GIF_BARRIER=1 (2026-10-26; read at import): the loss leaves the rule only with its gradients (an optimization
+# barrier; values unchanged). The loss needs only the logsumexp, so without it a caller that waits for one CE's loss
+# before the next (pls_serial_readouts) still lets XLA defer each CE's dlogits and GEMMs and keep every [rows x vocab]
+# logits block alive at once (77 GB in the HC memory report, wq w364).
+_CE_GIF_BARRIER = os.environ.get("LEVANTER_CE_GIF_BARRIER", "0") == "1"
 
 
 def _ce_with_gradient_carrier_fwd(x, labels, w, g, b_block_size, dtype, logit_soft_cap, precision):
@@ -143,6 +148,8 @@ def _ce_with_gradient_carrier_fwd(x, labels, w, g, b_block_size, dtype, logit_so
         x, labels, w, g, b_block_size=b_block_size, dtype=dtype, logit_soft_cap=logit_soft_cap, precision=precision,
         need_grad_x=need_grad_x,
     )
+    if _CE_GIF_BARRIER:
+        loss, grad_x, grad_w = jax.lax.optimization_barrier((loss, grad_x, grad_w))
     return (loss, jnp.zeros(x.shape[:1], jnp.float32)), (grad_x, grad_w, g)
 
 
