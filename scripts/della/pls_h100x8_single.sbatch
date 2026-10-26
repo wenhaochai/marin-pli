@@ -62,7 +62,9 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #                (GEMM autotuning picks per run: w205 vs w229 up to 0.076 nats over 40 det steps); against the base run
 #                of its own autotune class (w229) it moves the logged losses by at most 1e-6 and does not grow (w217,
 #                w218), inside the twins' envelope (plan rule G4)
-export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1
+export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4
+#   (LEVANTER_CE_GRAD_IN_FWD off again 2026-10-26 02:50: its fallback for microbatch-1 shards built a sharded NamedArray inside
+#   the shard_map and failed the smoke of w196/w197; on again once fixed and tested)
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
