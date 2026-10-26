@@ -793,6 +793,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=names))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
+    # SCAN_LAYERS=0 (speed test, 2026-10-26): the layers unrolled (BlockSeq) instead of one scan (Stacked): no copies of
+    # the saved residuals into the stacked buffers (3% of the 128K step with fmlp, w350). A different parameter tree, so
+    # not for a run that resumes from a scanned checkpoint.
+    if os.environ.get("SCAN_LAYERS", "1") == "0":
+        model_extra = dict(model_extra, scan_layers=False)
     model = model_cls(
         max_seq_len=SEQ_LEN,
         hidden_dim=s["hidden"],
