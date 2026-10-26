@@ -250,8 +250,9 @@ evaluation 24 -> 20 s), 8K 388 -> 336 (-13.4%, w436), 32K at SEQ_LEN 4480 with f
 **Adopted (owner popup ~19:15, "全部设为默认，不重跑"; c6886d9b2b, jobs that start after 19:45):** LEVANTER_CE_UNNORM=2,
 LEVANTER_CE_BTILED_MIN_VOCAB=4096 (f32 logits below 65536), LEVANTER_CE_LSE_MGPU=1 with LEVANTER_CE_LSE_KERNEL_EVAL=1,
 LEVANTER_SWIGLU_VJP=1 and the zero-init flag in speed_env.sh, and REMAT code default fmlpo up to SEQ_LEN 4096. The two CE
-items change gradient numerics, both toward f32; the rest is the same math. Not adopted: plain data parallelism, the f32
-grad_w GEMM (+0.7% on pls, w404), LEVANTER_SCAN_EMPTY. Still queued: w398, w403, w408, w413, w420 (individual items).
+items change gradient numerics, both toward f32; the rest is the same math. Not in it: LEVANTER_SCAN_EMPTY (out of memory,
+w402); still queued on 4 GPUs: plain data parallelism and the dynamic-slice fusion (w398), the f32 grad_w GEMM (w403;
++0.7% on pls, w404), the XLA flag set (w408), Triton GEMM fusions (w413), the remat options alone (w420).
 
 ## Measured baseline (logs, 4x H100)
 
