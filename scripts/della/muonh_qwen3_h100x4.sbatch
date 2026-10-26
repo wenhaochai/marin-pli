@@ -36,6 +36,13 @@ if [ "${XLA_CMD_BUFFER_WHILE:-0}" = 1 ]; then
   export XLA_FLAGS="${XLA_FLAGS} --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
   echo "XLA_CMD_BUFFER_WHILE=1: XLA_FLAGS=$XLA_FLAGS"
 fi
+# LEVANTER_CKPT_DEADLINE (speed, 2026-10-25; levanter commit from the pls session): one temporary checkpoint 150 s before
+# this job's end, SLURM_JOB_END_TIME (Slurm's own, or the host's end for a wq guest), so a resumable run that the end stops
+# redoes almost no work on resume. No end time: no effect.
+if [ -n "${SLURM_JOB_END_TIME:-}" ]; then
+  export LEVANTER_CKPT_DEADLINE=$((SLURM_JOB_END_TIME - 150))
+  echo "LEVANTER_CKPT_DEADLINE=$LEVANTER_CKPT_DEADLINE ($(date -d @$LEVANTER_CKPT_DEADLINE +%F' '%T))"
+fi
 
 nvidia-smi -L
 .venv/bin/python -c 'import jax; print("jax", jax.__version__, "devices", jax.devices())'
