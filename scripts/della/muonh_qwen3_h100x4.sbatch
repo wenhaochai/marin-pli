@@ -52,7 +52,7 @@ export LEVANTER_CE_BTILED_ONEHOT=${LEVANTER_CE_BTILED_ONEHOT:-1}
 # gradients in the forward from the same logits GEMM per block (3 logits GEMMs instead of 4). Not bitwise: H100 det round
 # w245 at 300m 128K gives per-step loss within 1.9e-6 of the base over 58 steps, far inside the run-to-run spread of
 # GEMM autotuning (pls w205 vs w229: 0.076). -4.7% step time on top of A1 under FA4 (w227).
-export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-1}
+export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-0}   # OFF again (2026-10-26 02:20): its fallback crashes under shard_map when a shard does not take the b-tiled path, which every vocabulary below 65536 does (pls bug report); back on after the fix
 
 nvidia-smi -L
 .venv/bin/python -c 'import jax; print("jax", jax.__version__, "devices", jax.devices())'
