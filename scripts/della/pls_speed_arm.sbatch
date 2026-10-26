@@ -45,7 +45,7 @@ curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz || export WANDB_
 trap pls_tmp_cleanup EXIT
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 NAME=${FETCHED_JOB_NAME:-$SLURM_JOB_NAME}
-spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}; rounds=
+spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}; rounds=; XK=
 case $knobs in *-mem) rounds="mem"; knobs=${knobs%-mem};; *-fix) rounds="fix"; knobs=${knobs%-fix};; *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; *-prof) rounds="prof"; knobs=${knobs%-prof};; esac
 case $design in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ROUNDS="det time";;
@@ -88,6 +88,11 @@ case $knobs in
   # summation order changes; at microbatch 2 the threshold 16384 keeps the EVAL_PDP=4 eval (16384 rows) on the b-tiled path as today
   prodk2st) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 PARAM_MAP_PDP=2 LEVANTER_CE_BTILED_MIN_BATCH=16384";;
   prodk4st) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 PARAM_MAP_PDP=4 LEVANTER_CE_BTILED_MIN_BATCH=1048576";;
+  # LEVANTER_CE_UNNORM=2 on lse kernel v3, with the kernel in evaluation too (the Tokenizer Size session's bundle, c6886d9b2b;
+  # pls 457d8dd438); z: XLA's DUS-accumulator zero-init elimination (XK below; same math, -3.1% to -3.5% for its runs, w430)
+  prodkmu) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_CE_LSE_MGPU=1 LEVANTER_CE_UNNORM=2 LEVANTER_CE_LSE_KERNEL_EVAL=1";;
+  prodkz) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1"; XK="--xla_gpu_enable_dus_accumulator_zero_init_elimination=true";;
+  prodkthdbt4ksbmu) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1 LEVANTER_CE_LSE_MGPU=1 LEVANTER_CE_UNNORM=2 LEVANTER_CE_LSE_KERNEL_EVAL=1";;
   prodkthdbt4ksbm) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1 LEVANTER_CE_LSE_MGPU=1";;
   prodkthdbt4ksbpf) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1 PLS_DETACH_BB=1 PLS_FOLD_NORM=1";;
   prodkthdbt4ksb) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1";;
@@ -124,6 +129,7 @@ for r in $ROUNDS; do
     # dumped, for trace_families.py (the Tokenizer Size session's speed-all 7b2eba3a51); its step time is not the measure
     prof) pr="PROFILE=25:2"; xf="--xla_gpu_enable_command_buffer= --xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/pls_speed/hlo_${NAME}_${JID} --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*";;
   esac
+  xf="${xf:+$xf }$XK"; xf=${xf% }   # a knob's XLA flags (XK) join the round's
   # shellcheck disable=SC2086
   env $BASE $ON $pr ${xf:+"XLA_FLAGS=$xf"} RUN_TAG=-j${JID}$r timeout 40m "$PY" -m experiments.references.della_muonh_qwen3_scaling \
     > logs/slurm/${NAME}_${JID}_$r.log 2>&1 || echo "round $r rc=$?"
