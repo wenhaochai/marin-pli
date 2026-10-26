@@ -53,10 +53,13 @@ for ARM in "${ARMS[@]}"; do
   # same), and the step's optimized HLO dumped for scripts/della/speed_all/trace_families.py
   mkdir -p $OUT/$ARM/hlo
   export XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer= --xla_dump_to=$OUT/$ARM/hlo --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*"
-  case $ARM in
-    jax) export REMAT=flash ;;
-    none) export REMAT=none ;;
+  case $ARM in   # explicit backends: the code defaults to fa4 since 2026-10-26
+    base) export ATTN_BACKEND=jax_flash ;;
+    jax) export ATTN_BACKEND=jax_flash REMAT=flash ;;
+    none) export ATTN_BACKEND=jax_flash REMAT=none ;;
     fa4) export ATTN_BACKEND=fa4 ;;
+    fa4dots) export ATTN_BACKEND=fa4 REMAT=dots ;;
+    *) echo "unknown arm $ARM"; fail=1; continue ;;
   esac
   export RUN_TAG=-abprof${ARM}-j$JID
   run_id=$(DRY_RUN=1 $PY -m experiments.references.della_muonh_qwen3_scaling 2>/dev/null | sed -n 's#^output: speedrun/\([^/]*\)/.*#\1#p' | head -1)

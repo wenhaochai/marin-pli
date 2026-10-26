@@ -123,11 +123,24 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # flash-attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py), so the backward pass
 # re-runs norms, projections and the MLP but not the attention forward. Same math (bf16 rounding differs); ~+2-3 GiB
 # per device at 300m. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag remat-flash.
-# "none" (speed, 2026-10-25): no per-layer checkpointing; the backward pass reuses every saved forward value (300m peak is
-# 12-14 of 71 GiB with full remat, so the saved activations may fit). Same math up to bf16 rounding.
+# "none" (speed, 2026-10-25): no per-layer checkpointing; the backward pass reuses every saved forward value. Does not fit
+# at 300m: 179 GiB per device at 32 sequences x 4096 (H100 w212, 2026-10-26).
+# "dots" (speed, 2026-10-26): each layer saves its carry and every matmul output with no batch dimension (the q/k/v/o
+# projections and the MLP matmuls, not attention's batched dots), so the backward pass recomputes only the cheap
+# elementwise ops (norms, rotary, activations) and the attention forward. Same math up to bf16 rounding; about 20 KB per
+# token per layer more memory (~31 GiB at 300m, 32 x 4096 per device).
 REMAT = os.environ.get("REMAT", "full")
-if REMAT not in ("full", "flash", "none"):
-    raise ValueError(f"REMAT={REMAT}: full | flash | none")
+if REMAT not in ("full", "flash", "none", "dots"):
+    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots")
+
+
+class _DotsCheckpointPolicy(ScanCheckpointPolicy):
+    """REMAT=dots: save the layer carry and the matmul outputs with no batch dimension; recompute the rest."""
+
+    def _to_jax_policy(self, carry_name: str, input_name: str):
+        import jax
+        return jax.checkpoint_policies.save_from_both_policies(
+            jax.checkpoint_policies.save_only_these_names(carry_name), jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
 # PROFILE=<start>:<steps> (speed, 2026-10-25): a JAX profiler trace of that many train steps from that step, kept locally under
 # logs/<run id>/profiler (perfetto trace too). Off by default; changes nothing else.
 PROFILE = os.environ.get("PROFILE", "")
@@ -710,6 +723,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
     elif REMAT == "none":
         model_extra = dict(model_extra, gradient_checkpointing=False)
+    elif REMAT == "dots":
+        model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy())
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(

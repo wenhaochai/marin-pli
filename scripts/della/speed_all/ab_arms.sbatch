@@ -58,18 +58,21 @@ for ARM in "${ARMS[@]}"; do
   DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
   CB="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
   case $ARM in
-    old) ;;
+    old) export ATTN_BACKEND=jax_flash ;;   # the old path: the main checkout defaults to fa4 since 2026-10-26
     base) ;;
     cb) export XLA_FLAGS="$CB" ;;
     jax) export REMAT=flash XLA_FLAGS="$CB" ;;
     none) export REMAT=none XLA_FLAGS="$CB" ;;
     fa4) export ATTN_BACKEND=fa4 XLA_FLAGS="$CB" ;;
+    jaxflash) export ATTN_BACKEND=jax_flash XLA_FLAGS="$CB" ;;
     fa4none) export ATTN_BACKEND=fa4 REMAT=none XLA_FLAGS="$CB" ;;
+    dots) export REMAT=dots XLA_FLAGS="$CB" ;;
+    fa4dots) export ATTN_BACKEND=fa4 REMAT=dots XLA_FLAGS="$CB" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
     gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
-    dbase|dbase2) export XLA_FLAGS="$DET" ;;
-    da1) export XLA_FLAGS="$DET" LEVANTER_CE_BTILED_ONEHOT=1 ;;
-    dgif) export XLA_FLAGS="$DET" LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
+    dbase|dbase2) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash ;;   # det arms on JAX flash (FA4 backward is not run-to-run deterministic)
+    da1) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash LEVANTER_CE_BTILED_ONEHOT=1 ;;
+    dgif) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     *) echo "unknown arm $ARM"; fail=1; continue ;;
   esac
   export RUN_TAG=-abspd${ARM}-j${JID}
