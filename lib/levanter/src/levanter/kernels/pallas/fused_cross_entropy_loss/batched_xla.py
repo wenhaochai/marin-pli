@@ -383,10 +383,17 @@ def _h100_full_vocab_b_tiled_block_size(
         return None
     if x.dtype != jnp.bfloat16 or w.dtype != jnp.bfloat16:
         return None
-    if x.shape[0] < _H100_FULL_VOCAB_B_TILED_MIN_BATCH:
+    # LEVANTER_CE_BTILED_MIN_BATCH=<n> (speed work 2026-10-26; read at trace time): take the b-tiled path from n rows on,
+    # in blocks of min(8192, rows) when the rows are a power of two (pls microbatch 1: 4096 tokens per device, which
+    # otherwise falls back to the xla streaming CE with f32 delta GEMMs). Default 8192: today's choice. Changes the math
+    # for the shards it moves, so it is for new runs only.
+    min_batch = int(os.environ.get("LEVANTER_CE_BTILED_MIN_BATCH", _H100_FULL_VOCAB_B_TILED_MIN_BATCH))
+    if x.shape[0] < min_batch:
         return None
     if w.shape[1] < _LARGE_VOCAB_THRESHOLD:
         return None
+    if x.shape[0] < _H100_FULL_VOCAB_B_TILED_BLOCK_SIZE:
+        return x.shape[0] if _is_power_of_two(x.shape[0]) and x.shape[0] % 16 == 0 else None
     return _H100_FULL_VOCAB_B_TILED_BLOCK_SIZE
 
 
