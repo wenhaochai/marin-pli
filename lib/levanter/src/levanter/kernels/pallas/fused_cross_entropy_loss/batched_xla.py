@@ -342,6 +342,7 @@ def _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
     # loss differs only by the GEMM's and the lse merge's summation order (the kernel's bf16 logits are not used here).
     use_kernel = (
         os.environ.get("LEVANTER_CE_LSE_KERNEL_EVAL", "0") == "1"
+        and v_dim >= _LARGE_VOCAB_THRESHOLD  # below it the kernel is slower than XLA's GEMM (at 8K, 2.6 against 0.8 ms per block, w409)
         and x.dtype == jnp.bfloat16
         and w.dtype == jnp.bfloat16
         and logit_soft_cap is None
@@ -400,7 +401,9 @@ def _h100_full_vocab_b_tiled_block_size(
         return None
     if x.shape[0] < _H100_FULL_VOCAB_B_TILED_MIN_BATCH:
         return None
-    if w.shape[1] < _LARGE_VOCAB_THRESHOLD:
+    # LEVANTER_CE_BTILED_MIN_VOCAB (speed test, 2026-10-26): the smallest vocabulary for this path (default 65536). At 8K
+    # the other path's GEMMs take 4.7-13.3 ms each against ~2.5 ms for their FLOPs (w351 profile).
+    if w.shape[1] < int(os.environ.get("LEVANTER_CE_BTILED_MIN_VOCAB", _LARGE_VOCAB_THRESHOLD)):
         return None
     return _H100_FULL_VOCAB_B_TILED_BLOCK_SIZE
 
@@ -636,11 +639,15 @@ def _backward_b_tiled_from_lse(
             (((1,), (1,)), ((), ())),
             precision=precision,
         ).astype(jnp.float32)
+        # LEVANTER_CE_GRADW_F32=1 (speed, 2026-10-26): the weight-gradient GEMM returns f32, so XLA can fold the running
+        # sum into the GEMM (cuBLAS beta = 1) instead of an f32 add pass over [H, V] per block (5.2 ms per step at 128K,
+        # profile w350), and each block's partial sum is not rounded to bf16 before it is added.
         grad_w_block = jax.lax.dot_general(
             x_block,
             dlogits_for_matmul,
             (((0,), (0,)), ((), ())),
             precision=precision,
+            preferred_element_type=jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None,
         ).astype(jnp.float32)
 
         grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
@@ -651,10 +658,26 @@ def _backward_b_tiled_from_lse(
     return grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
+def _lse_mgpu_supported(m: int, k: int, n: int) -> bool:
+    """Whether lse kernel v3 (lse_logits_mgpu.py) takes an [m, k] x [k, n] block (imported here: Mosaic GPU only)."""
+    from .lse_logits_mgpu import supported
+
+    return supported(m, k, n)
+
+
 def _lse_kernel(x_block: jax.Array, w: jax.Array, labels: jax.Array):
     """bf16 logits, f32 logsumexp and f32 label logits of one block from the Triton kernel (imported here: jax_triton
     resets TRITON_CACHE_DIR at import, so default runs never import it). Config: the fastest at all four benchmarked
-    shapes (wq w271: 8192 x 512 in 2.46 ms against 6.84 ms for the XLA ops with the same outputs)."""
+    shapes (wq w271: 8192 x 512 in 2.46 ms against 6.84 ms for the XLA ops with the same outputs).
+
+    LEVANTER_CE_LSE_MGPU=1 (speed, 2026-10-26, kernel v3 with the pls session): the same outputs from a Pallas Mosaic GPU
+    GEMM (TMA, wgmma, warp-specialized) with the logsumexp partials in its epilogue (lse_logits_mgpu.py), for the shapes it
+    takes; the Triton kernel otherwise."""
+    if os.environ.get("LEVANTER_CE_LSE_MGPU", "0") == "1":
+        from .lse_logits_mgpu import lse_and_logits_mgpu, supported
+
+        if supported(x_block.shape[0], x_block.shape[1], w.shape[1]):
+            return lse_and_logits_mgpu(x_block, w, labels)
     from .lse_logits_triton import lse_and_logits
 
     return lse_and_logits(
@@ -699,14 +722,77 @@ def _full_vocab_b_tiled_forward_with_grads(
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
     grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32)
     grad_w_init = jnp.zeros((h_dim, v_dim), dtype=jnp.float32)
+    # Below 65536 entries (reached only through LEVANTER_CE_BTILED_MIN_VOCAB) the backward reads the GEMM's f32 logits
+    # instead of their bf16 rounding, and so skips the lse kernel, whose logits are bf16. One H100, 65536 rows, mean-loss
+    # gradients against an f32 reference (wq w409): at 8K the gradient error is 2.0e-3 with f32 logits against 5.0e-3
+    # with bf16, and the call takes 6.7 ms against 21 ms with the lse kernel; at 32K 1.9e-3 against 3.9e-3, 24 ms
+    # against 20 ms. LEVANTER_CE_BTILED_F32_LOGITS=1 (speed test, 2026-10-26) does the same at any size.
+    f32_logits = v_dim < _LARGE_VOCAB_THRESHOLD or os.environ.get("LEVANTER_CE_BTILED_F32_LOGITS", "0") == "1"
     use_kernel = (
         os.environ.get("LEVANTER_CE_LSE_KERNEL", "0") == "1"
+        and not f32_logits
         and x.dtype == jnp.bfloat16
         and w.dtype == jnp.bfloat16
         and logit_soft_cap is None
         and (dtype is None or jnp.dtype(dtype) == jnp.float32)
         and h_dim % 64 == 0
     )
+    # LEVANTER_CE_UNNORM=1 (speed test, 2026-10-26): the lse kernel v3 stores P = exp(z - z_label) instead of the logits
+    # (lse_logits_mgpu.probs_and_sum_mgpu), and the gradients are GEMMs on P: dlogits = g (P / S - onehot) = (g / S) P'
+    # with S the row sum of P and P' = P with 1 - S at the label (where P is exp(0) = 1). The factor g / S goes on x for
+    # grad_w and on the output rows for grad_x, so the pass that turns logits into dlogits goes away, and P carries bf16's
+    # relative rounding of a probability instead of exp of a bf16-rounded logit. LEVANTER_CE_UNNORM=2 keeps P as stored
+    # and adds the label terms apart in f32 (-g w_label to grad_x, -g x scattered into grad_w's label columns): the
+    # dominant label term is then not rounded to bf16 (w422, XLA prototype: gradient error 2.0e-4 / 2.8e-4 at 128K against
+    # 3.2e-3 / 3.6e-3 for the current path).
+    use_unnorm = (
+        os.environ.get("LEVANTER_CE_UNNORM", "0") in ("1", "2")
+        and use_kernel
+        and _lse_mgpu_supported(b_block_size, h_dim, v_dim)
+    )
+    unnorm_fold = os.environ.get("LEVANTER_CE_UNNORM", "0") == "1"
+    gradw_type = jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None
+
+    def unnorm_body(block_index, state):
+        from .lse_logits_mgpu import probs_and_sum_mgpu
+
+        loss, lse, grad_x, grad_w, *label_acc = state
+        b_start = block_index * b_block_size
+        x_block = jax.lax.dynamic_slice(x_pad, (b_start, 0), (b_block_size, h_dim))
+        labels_block = jax.lax.dynamic_slice(labels_pad, (b_start,), (b_block_size,))
+        g_loss_block = jax.lax.dynamic_slice(g_loss_pad, (b_start,), (b_block_size,)).astype(jnp.float32)
+        valid_rows = labels_block >= 0
+        safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
+
+        w_label = jnp.take(w, safe_labels, axis=1)   # [H, B]: each row's label column
+        label_logits = jnp.sum(x_block.astype(jnp.float32) * w_label.T.astype(jnp.float32), axis=1)
+        probs, row_sum, _ = probs_and_sum_mgpu(x_block, w, label_logits)
+        log_sum = jnp.log(row_sum)   # the loss: logsumexp - label logit
+        loss = jax.lax.dynamic_update_slice(loss, jnp.where(valid_rows, log_sum, 0.0).astype(out_dtype), (b_start,))
+        lse = jax.lax.dynamic_update_slice(lse, jnp.where(valid_rows, label_logits + log_sum, 0.0).astype(out_dtype), (b_start,))
+
+        row_indices = jnp.arange(b_block_size, dtype=jnp.int32)
+        if unnorm_fold:
+            probs = probs.at[row_indices, safe_labels].set((1.0 - row_sum).astype(probs.dtype))
+        factor = jnp.where(valid_rows, g_loss_block / row_sum, 0.0)
+        grad_x_block = factor[:, None] * jax.lax.dot_general(
+            probs, w, (((1,), (1,)), ((), ())), precision=precision, preferred_element_type=jnp.float32
+        )
+        grad_w_block = jax.lax.dot_general(
+            (factor[:, None] * x_block.astype(jnp.float32)).astype(x.dtype),
+            probs,
+            (((0,), (0,)), ((), ())),
+            precision=precision,
+            preferred_element_type=gradw_type,
+        ).astype(jnp.float32)
+        if not unnorm_fold:
+            g_valid = jnp.where(valid_rows, g_loss_block, 0.0)
+            grad_x_block = grad_x_block - g_valid[:, None] * w_label.T.astype(jnp.float32)
+            # each label's g x as a row of a [V, H] f32 sum (contiguous rows, like the input-embedding gradient; a
+            # column scatter into grad_w would touch one element per cache line), subtracted from grad_w after the loop
+            label_acc = [label_acc[0].at[safe_labels].add(g_valid[:, None] * x_block.astype(jnp.float32))]
+        grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
+        return (loss, lse, grad_x, grad_w + grad_w_block, *label_acc)
 
     def body(block_index, state):
         loss, lse, grad_x, grad_w = state
@@ -749,7 +835,9 @@ def _full_vocab_b_tiled_forward_with_grads(
 
             # backward: _backward_b_tiled_from_lse's body on the same GEMM (its logits are the GEMM's bf16 output)
             # the bf16 rounding as reduce_precision: XLA may drop an f32 -> bf16 -> f32 convert pair (excess precision)
-            if x.dtype == jnp.bfloat16:
+            if f32_logits:
+                logits_raw = logits_f32
+            elif x.dtype == jnp.bfloat16:
                 logits_raw = jax.lax.reduce_precision(logits_f32, exponent_bits=8, mantissa_bits=7)
             else:
                 logits_raw = logits_f32.astype(x.dtype).astype(jnp.float32)
@@ -777,20 +865,29 @@ def _full_vocab_b_tiled_forward_with_grads(
             (((1,), (1,)), ((), ())),
             precision=precision,
         ).astype(jnp.float32)
+        # LEVANTER_CE_GRADW_F32=1 (speed, 2026-10-26): the weight-gradient GEMM returns f32, so XLA can fold the running
+        # sum into the GEMM (cuBLAS beta = 1) instead of an f32 add pass over [H, V] per block (5.2 ms per step at 128K,
+        # profile w350), and each block's partial sum is not rounded to bf16 before it is added.
         grad_w_block = jax.lax.dot_general(
             x_block,
             dlogits_for_matmul,
             (((0,), (0,)), ((), ())),
             precision=precision,
+            preferred_element_type=jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None,
         ).astype(jnp.float32)
 
         grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
         grad_w = grad_w + grad_w_block
         return loss, lse, grad_x, grad_w
 
-    loss, lse, grad_x, grad_w = jax.lax.fori_loop(
-        0, num_b_blocks, body, (loss_init, lse_init, grad_x_init, grad_w_init)
-    )
+    init = (loss_init, lse_init, grad_x_init, grad_w_init)
+    if use_unnorm:
+        label_init = () if unnorm_fold else (jnp.zeros((v_dim, h_dim), dtype=jnp.float32),)
+        loss, lse, grad_x, grad_w, *label_acc = jax.lax.fori_loop(0, num_b_blocks, unnorm_body, init + label_init)
+        if label_acc:
+            grad_w = grad_w - label_acc[0].T
+    else:
+        loss, lse, grad_x, grad_w = jax.lax.fori_loop(0, num_b_blocks, body, init)
     return loss[:b_dim], lse[:b_dim], grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
