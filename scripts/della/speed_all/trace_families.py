@@ -75,7 +75,7 @@ def family(hlo, name):
         return "other layer ops (norms, residuals)"
     if re.search(r"Embedding", op):
         return "embedding"
-    if re.search(r"lm_head|cross_entropy|fused|logsumexp|next_token_loss|^jvp\(\)|^transpose\(jvp\(\)\)|LmHead|get_lm_head", op.removeprefix("jit(_train_step)/")):
+    if re.search(r"lm_head|cross_entropy|fused|logsumexp|next_token_loss|b_tiled|^jvp\(\)|^transpose\(jvp\(\)\)|LmHead|get_lm_head", op.removeprefix("jit(_train_step)/")):
         return "output head and cross-entropy"
     if not re.search(r"jvp\(|transpose\(", op):
         return "optimizer and update"
