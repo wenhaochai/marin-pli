@@ -512,6 +512,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         backend_steps=5,
         muon_epsilon=1e-5,
         max_grad_norm=s["max_grad_norm"],
+        # MuonH ignores weight_decay: the matrices and the heads keep a fixed norm, and the Embedding and the vectors
+        # use plain Adam with no decay (docs/della/pls.md L6). The value stays so every run's W&B config matches.
         weight_decay=0.1,
         lr_schedule=s["schedule"],
         decay=s["decay"],
