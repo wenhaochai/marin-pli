@@ -25,6 +25,7 @@
 #   now     = the defaults since 2026-10-26 04:30 (FA4, REMAT=flash, CE A1 + GIF, cb)   nowdots = now with REMAT=fdots
 #   nowpipe = now with XLA collective pipelining (all-gather, reduce-scatter) and the latency-hiding scheduler;
 #   nowpipe2 = nowpipe with while-loop double buffering
+#   nowlse  = now with LEVANTER_CE_LSE_KERNEL=1 (the Triton logits + logsumexp kernel in the GIF block)
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
 # PAIR line, its per-step train/loss minus the first arm's (same seed, data, schedule; bf16 noise is ~1e-3).
 set -uo pipefail
@@ -60,7 +61,7 @@ fail=0
 declare -A RID
 for ARM in "${ARMS[@]}"; do
   if [ $ARM = old ]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old = the main checkout; every other arm = speed-all
-  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT
+  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT LEVANTER_CE_LSE_KERNEL
   export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
   CB="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
@@ -79,6 +80,7 @@ for ARM in "${ARMS[@]}"; do
     fa4flash) export ATTN_BACKEND=fa4 REMAT=flash XLA_FLAGS="$CB" ;;
     now) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;   # the defaults since 2026-10-26 04:30
     nowdots) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
+    nowlse) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;
     nowpipe) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE" ;;
     nowpipe2) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE --xla_gpu_enable_while_loop_double_buffering=true" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
