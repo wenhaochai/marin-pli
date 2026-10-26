@@ -8,6 +8,7 @@ import functools
 import logging as pylogging
 import os
 import sys
+import time
 import typing
 import warnings
 from dataclasses import dataclass
@@ -108,6 +109,20 @@ DEFAULT_JAX_CONFIG: Dict[str, JsonAtom] = {
 # The step whose update Trainer._train_step is tracing (state.step, a tracer inside the jitted step), so a loss
 # function can follow a step schedule without a new argument. None outside the train step, e.g. in evaluation.
 _TRACED_TRAIN_STEP: contextvars.ContextVar = contextvars.ContextVar("levanter_traced_train_step", default=None)
+
+# LEVANTER_ASYNC_STEP=1 (speed, 2026-10-26): Trainer.training_steps dispatches step N+1 before it finishes step N (see
+# there); the train step then keeps its input state instead of donating it.
+_ASYNC_STEP = os.environ.get("LEVANTER_ASYNC_STEP", "0") == "1"
+
+
+@dataclass
+class _DispatchedStep:
+    """A train step that is enqueued on the devices and not finished on the host yet."""
+
+    result: typing.Any
+    hooks_this_time: bool
+    start: float
+    loading_time: float = 0.0
 
 
 def current_train_step():
@@ -528,53 +543,98 @@ class Trainer:
         """
         Performs a single training step.
         """
+        return self._finish_step(self._dispatch_step(state, batch, batch_kwargs, int(state.step)))
+
+    def _dispatch_step(self, state: S, batch, batch_kwargs, host_step: int) -> "_DispatchedStep":
+        """Enqueues one train step on the devices and returns at once (JAX dispatch is asynchronous)."""
         # jit hooks impose a nontrivial cost even when they're not run (since they defeat some compiler optimizations)
         # so we avoid running them when they're not needed
         # this results in two compiles, but the cost of the second compile is worth it
-        hooks_this_time = any(state.step % h.every == 0 for h in self.hooks.jit_hooks)
+        hooks_this_time = any(host_step % h.every == 0 for h in self.hooks.jit_hooks)
 
         self.hooks.emit_event(ProgressEvent.TRAIN_STEP_STARTED)
-        with capture_time() as step_time:
-            # Annotation scoped to the compiled step only (not hooks/logging below) so
-            # that GPU host-side step_num timing matches TPU device-side "Steps" semantics.
-            with jax.profiler.StepTraceAnnotation("train", step_num=int(state.step)):
-                if hooks_this_time:
-                    result = self._maybe_save_jaxpr("train_step", self._jit_train_step_fn, state, batch, batch_kwargs)
-                else:
-                    result = self._maybe_save_jaxpr(
-                        "train_step_hooks", self._jit_train_step_fn_no_hook, state, batch, batch_kwargs
-                    )
+        start = time.perf_counter()
+        # Annotation scoped to the compiled step only (not hooks/logging below) so
+        # that GPU host-side step_num timing matches TPU device-side "Steps" semantics.
+        with jax.profiler.StepTraceAnnotation("train", step_num=host_step):
+            if hooks_this_time:
+                result = self._maybe_save_jaxpr("train_step", self._jit_train_step_fn, state, batch, batch_kwargs)
+            else:
+                result = self._maybe_save_jaxpr(
+                    "train_step_hooks", self._jit_train_step_fn_no_hook, state, batch, batch_kwargs
+                )
+        return _DispatchedStep(result, hooks_this_time, start)
 
-            loss = result.loss.item()
-            self.hooks.emit_event(ProgressEvent.TRAIN_STEP_FINISHED)
+    def _finish_step(self, dispatched: "_DispatchedStep") -> StepInfo[S]:
+        """Waits for a dispatched step's loss, then runs the hooks and logs the step's metrics."""
+        result = dispatched.result
+        loss = result.loss.item()
+        self.hooks.emit_event(ProgressEvent.TRAIN_STEP_FINISHED)
 
-            if self.config.crash_on_nan and jnp.isnan(loss):
-                raise RuntimeError("Loss is NaN")
+        if self.config.crash_on_nan and jnp.isnan(loss):
+            raise RuntimeError("Loss is NaN")
 
-            if self.config.crash_on_inf and jnp.isinf(loss):
-                raise RuntimeError("Loss is Inf")
+        if self.config.crash_on_inf and jnp.isinf(loss):
+            raise RuntimeError("Loss is Inf")
 
-            info = StepInfo(result.new_state, loss, step_time(), _event_handler=self.hooks.emit_event)
+        info = StepInfo(
+            result.new_state, loss, time.perf_counter() - dispatched.start, _event_handler=self.hooks.emit_event
+        )
 
-            with capture_time() as hook_time:
-                self.run_hooks(info)
-                if hooks_this_time:
-                    self.hooks.run_jit_hooks_outside_step(info, result.hook_infos)
+        with capture_time() as hook_time:
+            self.run_hooks(info)
+            if dispatched.hooks_this_time:
+                self.hooks.run_jit_hooks_outside_step(info, result.hook_infos)
 
-            # Log metrics from loss function and throughput metrics
-            metrics_to_log = {**result.loss_metrics, "throughput/hook_time": hook_time()}
-            levanter.tracker.log(metrics_to_log, step=info.step)
+        # Log metrics from loss function and throughput metrics
+        metrics_to_log = {**result.loss_metrics, "throughput/hook_time": hook_time()}
+        levanter.tracker.log(metrics_to_log, step=info.step)
 
         return info
 
     def training_steps(self, state: S, train_loader) -> typing.Iterator[StepInfo[S]]:
         """
         Generator that yields training steps and runs hooks.
+
+        With LEVANTER_ASYNC_STEP=1 (speed, 2026-10-26) step N+1 is dispatched before step N's loss is read, its hooks run
+        and its metrics are logged, so that host work overlaps the devices' work on step N+1 instead of leaving them idle
+        between steps (about 3% of a 300m H100 step from the hooks alone, plus the dispatch latency). Every step's hooks
+        still see that step's own state: the train step then does not donate its input state (one more copy of the
+        trainer state in device memory), and the loop counts steps on the host so it never waits on a device step count.
+        A NaN or Inf loss is caught one step later.
         """
         iter_data = iter(train_loader)
         is_first_step = True
+        if not _ASYNC_STEP:
+            while int(state.step) < self.num_train_steps:
+                with capture_time() as loading_time:
+                    try:
+                        example = next(iter_data)
+                    except StopIteration:
+                        logger.info("Reached end of training data loader")
+                        break
 
-        while int(state.step) < self.num_train_steps:
+                if is_first_step:
+                    logger.info(
+                        "First batch loaded in %.1fs, starting first train step (includes JIT compilation)...",
+                        loading_time(),
+                    )
+
+                info = self.train_step(state, example)
+                state = info.state
+
+                if is_first_step:
+                    logger.info("First train step completed in %.1fs (step %d)", info.step_duration, info.step)
+                    is_first_step = False
+
+                levanter.tracker.log({"throughput/loading_time": loading_time()}, step=info.step)
+
+                yield info
+            return
+
+        host_step = int(state.step)
+        pending: Optional[_DispatchedStep] = None
+        while host_step < self.num_train_steps:
             with capture_time() as loading_time:
                 try:
                     example = next(iter_data)
@@ -588,16 +648,27 @@ class Trainer:
                     loading_time(),
                 )
 
-            info = self.train_step(state, example)
-            state = info.state
-
+            dispatched = self._dispatch_step(state, (example,), {}, host_step)
+            dispatched.loading_time = loading_time()
+            if pending is not None:
+                yield self._finish_pending(pending)
+            pending = dispatched
+            state = dispatched.result.new_state
+            host_step += 1
             if is_first_step:
+                info = self._finish_pending(pending)
+                pending = None
                 logger.info("First train step completed in %.1fs (step %d)", info.step_duration, info.step)
                 is_first_step = False
+                yield info
 
-            levanter.tracker.log({"throughput/loading_time": loading_time()}, step=info.step)
+        if pending is not None:
+            yield self._finish_pending(pending)
 
-            yield info
+    def _finish_pending(self, dispatched: "_DispatchedStep") -> StepInfo[S]:
+        info = self._finish_step(dispatched)
+        levanter.tracker.log({"throughput/loading_time": dispatched.loading_time}, step=info.step)
+        return info
 
     def train(self, state: S, train_loader: Iterable[X]) -> StepInfo[S]:
         """
@@ -727,7 +798,7 @@ class Trainer:
             self._train_step,
             axis_resources=self.parameter_axis_mapping,
             out_axis_resources=self.parameter_axis_mapping,
-            donate_args=(True,),
+            donate_args=(not _ASYNC_STEP,),
         )
 
     @cached_property
@@ -736,7 +807,7 @@ class Trainer:
             functools.partial(self._train_step, _no_hooks=True),
             axis_resources=self.parameter_axis_mapping,
             out_axis_resources=self.parameter_axis_mapping,
-            donate_args=(True,),
+            donate_args=(not _ASYNC_STEP,),
         )
 
     def _train_step(self, state: S, batch, batch_kwargs, _no_hooks=False) -> TrainStepResult[S]:
