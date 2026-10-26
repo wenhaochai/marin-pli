@@ -55,7 +55,7 @@ nvidia-smi -L
 fail=0
 ARMS=("${@:2}"); [ ${#ARMS[@]} -ge 1 ] || ARMS=(base jax fa4)
 for ARM in "${ARMS[@]}"; do
-  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP
+  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP LEVANTER_EMBED_GRAD_F32 LEVANTER_NORM_GUARD
   export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   # attribution: no command buffers in any arm (each kernel then names its own HLO instruction; kernel times are the
   # same), and the step's optimized HLO dumped for scripts/della/speed_all/trace_families.py
@@ -72,6 +72,7 @@ for ARM in "${ARMS[@]}"; do
     live) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 ;;   # the live defaults since 2026-10-26 05:41
     liveprod) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="${XLA_FLAGS/--xla_gpu_enable_command_buffer= /--xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL }" ;;   # live with CUDA graphs on, as trained
     liveprodasync) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="${XLA_FLAGS/--xla_gpu_enable_command_buffer= /--xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL }" ;;
+    newlive) export ATTN_BACKEND=fa4thd REMAT=fmlp LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 LEVANTER_EMBED_GRAD_F32=1 LEVANTER_NORM_GUARD=1e-3 ;;   # the live defaults since 13:09, graphs off (kernel attribution)
     nowprod) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="${XLA_FLAGS/--xla_gpu_enable_command_buffer= /--xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL }" ;;   # the production flags, CUDA graphs on: GPU busy share as trained (family attribution may be partial)
     *) echo "unknown arm $ARM"; fail=1; continue ;;
   esac
