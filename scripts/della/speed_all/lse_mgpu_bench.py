@@ -41,12 +41,15 @@ for K in (768, 512):
             x, w, labels, out_dtype=jnp.bfloat16, block_m=128, block_n=256, block_k=64, num_warps=8, num_stages=3,
             accurate_exp=False)),
         "mgpu_v3": jax.jit(lambda x, w, labels=labels: lse_and_logits_mgpu(x, w, labels)),
+        "mgpu_v3_nolabels": jax.jit(lambda x, w: lse_and_logits_mgpu(x, w)),
+        "label_gather_dot": jax.jit(lambda x, w, labels=labels: jnp.sum(
+            x.astype(jnp.float32) * jnp.take(w, labels, axis=1).T.astype(jnp.float32), axis=1)),
     }
     for name, fn in forms.items():
         try:
             ms = bench(fn, x, w)
             row = {"K": K, "form": name, "ms": round(ms, 3), "tflops": round(flop / ms / 1e9, 1)}
-            if name != "cublas_bf16":
+            if name in ("triton_prod", "mgpu_v3"):
                 logits, lse, lab = fn(x, w)
                 lg = np.asarray(logits.astype(jnp.float32))
                 row["logits_bf16_equal"] = float(np.mean(lg == ref_bf16))
