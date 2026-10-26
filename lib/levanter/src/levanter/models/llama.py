@@ -371,7 +371,7 @@ class LlamaDecoderLayer(eqx.Module):
         # self attention and skip connection
         residual = x
         x = self.input_layernorm(x)
-        attn_output = self.self_attn(x=x, mask=mask, key=k_attn, pos_ids=pos_ids)
+        attn_output = _checkpoint_name(self.self_attn(x=x, mask=mask, key=k_attn, pos_ids=pos_ids), "attn_out")
         if self.post_attn_layernorm is not None:
             attn_output = self.post_attn_layernorm(attn_output)
         x = residual + attn_output
@@ -379,7 +379,7 @@ class LlamaDecoderLayer(eqx.Module):
         # MLP and skip connection
         residual = x
         x = self.post_attention_layernorm(x)
-        mlp_output = self.mlp(x, key=k_mlp)
+        mlp_output = _checkpoint_name(self.mlp(x, key=k_mlp), "mlp_out")
         if self.post_mlp_layernorm is not None:
             mlp_output = self.post_mlp_layernorm(mlp_output)
         output = residual + mlp_output
@@ -533,7 +533,8 @@ _take_rows_f32_grad.defvjp(_take_rows_f32_grad_fwd, _take_rows_f32_grad_bwd)
 
 
 def _checkpoint_name(x: NamedArray, name: str) -> NamedArray:
-    """Names ``x`` for a remat policy that saves values by name (the MLP's matmul outputs: mlp_gate, mlp_up); a no-op for
+    """Names ``x`` for a remat policy that saves values by name (mlp_gate, mlp_up, and the attention and MLP outputs that
+    hybrid_norm's post-norms read in the backward pass: attn_out, mlp_out); a no-op for
     every other policy."""
     return hax.named(checkpoint_name(x.array, name), x.axes)
 
