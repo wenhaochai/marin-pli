@@ -643,6 +643,18 @@ def _backward_b_tiled_from_lse(
     return grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
+def _lse_kernel(x_block: jax.Array, w: jax.Array, labels: jax.Array):
+    """bf16 logits, f32 logsumexp and f32 label logits of one block from the Triton kernel (imported here: jax_triton
+    resets TRITON_CACHE_DIR at import, so default runs never import it). Config: the fastest at all four benchmarked
+    shapes (wq w271: 8192 x 512 in 2.46 ms against 6.84 ms for the XLA ops with the same outputs)."""
+    from .lse_logits_triton import lse_and_logits
+
+    return lse_and_logits(
+        x_block, w, labels, out_dtype=jnp.bfloat16, block_m=128, block_n=256, block_k=64, num_warps=8, num_stages=3,
+        accurate_exp=False,
+    )
+
+
 @partial(jax.jit, static_argnames=["b_block_size", "dtype", "logit_soft_cap", "precision"])
 def _full_vocab_b_tiled_forward_with_grads(
     x: Float[Array, "B H"],
@@ -679,6 +691,14 @@ def _full_vocab_b_tiled_forward_with_grads(
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
     grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32)
     grad_w_init = jnp.zeros((h_dim, v_dim), dtype=jnp.float32)
+    use_kernel = (
+        os.environ.get("LEVANTER_CE_LSE_KERNEL", "0") == "1"
+        and x.dtype == jnp.bfloat16
+        and w.dtype == jnp.bfloat16
+        and logit_soft_cap is None
+        and (dtype is None or jnp.dtype(dtype) == jnp.float32)
+        and h_dim % 64 == 0
+    )
 
     def body(block_index, state):
         loss, lse, grad_x, grad_w = state
@@ -690,29 +710,41 @@ def _full_vocab_b_tiled_forward_with_grads(
         valid_rows = labels_block >= 0
         safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
 
-        # forward: linear_softmax_cross_entropy_loss_reference(x_block, safe_labels, w, ...)
-        logits_f32 = jax.lax.dot_general(
-            x_block,
-            w,
-            (((1,), (0,)), ((), ())),
-            precision=precision,
-            preferred_element_type=jnp.float32,
-        )
-        fwd_logits = logits_f32.astype(dtype) if dtype is not None else logits_f32
-        fwd_logits = _apply_logit_soft_cap(fwd_logits, logit_soft_cap)
-        lse_raw = _cross_entropy_logsumexp(fwd_logits)
-        label_logits = fwd_logits[jnp.arange(b_block_size), safe_labels]
-        loss_block = jnp.where(valid_rows, lse_raw - label_logits, 0.0).astype(out_dtype)
-        lse_block = jnp.where(valid_rows, lse_raw, 0.0).astype(out_dtype)
-        loss = jax.lax.dynamic_update_slice(loss, loss_block, (b_start,))
-        lse = jax.lax.dynamic_update_slice(lse, lse_block, (b_start,))
-
-        # backward: _backward_b_tiled_from_lse's body on the same GEMM (its logits are the GEMM's bf16 output)
-        # the bf16 rounding as reduce_precision: XLA may drop an f32 -> bf16 -> f32 convert pair (excess precision)
-        if x.dtype == jnp.bfloat16:
-            logits_raw = jax.lax.reduce_precision(logits_f32, exponent_bits=8, mantissa_bits=7)
+        if use_kernel:
+            # LEVANTER_CE_LSE_KERNEL=1: one Triton kernel (lse_logits_triton.py, by the Tokenizer Size session) runs the
+            # logits GEMM and, in its epilogue from the f32 accumulators, writes the bf16 logits (RNE, the same values as
+            # the reduce_precision below), each row's f32 label logit and the logsumexp partials; no f32 logits reach
+            # HBM and the two lse passes go away. Same math up to the GEMM's and the lse merge's summation order.
+            logits_bf16, lse_raw, label_logits = _lse_kernel(x_block, w, safe_labels)
+            logits_raw = logits_bf16.astype(jnp.float32)
+            loss_block = jnp.where(valid_rows, lse_raw - label_logits, 0.0).astype(out_dtype)
+            lse_block = jnp.where(valid_rows, lse_raw, 0.0).astype(out_dtype)
+            loss = jax.lax.dynamic_update_slice(loss, loss_block, (b_start,))
+            lse = jax.lax.dynamic_update_slice(lse, lse_block, (b_start,))
         else:
-            logits_raw = logits_f32.astype(x.dtype).astype(jnp.float32)
+            # forward: linear_softmax_cross_entropy_loss_reference(x_block, safe_labels, w, ...)
+            logits_f32 = jax.lax.dot_general(
+                x_block,
+                w,
+                (((1,), (0,)), ((), ())),
+                precision=precision,
+                preferred_element_type=jnp.float32,
+            )
+            fwd_logits = logits_f32.astype(dtype) if dtype is not None else logits_f32
+            fwd_logits = _apply_logit_soft_cap(fwd_logits, logit_soft_cap)
+            lse_raw = _cross_entropy_logsumexp(fwd_logits)
+            label_logits = fwd_logits[jnp.arange(b_block_size), safe_labels]
+            loss_block = jnp.where(valid_rows, lse_raw - label_logits, 0.0).astype(out_dtype)
+            lse_block = jnp.where(valid_rows, lse_raw, 0.0).astype(out_dtype)
+            loss = jax.lax.dynamic_update_slice(loss, loss_block, (b_start,))
+            lse = jax.lax.dynamic_update_slice(lse, lse_block, (b_start,))
+
+            # backward: _backward_b_tiled_from_lse's body on the same GEMM (its logits are the GEMM's bf16 output)
+            # the bf16 rounding as reduce_precision: XLA may drop an f32 -> bf16 -> f32 convert pair (excess precision)
+            if x.dtype == jnp.bfloat16:
+                logits_raw = jax.lax.reduce_precision(logits_f32, exponent_bits=8, mantissa_bits=7)
+            else:
+                logits_raw = logits_f32.astype(x.dtype).astype(jnp.float32)
         logits = _apply_logit_soft_cap(logits_raw, logit_soft_cap)
         probs = jnp.exp(logits - lse_block.astype(jnp.float32)[:, None])
         dlogits = probs * (g_loss_block + jnp.zeros_like(g_loss_block))[:, None]

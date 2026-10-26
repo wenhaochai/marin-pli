@@ -19,6 +19,7 @@
 #   a1     LEVANTER_CE_BTILED_ONEHOT=1 (label term as a select in the b-tiled CE backward)
 #   gif    LEVANTER_CE_GRAD_IN_FWD=1 (b-tiled CE gradients computed in the forward, one logits GEMM per block)
 #   a1gif  both
+#   a1gifk A1, GIF and the Triton lse kernel (LEVANTER_CE_LSE_KERNEL=1: logits GEMM with bf16 logits, label logit and lse)
 #   xoh    LEVANTER_CE_XLA_ONEHOT=1 (label term as a select in the xla streaming CE backward: microbatch 1)
 #   cbw    XLA_CMD_BUFFER_WHILE=1 (while/conditional loops as CUDA-graph commands); xohcbw: both
 #   fa4    ATTN_BACKEND=fa4 (FA4/CuTe attention; changes the math, run tag -fa4); fa4cbw: with CUDA-graph loops
@@ -55,6 +56,7 @@ case $knobs in
   a1) ON="LEVANTER_CE_BTILED_ONEHOT=1";;
   gif) ON="LEVANTER_CE_GRAD_IN_FWD=1";;
   a1gif) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
+  a1gifk) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1";;
   xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
   cbw) ON="XLA_CMD_BUFFER_WHILE=1";;
   fa4) ON="ATTN_BACKEND=fa4";;
