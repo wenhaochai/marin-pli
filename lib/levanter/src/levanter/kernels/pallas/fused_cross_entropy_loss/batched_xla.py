@@ -342,6 +342,7 @@ def _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
     # loss differs only by the GEMM's and the lse merge's summation order (the kernel's bf16 logits are not used here).
     use_kernel = (
         os.environ.get("LEVANTER_CE_LSE_KERNEL_EVAL", "0") == "1"
+        and v_dim >= _LARGE_VOCAB_THRESHOLD  # below it the kernel is slower than XLA's GEMM (at 8K, 2.6 against 0.8 ms per block, w409)
         and x.dtype == jnp.bfloat16
         and w.dtype == jnp.bfloat16
         and logit_soft_cap is None
@@ -714,11 +715,12 @@ def _full_vocab_b_tiled_forward_with_grads(
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
     grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32)
     grad_w_init = jnp.zeros((h_dim, v_dim), dtype=jnp.float32)
-    # LEVANTER_CE_BTILED_F32_LOGITS=1 (speed test, 2026-10-26): the backward reads the GEMM's f32 logits instead of their
-    # bf16 rounding (so no lse kernel, whose logits are bf16). Below 65536 entries the v-tiled path's bf16 dot feeds an
-    # f32 convert that XLA computes in f32 (excess precision); this keeps that precision for a small vocabulary moved
-    # onto this path by LEVANTER_CE_BTILED_MIN_VOCAB.
-    f32_logits = os.environ.get("LEVANTER_CE_BTILED_F32_LOGITS", "0") == "1"
+    # Below 65536 entries (reached only through LEVANTER_CE_BTILED_MIN_VOCAB) the backward reads the GEMM's f32 logits
+    # instead of their bf16 rounding, and so skips the lse kernel, whose logits are bf16. One H100, 65536 rows, mean-loss
+    # gradients against an f32 reference (wq w409): at 8K the gradient error is 2.0e-3 with f32 logits against 5.0e-3
+    # with bf16, and the call takes 6.7 ms against 21 ms with the lse kernel; at 32K 1.9e-3 against 3.9e-3, 24 ms
+    # against 20 ms. LEVANTER_CE_BTILED_F32_LOGITS=1 (speed test, 2026-10-26) does the same at any size.
+    f32_logits = v_dim < _LARGE_VOCAB_THRESHOLD or os.environ.get("LEVANTER_CE_BTILED_F32_LOGITS", "0") == "1"
     use_kernel = (
         os.environ.get("LEVANTER_CE_LSE_KERNEL", "0") == "1"
         and not f32_logits
