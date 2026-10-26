@@ -750,3 +750,23 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 - CPU 检查 `tmp/pls_fill/fill_test.py`：8 条流的 HC、3/6 个块的 AttnRes Block 损失和梯度有限，块数改变损失。dry run 的 run id 正确。代码 e1f3efbd9c。
 - 占位（所有者弹窗 2026-10-25）：8 条流加到 Fig 43；AttnRes 按源的个数做新图 Fig 44（`fig-ar-sources`，已有 Block 8 个块和 Full 两个种子的点）。网页 b7d417e，artifact 版本 102。
 - 这 4 个 job 都和老 run 比较，所以用老的 CE 路径；只有逐位相同的加速会用到它们。
+
+## 中途结果（2026-10-26）
+
+- Pre-LN 12 层（w147/w148 完成）：独立头最后一层训练损失 3.252，探针 3.139，代价 0.113。Pre-LN 48 层是 0.089，HC 12 层 0.121、48 层 0.048。所以 Pre-LN 的代价也随深度下降，但比 HC 降得少；24 层（w149/w150）还在跑。Fig 39 已填 12 层的点。
+- mHC 残差混合固定为 I 的独立头（w76 完成）：第 48 层最终训练损失 3.026；Sinkhorn 混合的 mHC 独立头是 3.024。残差混合不影响独立头模型；代价要等探针 w77（第 2,820/4,959 步）。
+- MuonH 更新效率（`tmp/pls_muon_eff/muon_eff.py`，Pre-LN 12 层，256 token，试跑）：独立头的更新得到最后一层损失最佳一阶下降（每个矩阵用 polar(g_fin)）的 95.6%；第 1 层 92.8%，最后一层 100%。48 层的 Pre-LN 和 HC（1024 token）在 vis1 上跑。
+
+## 速度：GPU 结果（2026-10-26）
+
+| 项 | 逐位相同（det 轮，40 步，50 个指标） | Pre-LN d48 每步（time 轮，中位数） | 结论 |
+|---|---|---|---|
+| 不开（w205） | — | 14.962 s | 基线 |
+| A1，select 代替 scatter（w206） | 是 | 13.102 s（−12.4%） | 已对所有 pls job 打开（dc033b04a9） |
+| 前向算梯度（w217） | 否：第 0 步起部分读出的前向损失就有差别（约 1e-7 相对） | 14.074 s（−5.9%） | 只用于全新的一组对照 |
+
+- 前向算梯度不逐位：同一个形状的 f32 logits 矩阵乘，在新程序里有更多使用者，XLA 对其中一部分实例选了不同的融合和算法，累加顺序变了；CPU 上换成同一个矩阵乘就逐位相同，所以不是逻辑错误。
+- HC、AttnRes 不开时（w207/w208）：每步 24.68 s、34.00 s。profile 会卡在 stop_trace（事件太多），已改为关掉 Python tracer、microbatch 1 的结构只记 1 步（03e6d9aaa2）。
+- 离线 H100 编译（`tmp/pls_speed/ce_hlo.py`）：每个 8192 行块，现在约 36 GB 流量、4 个 logits 大小的矩阵乘；A1 约 19 GB；A1 加前向算梯度约 19 GB、3 个矩阵乘。xla 路径（microbatch 1）的 select 去掉每个词表块的 scatter 一遍。
+- 一次读完 logits 的在线 logsumexp（XLA 的 variadic reduce）：CPU 上对 float64 真值的相对误差 1.4e-5，两遍法 5.9e-8；不上线。要无损地把 lse 并进矩阵乘需要 Triton kernel；Tokenizer Size session 不需要，pls 只有换新组合时才用得上。
+- Tokenizer Size session 的结果（它的 300m，宽度 768）：FA4 attention 加 CUDA graph 循环每步快 50%（4096）到 77%（4480），结果在 bf16 噪声内但不逐位；它已用作默认。pls 已移植 FA4（`ATTN_BACKEND=fa4`，run tag -fa4，0ac7a45464）和 CUDA graph 循环（`XLA_CMD_BUFFER_WHILE=1`，38c771313a），都默认关；测速在排队（w237、w238、w242–w244）。
