@@ -110,6 +110,18 @@ runs only) and ab_arms2 configs 4096post / 5504post (80 steps, an eval every 20 
 defaults (fa4thd, flash, CE A1 + GIF + lse kernel, CUDA-graph loops) pass it: w297 (128K, 4096) 1034 ms, evals at
 20/40/60/80 and checkpoints at steps 2/21/41/61; w298 (8K, 5504) 1075 ms; no OOM, eval losses finite.
 
+**Where the live stack stands (2026-10-26 06:20).** First production run on it: w44 (300m 128K, 4 GPUs) trains at 1.8
+it/s, ~0.556 s/step (old code 1.506; the w46 stack 0.716), smoke 538 ms/step; a whole 128K run ~1:45 against 4:47.
+Profiles of the live defaults (w304 128K, w305 8K; 2 GPUs, graphs off; summed kernel time 1027 / 780 ms): 128K = CE 29%
+(the lse kernel 110 ms), MLP 21%, remat recompute 12%, attention 11%, projections 11%, norms 8%, collectives 3%,
+embedding 2%; 8K = MLP 27%, remat 15%, attention 15%, projections 14%, CE 11%, norms 10%. GPU busy 89-91%. The host
+leaves the GPUs idle between steps: Trainer.train_step reads result.loss.item() right after dispatch, then runs the
+hooks, logs and loads the next batch before dispatching it; production W&B gives wall minus step duration = 3.1-3.2% of a
+step (w216 0.546 vs 0.529 s, w46 0.687 vs 0.666 s; tmp/speed_wt profile w286 shows ~65 ms per boundary under the
+profiler). Branch async-hooks (91e23bf466): LEVANTER_ASYNC_STEP=1 dispatches step N+1 before finishing step N (hooks see
+each step's own state, which the train step then keeps instead of donating); levanter test_train_lm passes in both modes;
+4-GPU check w307 (live vs liveasync, evals and checkpoints mid-run, wall_ms from W&B runtime).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
