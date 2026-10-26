@@ -5,6 +5,7 @@ import atexit
 import contextvars
 import copy
 import functools
+import math
 import logging as pylogging
 import os
 import sys
@@ -35,7 +36,6 @@ import haliax as hax
 from rigging.filesystem.storage_path import StoragePath
 import haliax.tree_util
 import jax
-import jax.numpy as jnp
 import jmp
 import numpy as np
 from draccus import field
@@ -571,10 +571,12 @@ class Trainer:
         loss = result.loss.item()
         self.hooks.emit_event(ProgressEvent.TRAIN_STEP_FINISHED)
 
-        if self.config.crash_on_nan and jnp.isnan(loss):
+        # math, not jnp: the loss is a host float, and a jnp check is a device computation that waits behind every step
+        # already enqueued (with LEVANTER_ASYNC_STEP=1 it waited for the whole next step).
+        if self.config.crash_on_nan and math.isnan(loss):
             raise RuntimeError("Loss is NaN")
 
-        if self.config.crash_on_inf and jnp.isinf(loss):
+        if self.config.crash_on_inf and math.isinf(loss):
             raise RuntimeError("Loss is Inf")
 
         info = StepInfo(
