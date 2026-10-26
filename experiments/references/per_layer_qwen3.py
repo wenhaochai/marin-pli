@@ -501,7 +501,9 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
             n = round(self.config.pls_visible_frac * self.Embed.size)
             h = h * hax.named((jnp.arange(self.Embed.size) < n).astype(h.dtype), self.Embed)
         x = dataclasses.replace(norm, weight=None)(h)  # the same normalization, no scale
-        return x, norm.weight.astype(lm_head.dtype) * lm_head
+        # the product in f32, so that its transpose (the scale's gradient) sums over the vocabulary in f32: with a bf16
+        # product the scale's gradient was 10x less accurate than today's at initialization (wq w359; f32: w367)
+        return x, (norm.weight.astype(jnp.float32) * lm_head.astype(jnp.float32)).astype(lm_head.dtype)
 
     def _subset_ce(self, outs: NamedArray, k: int, example: LmExample, select, *, logit_soft_cap) -> jax.Array:
         """Stop-gradient CE of layer k's readout on the positions ``select`` keeps (targets x_{t+1}, the baseline's
