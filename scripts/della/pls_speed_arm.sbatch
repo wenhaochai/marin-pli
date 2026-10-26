@@ -21,11 +21,13 @@
 #   a1gif  both
 #   xoh    LEVANTER_CE_XLA_ONEHOT=1 (label term as a select in the xla streaming CE backward: microbatch 1)
 #   cbw    XLA_CMD_BUFFER_WHILE=1 (while/conditional loops as CUDA-graph commands); xohcbw: both
+#   a1     with -prof: the profiling round on today's production knobs (A1 on)
 #   evalbase  20 steps, then 160 eval batches at the train microbatch (640 sequences for a microbatch-1 design)
 #   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
 # Rounds (default: det time for preln, time for hc and attnres; a -det, -time or -dettime suffix sets them): det
 # (XLA_FLAGS --xla_gpu_exclude_nondeterministic_ops=true, 40 steps: bitwise comparison between arms); time (default
-# flags, 40 steps, PROFILE=20:3: step time, kernel times, memory).
+# flags, 40 steps, PROFILE=20:3: step time, kernel times, memory); prof (-prof only: no command buffers, HLO dumped,
+# PROFILE=20:2, for trace_families.py).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
@@ -38,7 +40,7 @@ trap pls_tmp_cleanup EXIT
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 NAME=${FETCHED_JOB_NAME:-$SLURM_JOB_NAME}
 spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}; rounds=
-case $knobs in *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; esac
+case $knobs in *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; *-prof) rounds="prof"; knobs=${knobs%-prof};; esac
 case $design in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ROUNDS="det time";;
   hc) A="LAYERS=48 PDP=4 ARCH=hc"; ROUNDS="time";;
@@ -62,15 +64,22 @@ BASE="SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=0 PARAM_MAP=vocab NUM_GPUS=4 $A 
 echo "arm $NAME: design $design, knobs [$ON], rounds $ROUNDS, GPUs ${CUDA_VISIBLE_DEVICES:-all}"; nvidia-smi -L || true
 for r in $ROUNDS; do
   echo "round $r $(date +%T)"
-  extra=; [ "$r" = det ] && extra="XLA_FLAGS=--xla_gpu_exclude_nondeterministic_ops=true"; [ "$r" = time ] && extra="PROFILE=20:3"
+  xf=; pr=
+  case $r in
+    det) xf="--xla_gpu_exclude_nondeterministic_ops=true";;
+    time) pr="PROFILE=20:3";;
+    # prof: no command buffers (each kernel then shows in the trace under its own HLO instruction) and the optimized HLO
+    # dumped, for trace_families.py (the Tokenizer Size session's speed-all 7b2eba3a51); its step time is not the measure
+    prof) pr="PROFILE=20:2"; xf="--xla_gpu_enable_command_buffer= --xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/pls_speed/hlo_${NAME}_${JID} --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*";;
+  esac
   # shellcheck disable=SC2086
-  env $BASE $ON $extra RUN_TAG=-j${JID}$r timeout 40m "$PY" -m experiments.references.della_muonh_qwen3_scaling \
+  env $BASE $ON $pr ${xf:+"XLA_FLAGS=$xf"} RUN_TAG=-j${JID}$r timeout 40m "$PY" -m experiments.references.della_muonh_qwen3_scaling \
     > logs/slurm/${NAME}_${JID}_$r.log 2>&1 || echo "round $r rc=$?"
   grep -E "First train step completed|Saving|peak|Traceback|Error" logs/slurm/${NAME}_${JID}_$r.log | tail -5 || true
 done
 echo "rounds done $(date +%T)"
 out=$MARIN_PREFIX/speedrun
-for d in "$out"/*-j${JID}det* "$out"/*-j${JID}time* "$MARIN_PREFIX"/tmp/checkpoints-temp"$out"/*-j${JID}det* "$MARIN_PREFIX"/tmp/checkpoints-temp"$out"/*-j${JID}time*; do
-  [[ -n $JID && ( $d == *-j${JID}det* || $d == *-j${JID}time* ) && -d $d ]] && rm -rf -- "$d"
+for d in "$out"/*-j${JID}det* "$out"/*-j${JID}time* "$out"/*-j${JID}prof* "$MARIN_PREFIX"/tmp/checkpoints-temp"$out"/*-j${JID}det* "$MARIN_PREFIX"/tmp/checkpoints-temp"$out"/*-j${JID}time* "$MARIN_PREFIX"/tmp/checkpoints-temp"$out"/*-j${JID}prof*; do
+  [[ -n $JID && ( $d == *-j${JID}det* || $d == *-j${JID}time* || $d == *-j${JID}prof* ) && -d $d ]] && rm -rf -- "$d"
 done
 echo done
