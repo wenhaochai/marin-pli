@@ -12,6 +12,7 @@ import equinox as eqx
 import haliax as hax
 import haliax.partitioning
 import jax
+import jax._src.core as jax_core
 import jax._src.distributed as jax_distributed
 import numpy as np
 from haliax import is_named_array
@@ -68,6 +69,10 @@ def local_cpu_mesh():
 
 def is_inside_jit():
     """Returns True if we're currently inside a jit"""
+    # With no transformation active (the train loop's host path, which logs several times a step) the answer is False
+    # without the probe array: jnp.zeros(()) there is a device computation and a host-to-device copy on every call.
+    if jax_core.trace_state_clean():
+        return False
     return isinstance(jnp.zeros(()), jax.core.Tracer)
 
 

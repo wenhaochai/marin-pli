@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
+import os
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Type, Union, cast
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import PRNGKeyArray
 
@@ -468,6 +470,40 @@ class LlamaTransformer(eqx.Module):
         return ListCache(caches)
 
 
+# LEVANTER_EMBED_GRAD_F32=1 (speed and numerics, 2026-10-26): the input embedding's gradient is summed in f32 and cast to
+# the table's dtype once. The plain lookup's gradient is a scatter-add in the table's compute dtype, bf16 under mixed
+# precision: one rounding per occurrence of a token, so the rows of frequent tokens lose precision (17-20% relative error
+# on the 16 most frequent rows of 131072 Zipf token ids, H100 w327), and bf16 atomics with many hits on one row are slow
+# (11.3 ms per 131072 tokens at 128K in the train step, w304; f32 0.7 ms in w327).
+_EMBED_GRAD_F32 = os.environ.get("LEVANTER_EMBED_GRAD_F32", "0") == "1"
+
+
+@jax.custom_vjp
+def _take_rows_f32_grad(table: jax.Array, ids: jax.Array) -> jax.Array:
+    return jnp.take(table, ids, axis=0)
+
+
+def _take_rows_f32_grad_fwd(table, ids):
+    return jnp.take(table, ids, axis=0), (table, ids)
+
+
+def _take_rows_f32_grad_bwd(res, g):
+    table, ids = res
+    grad = jnp.zeros(table.shape, jnp.float32).at[ids].add(g.astype(jnp.float32))
+    return grad.astype(table.dtype), None
+
+
+_take_rows_f32_grad.defvjp(_take_rows_f32_grad_fwd, _take_rows_f32_grad_bwd)
+
+
+def _embed_f32_grad(token_embeddings: hnn.Embedding, input_ids: NamedArray) -> NamedArray:
+    """``token_embeddings(input_ids)`` with the table gradient summed in f32 (see LEVANTER_EMBED_GRAD_F32)."""
+    Vocab = token_embeddings.Vocab
+    weight = token_embeddings.weight.rearrange((Vocab, ...))
+    rows = _take_rows_f32_grad(weight.array, input_ids.array)
+    return hax.named(rows, (*input_ids.axes, *weight.axes[1:])) * token_embeddings.reparam.active_scale
+
+
 class LlamaEmbedding(ModuleWithStateDictSerialization, eqx.Module):
     """Similar to GPT2 Embedding, except that:
     - Llama doesn't have position embedding in the Embedding layer.
@@ -495,7 +531,10 @@ class LlamaEmbedding(ModuleWithStateDictSerialization, eqx.Module):
 
     @named_call
     def embed(self, input_ids, *args):
-        input_embeds = self.token_embeddings(input_ids)
+        if _EMBED_GRAD_F32:
+            input_embeds = _embed_f32_grad(self.token_embeddings, input_ids)
+        else:
+            input_embeds = self.token_embeddings(input_ids)
         if self.norm is not None:
             input_embeds = self.norm(input_embeds)
         return input_embeds
