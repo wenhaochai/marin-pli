@@ -400,7 +400,9 @@ def _h100_full_vocab_b_tiled_block_size(
         return None
     if x.shape[0] < _H100_FULL_VOCAB_B_TILED_MIN_BATCH:
         return None
-    if w.shape[1] < _LARGE_VOCAB_THRESHOLD:
+    # LEVANTER_CE_BTILED_MIN_VOCAB (speed test, 2026-10-26): the smallest vocabulary for this path (default 65536). At 8K
+    # the other path's GEMMs take 4.7-13.3 ms each against ~2.5 ms for their FLOPs (w351 profile).
+    if w.shape[1] < int(os.environ.get("LEVANTER_CE_BTILED_MIN_VOCAB", _LARGE_VOCAB_THRESHOLD)):
         return None
     return _H100_FULL_VOCAB_B_TILED_BLOCK_SIZE
 
