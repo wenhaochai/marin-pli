@@ -950,7 +950,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     keep=[] if VARIANT in OV_VARIANTS or TPP != 20 else [dict(every=10000)],
                 ),
                 mesh=MeshConfig(
-                    axes={"data": -1, "replica": 1, "model": 1},
+                    # MESH=dp (speed test, 2026-10-26): plain data parallelism, every parameter replicated on each GPU and
+                    # one gradient all-reduce, instead of FSDP over embed (all-gathers and reduce-scatters per layer)
+                    axes={"data": 1, "replica": -1, "model": 1} if os.environ.get("MESH", "fsdp") == "dp" else {"data": -1, "replica": 1, "model": 1},
                     compute_mapping={
                         "token": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
                         "token_repeat": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
