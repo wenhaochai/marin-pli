@@ -23,6 +23,8 @@
 #   a1      = CE label term as a select (pls 5ab04d3e45)   gif = a1 + CE gradient in the forward
 #   dbase, dbase2, da1, dgif = base, base again, a1, gif with --xla_gpu_exclude_nondeterministic_ops (per-step loss bitwise?)
 #   now     = the defaults since 2026-10-26 04:30 (FA4, REMAT=flash, CE A1 + GIF, cb)   nowdots = now with REMAT=fdots
+#   nowpipe = now with XLA collective pipelining (all-gather, reduce-scatter) and the latency-hiding scheduler;
+#   nowpipe2 = nowpipe with while-loop double buffering
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
 # PAIR line, its per-step train/loss minus the first arm's (same seed, data, schedule; bf16 noise is ~1e-3).
 set -uo pipefail
@@ -62,6 +64,7 @@ for ARM in "${ARMS[@]}"; do
   export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
   CB="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
+  PIPE="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_pipelined_all_gather=true --xla_gpu_enable_pipelined_reduce_scatter=true"   # FSDP collectives of the next layer inside this layer's scan iteration
   case $ARM in
     old) export ATTN_BACKEND=jax_flash ;;   # the old path: the main checkout defaults to fa4 since 2026-10-26
     base) ;;
@@ -76,6 +79,8 @@ for ARM in "${ARMS[@]}"; do
     fa4flash) export ATTN_BACKEND=fa4 REMAT=flash XLA_FLAGS="$CB" ;;
     now) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;   # the defaults since 2026-10-26 04:30
     nowdots) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
+    nowpipe) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE" ;;
+    nowpipe2) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE --xla_gpu_enable_while_loop_double_buffering=true" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
     gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     dbase|dbase2) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash ;;   # det arms on JAX flash (FA4 backward is not run-to-run deterministic)
