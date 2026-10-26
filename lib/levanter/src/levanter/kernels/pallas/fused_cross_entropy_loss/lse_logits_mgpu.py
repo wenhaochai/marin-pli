@@ -181,6 +181,9 @@ def lse_and_logits_mgpu(x: jax.Array, w: jax.Array, labels: jax.Array | None = N
     lse = merge_lse_partials(m_part, s_part)
     if labels is None:
         return logits, lse
-    w_cols = jnp.take(w, labels, axis=1)   # [K, M]: each row's label column
-    label_logits = jnp.sum(x.astype(jnp.float32) * w_cols.T.astype(jnp.float32), axis=1)
+    # each row's label row of w.T [N, K]: in training w is the [V, H] lm_head transposed (loss.py rearranges it to
+    # (Embed, Vocab)), so XLA can cancel the two transposes and gather contiguous K-element rows; the column gather of
+    # [K, N] took 0.27 ms per 8192-row block on its own (wq w379)
+    w_rows = jnp.take(w.T, labels, axis=0)   # [M, K]
+    label_logits = jnp.sum(x.astype(jnp.float32) * w_rows.astype(jnp.float32), axis=1)
     return logits, lse, label_logits
