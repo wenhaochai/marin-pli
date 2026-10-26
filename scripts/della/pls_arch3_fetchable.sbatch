@@ -40,6 +40,9 @@
 #   arch3-preln-vis125-sep       Pre-LN readouts see 1/8 of the coordinates (owner popup 2026-10-25: extends E1)
 #   arch3-hc{1,2}-{sep,probes}  HC 48 layers with 1 / 2 residual streams instead of 4 (owner popup 2026-10-25: is HC's low
 #                                cost its extra streams or its token-dependent gates? 1 stream = Pre-LN plus HC's gates)
+#   arch3-hc8-{sep,probes}       HC 48 layers with 8 streams (owner 2026-10-25, queue fill: the stream-count curve 1/2/4/8)
+#   arch3-arblock24-{sep,probes} AttnRes Block with 24 blocks instead of 8 (owner 2026-10-25, queue fill: does the cost fall
+#                                with the number of sources, from Block 0.113 toward Full?)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -68,6 +71,8 @@ case $DESIGN in
   arch3-preln-vis125) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_VIS=0.125";;
   arch3-hc1) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=1";;
   arch3-hc2) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=2";;
+  arch3-hc8) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=8";;
+  arch3-arblock24) S="$base LAYERS=48 PDP=2 ARCH=attnres_block AR_BLOCKS=24";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
