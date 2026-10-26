@@ -174,8 +174,10 @@ def _mean_ce_grad_in_forward(
         w = shard_lm_head.array
         b_block = _grad_in_forward_b_block(x, w)
         taken.append(b_block is not None)
-        if b_block is None:  # not the b-tiled path: the caller falls back (these outputs are discarded)
-            return hax.zeros(shard_labels.axes), hax.zeros(shard_labels.axes)
+        if b_block is None:  # not the b-tiled path: the caller falls back and discards these outputs. Plain arrays:
+            # hax.zeros would add a sharding constraint, which a manual shard_map rejects (w196/w197 smokes, 2026-10-26)
+            z = hax.named(jnp.zeros(tuple(a.size for a in shard_labels.axes), jnp.float32), shard_labels.axes)
+            return z, z
         loss, carrier = _ce_with_gradient_carrier(x, labels, w, g, b_block, dtype, logit_soft_cap, precision)
         unflat = lambda a: hax.named(a, batch_axis).unflatten_axis(batch_axis, shard_labels.axes)
         return unflat(jax.lax.stop_gradient(loss)), unflat(carrier)
