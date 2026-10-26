@@ -14,13 +14,17 @@
 # Speed work (owner 2026-10-25: ship every speed item, test jobs go through wq with --prio 10, not pli-cp). One arm of
 # an A/B on 4 GPUs: a smoke-length run of a 48-layer design per round, each with its own run id (RUN_TAG -j<id><round>,
 # W&B group muonh-qwen3-smoke). Two arms with the same design and different knobs are compared offline from W&B.
-# Job name: pls-speed-arm-<design>-<knobs>, design preln | hc | attnres, knobs:
+# Job name: pls-speed-arm-<design>-<knobs>[-<rounds>], design preln | hc | attnres, knobs:
 #   base   today's programs
 #   a1     LEVANTER_CE_BTILED_ONEHOT=1 (label term as a select in the b-tiled CE backward)
 #   gif    LEVANTER_CE_GRAD_IN_FWD=1 (b-tiled CE gradients computed in the forward, one logits GEMM per block)
 #   a1gif  both
-# Rounds: det (XLA_FLAGS --xla_gpu_exclude_nondeterministic_ops=true, 40 steps: bitwise comparison between arms) for
-# preln; time (default flags, 40 steps, PROFILE=20:3: step time, kernel times, memory) for every design.
+#   xoh    LEVANTER_CE_XLA_ONEHOT=1 (label term as a select in the xla streaming CE backward: microbatch 1)
+#   evalbase  20 steps, then 160 eval batches at the train microbatch (640 sequences for a microbatch-1 design)
+#   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
+# Rounds (default: det time for preln, time for hc and attnres; a -det, -time or -dettime suffix sets them): det
+# (XLA_FLAGS --xla_gpu_exclude_nondeterministic_ops=true, 40 steps: bitwise comparison between arms); time (default
+# flags, 40 steps, PROFILE=20:3: step time, kernel times, memory).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
 source scripts/della/pls_env.sh
@@ -32,7 +36,8 @@ curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz || export WANDB_
 trap pls_tmp_cleanup EXIT
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 NAME=${FETCHED_JOB_NAME:-$SLURM_JOB_NAME}
-spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}
+spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}; rounds=
+case $knobs in *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; esac
 case $design in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ROUNDS="det time";;
   hc) A="LAYERS=48 PDP=4 ARCH=hc"; ROUNDS="time";;
@@ -44,8 +49,12 @@ case $knobs in
   a1) ON="LEVANTER_CE_BTILED_ONEHOT=1";;
   gif) ON="LEVANTER_CE_GRAD_IN_FWD=1";;
   a1gif) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
+  xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
+  evalbase) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=160";;
+  evalpdp) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=40 EVAL_PDP=4";;
   *) echo "unknown knobs in '$NAME'"; exit 2;;
 esac
+ROUNDS=${rounds:-$ROUNDS}
 BASE="SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=0 PARAM_MAP=vocab NUM_GPUS=4 $A SMOKE_STEPS=40"
 echo "arm $NAME: design $design, knobs [$ON], rounds $ROUNDS, GPUs ${CUDA_VISIBLE_DEVICES:-all}"; nvidia-smi -L || true
 for r in $ROUNDS; do
