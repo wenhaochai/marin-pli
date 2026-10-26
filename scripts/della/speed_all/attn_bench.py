@@ -12,7 +12,8 @@ Backends:
   cudnn      jax._src.cudnn.fused_attention_stablehlo.dot_product_attention, packed documents (q/kv offsets, MAXSEG per row)
 Per backend and layout: median ms of fwd+bwd (value_and_grad of sum(out * cotangent) w.r.t. q, k, v) and of fwd only,
 over ITERS timed calls after warmup; relative L2 error of out, dq, dk, dv against an fp32 dense reference on the first
-REF rows. One JSON line per result to stdout. Contains no training; synthetic inputs only.
+REF rows; bitwise_rerun says whether a second forward + backward on the same inputs gives bitwise the same dq, dk, dv.
+One JSON line per result to stdout. Contains no training; synthetic inputs only.
 """
 import json
 import os
@@ -138,10 +139,13 @@ for layout in LAYOUTS:
             o_s = jax.jit(lambda q, k, v, s: f(q, k, v, s))
             errs = {"out": rel(out[:REF], ro)}
             # gradient of the REF-row loss = the first REF rows of the full gradient (rows are independent)
+            # run-to-run determinism: the same inputs again, every gradient compared bitwise
+            _, g2 = vg(q, k, v, seg)
+            det = {name: bool(jnp.array_equal(a, b)) for name, a, b in zip(("dq", "dk", "dv"), g, g2)}
             for name, a, r in zip(("dq", "dk", "dv"), g, rg):
                 errs[name] = rel(a[:REF], r)
             print(json.dumps({"layout": layout, "backend": be, "fwd_ms": round(t_f, 2), "fwd_bwd_ms": round(t_fb, 2),
-                              "rel_err": {k2: float(f"{v2:.2e}") for k2, v2 in errs.items()}}), flush=True)
+                              "rel_err": {k2: float(f"{v2:.2e}") for k2, v2 in errs.items()}, "bitwise_rerun": det}), flush=True)
         except Exception as e:
             print(json.dumps({"layout": layout, "backend": be, "error": f"{type(e).__name__}: {str(e)[:300]}"}), flush=True)
             traceback.print_exc(file=sys.stderr)
