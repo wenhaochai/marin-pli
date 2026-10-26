@@ -756,7 +756,7 @@ def _full_vocab_b_tiled_forward_with_grads(
     def unnorm_body(block_index, state):
         from .lse_logits_mgpu import probs_and_sum_mgpu
 
-        loss, lse, grad_x, grad_w = state
+        loss, lse, grad_x, grad_w, *label_acc = state
         b_start = block_index * b_block_size
         x_block = jax.lax.dynamic_slice(x_pad, (b_start, 0), (b_block_size, h_dim))
         labels_block = jax.lax.dynamic_slice(labels_pad, (b_start,), (b_block_size,))
@@ -788,9 +788,11 @@ def _full_vocab_b_tiled_forward_with_grads(
         if not unnorm_fold:
             g_valid = jnp.where(valid_rows, g_loss_block, 0.0)
             grad_x_block = grad_x_block - g_valid[:, None] * w_label.T.astype(jnp.float32)
-            grad_w_block = grad_w_block.at[:, safe_labels].add(-(g_valid[:, None] * x_block.astype(jnp.float32)).T)
+            # each label's g x as a row of a [V, H] f32 sum (contiguous rows, like the input-embedding gradient; a
+            # column scatter into grad_w would touch one element per cache line), subtracted from grad_w after the loop
+            label_acc = [label_acc[0].at[safe_labels].add(g_valid[:, None] * x_block.astype(jnp.float32))]
         grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
-        return loss, lse, grad_x, grad_w + grad_w_block
+        return (loss, lse, grad_x, grad_w + grad_w_block, *label_acc)
 
     def body(block_index, state):
         loss, lse, grad_x, grad_w = state
@@ -878,9 +880,14 @@ def _full_vocab_b_tiled_forward_with_grads(
         grad_w = grad_w + grad_w_block
         return loss, lse, grad_x, grad_w
 
-    loss, lse, grad_x, grad_w = jax.lax.fori_loop(
-        0, num_b_blocks, unnorm_body if use_unnorm else body, (loss_init, lse_init, grad_x_init, grad_w_init)
-    )
+    init = (loss_init, lse_init, grad_x_init, grad_w_init)
+    if use_unnorm:
+        label_init = () if unnorm_fold else (jnp.zeros((v_dim, h_dim), dtype=jnp.float32),)
+        loss, lse, grad_x, grad_w, *label_acc = jax.lax.fori_loop(0, num_b_blocks, unnorm_body, init + label_init)
+        if label_acc:
+            grad_w = grad_w - label_acc[0].T
+    else:
+        loss, lse, grad_x, grad_w = jax.lax.fori_loop(0, num_b_blocks, body, init)
     return loss[:b_dim], lse[:b_dim], grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
