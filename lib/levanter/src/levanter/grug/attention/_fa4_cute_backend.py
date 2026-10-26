@@ -20,6 +20,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jax.ad_checkpoint import checkpoint_name
 
 from levanter.cutlass_kernel_cache import cutlass_call
 from levanter.grug.attention._fa4_cute_kernels import (
@@ -724,6 +725,10 @@ def _segmented_flash_attention_custom_vjp_fwd(
         softmax_scale=softmax_scale,
         kernel_config=kernel_config,
     )
+    # The residuals carry the names levanter's JAX flash forward gives its own (flash_o, flash_ell): a remat policy that
+    # saves those names keeps them instead of re-running this forward in the backward pass. Identities otherwise.
+    out = checkpoint_name(out, "flash_o")
+    lse = checkpoint_name(lse, "flash_ell")
     return out, (q, k, v, out, lse, lower_bounds, valid)
 
 

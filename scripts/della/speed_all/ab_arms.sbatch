@@ -68,6 +68,7 @@ for ARM in "${ARMS[@]}"; do
     fa4none) export ATTN_BACKEND=fa4 REMAT=none XLA_FLAGS="$CB" ;;
     dots) export REMAT=dots XLA_FLAGS="$CB" ;;
     fa4dots) export ATTN_BACKEND=fa4 REMAT=dots XLA_FLAGS="$CB" ;;
+    fa4flash) export ATTN_BACKEND=fa4 REMAT=flash XLA_FLAGS="$CB" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
     gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     dbase|dbase2) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash ;;   # det arms on JAX flash (FA4 backward is not run-to-run deterministic)
