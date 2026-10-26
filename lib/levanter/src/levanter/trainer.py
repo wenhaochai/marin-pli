@@ -114,6 +114,13 @@ _TRACED_TRAIN_STEP: contextvars.ContextVar = contextvars.ContextVar("levanter_tr
 # there); the train step then keeps its input state instead of donating it.
 _ASYNC_STEP = os.environ.get("LEVANTER_ASYNC_STEP", "0") == "1"
 
+# LEVANTER_SCAN_EMPTY=1 (speed test, 2026-10-26): lax.scan's stacked outputs start unwritten instead of zero-filled
+# (utils/jax_utils.patch_scan_empty_outputs).
+if os.environ.get("LEVANTER_SCAN_EMPTY", "0") == "1":
+    from levanter.utils.jax_utils import patch_scan_empty_outputs
+
+    patch_scan_empty_outputs()
+
 
 @dataclass
 class _DispatchedStep:
