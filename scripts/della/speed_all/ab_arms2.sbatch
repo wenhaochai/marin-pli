@@ -26,6 +26,7 @@
 #   nowpipe = now with XLA collective pipelining (all-gather, reduce-scatter) and the latency-hiding scheduler;
 #   nowpipe2 = nowpipe with while-loop double buffering
 #   nowlse  = now with LEVANTER_CE_LSE_KERNEL=1 (the Triton logits + logsumexp kernel in the GIF block)
+#   nowthd  = now with ATTN_BACKEND=fa4thd (upstream FA4 varlen kernels, native SM90)
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
 # PAIR line, its per-step train/loss minus the first arm's (same seed, data, schedule; bf16 noise is ~1e-3).
 set -uo pipefail
@@ -83,6 +84,7 @@ for ARM in "${ARMS[@]}"; do
     nowlse) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;
     nowpipe) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE" ;;
     nowpipe2) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB $PIPE --xla_gpu_enable_while_loop_double_buffering=true" ;;
+    nowthd) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
     gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     dbase|dbase2) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash ;;   # det arms on JAX flash (FA4 backward is not run-to-run deterministic)

@@ -155,9 +155,12 @@ PROFILE = os.environ.get("PROFILE", "")
 # ATTN_BACKEND=fa4 (speed candidate, 2026-10-24): attention through levanter's grug FA4/CuTe segmented kernel
 # (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop. Same mask (causal + same document), fp32 softmax
 # statistics, no block size. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag fa4_cute or jax_flash.
+# ATTN_BACKEND=fa4thd (speed, 2026-10-26): the same attention through upstream FA4's varlen kernels, one sequence per packed
+# document (AttentionBackend.FA4_THD); on H100 at head_dim 64 these are native wgmma/TMA kernels (torch bench w272: 3.5 ms
+# forward + backward per layer against 7.3 ms for the segmented kernel). Speed only: no run tag; W&B tag fa4_thd.
 ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "fa4")   # default fa4 since 2026-10-26 (H100 A/B w203/w204: 2x at 4096, 4.3x at 4480, loss within bf16 noise); ATTN_BACKEND=jax_flash is the old path
-if ATTN_BACKEND not in ("jax_flash", "fa4"):
-    raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4")
+if ATTN_BACKEND not in ("jax_flash", "fa4", "fa4thd"):
+    raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4 | fa4thd")
 BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
@@ -746,7 +749,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         num_kv_heads=s["kv"],
         hybrid_norm=True,
         # No Transformer Engine on Della, so the GPU default (NVTE) would fall back to unfused O(S^2) attention.
-        attn_backend=AttentionBackend.FA4_CUTE if ATTN_BACKEND == "fa4" else AttentionBackend.JAX_FLASH,
+        attn_backend={"fa4": AttentionBackend.FA4_CUTE, "fa4thd": AttentionBackend.FA4_THD}.get(ATTN_BACKEND, AttentionBackend.JAX_FLASH),
         **({"flash_attention_block_size": FLASH_BLOCK} if FLASH_BLOCK and ATTN_BACKEND == "jax_flash" else {}),
         **model_extra,
     )
@@ -864,7 +867,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
                     group="muonh-qwen3-smoke" if SMOKE_STEPS else ("muonh-qwen3-fbt-della" if VARIANT == "fbt" else "muonh-qwen3-ss-della" if VARIANT == "ss" else "muonh-qwen3-ov-della" if VARIANT in OV_VARIANTS else "muonh-qwen3-focal-della" if VARIANT == "focal" else "muonh-qwen3-objective-della" if VARIANT in OBJECTIVE_VARIANTS else "muonh-qwen3-fp8-della" if PRECISION == "fp8" else "muonh-qwen3-della"),
-                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", "fa4_cute" if ATTN_BACKEND == "fa4" else "jax_flash", *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *([f"remat-{REMAT}"] if REMAT != "full" else [])],
+                    tags=["speedrun", "muonh", "qwen3", size, f"della{NUM_GPUS}x{DEVICE_TAG}", {"fa4": "fa4_cute", "fa4thd": "fa4_thd"}.get(ATTN_BACKEND, "jax_flash"), *([f"fbt{FEEDBACK_PASSES}"] if VARIANT == "fbt" else []), PRECISION, *[t for t in variant_tags.split("-") if t], *(["cpt"] if INIT_FROM else []), *([f"remat-{REMAT}"] if REMAT != "full" else [])],
                 ),
                 initialize_from=INIT_FROM,
                 allow_partial_checkpoint=INIT_FROM is not None,
