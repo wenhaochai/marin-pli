@@ -156,9 +156,13 @@ PROFILE = os.environ.get("PROFILE", "")
 # (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop. Same mask (causal + same document), fp32 softmax
 # statistics, no block size. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag fa4_cute or jax_flash.
 # ATTN_BACKEND=fa4thd (speed, 2026-10-26): the same attention through upstream FA4's varlen kernels, one sequence per packed
-# document (AttentionBackend.FA4_THD); on H100 at head_dim 64 these are native wgmma/TMA kernels (torch bench w272: 3.5 ms
-# forward + backward per layer against 7.3 ms for the segmented kernel). Speed only: no run tag; W&B tag fa4_thd.
-ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "fa4")   # default fa4 since 2026-10-26 (H100 A/B w203/w204: 2x at 4096, 4.3x at 4480, loss within bf16 noise); ATTN_BACKEND=jax_flash is the old path
+# document (AttentionBackend.FA4_THD); on H100 at head_dim 64 these are native wgmma/TMA kernels (w283: 3.94 ms forward +
+# backward per layer against 7.41 ms for the segmented kernel, errors against fp32 equal). Training runs them (at most 10
+# documents per row; fineweb-edu rows hold <= 17, 32 rows 163 +- 14); evaluation (no gradient) runs the segmented kernel,
+# exact for any document count (Paloma rows hold up to ~290). H100 at 300m: -8.3% at 4096 (w291, eval finite), -15.4% at
+# 5504 (w285), loss within bf16 noise. The default at 130m/300m since 2026-10-26 (one query head per KV head, head_dim
+# 64); larger sizes keep fa4 (their GQA at head_dim 64 is not checked on this path). Speed only: no run tag; W&B tag fa4_thd.
+ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "fa4thd" if os.environ.get("SIZE", "130m") in ("130m", "300m") else "fa4")   # fa4 = segmented FA4/CuTe (w203/w204); jax_flash = the old path
 if ATTN_BACKEND not in ("jax_flash", "fa4", "fa4thd"):
     raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4 | fa4thd")
 BATCH = int(os.environ.get("BATCH", "0"))
