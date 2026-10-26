@@ -69,7 +69,17 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #                w299). Gradients differ from the XLA path by rel 1.5e-6 to 1.6e-5, against 2e-3 to 1.3e-2 for both paths to
 #                an f32 reference, bias ~1e-10 (w306); trains on after an eval and a checkpoint (w299, w301). Only the
 #                b-tiled path (PDP=4 designs) reaches it. Owner popup 2026-10-26 ~06:40: on for all pls jobs.
+#   PLS_FOLD_NORM=1  the probes model (PLS_DETACH_BB=1) folds each readout's RMSNorm scale into its head (f32 product), so
+#                its CE input is not differentiated and XLA drops the input-gradient GEMM: preln probes 7.31 -> 6.13 s/step
+#                (w377), HC probes 20.30 -> 17.44 (w349); 40 det steps inside the twins' envelope (w360-w362); the scale's
+#                gradient against f32: 0.98% at init (today 0.41%), 0.10% trained (today 0.30%) (w367). Separate-heads
+#                runs are unchanged (bitwise on CPU). Owner popup 2026-10-26 ~16:40: on for all queued probes runs.
+#   LEVANTER_NORM_GUARD=1e-3  stop when a weight that MuonH / AdamH keeps at a constant norm (projections, lm_head, the 47
+#                aux_lm_heads) moves by more than 0.1% between watch steps (a silent corruption: the marin vocab run w158);
+#                the stop exits 99 below, so wq resumes from the last checkpoint. No false stop over 40 steps with a mid
+#                eval and checkpoint (w354); stops at 1e-9 (w355). Owner popup 2026-10-26 ~16:40: on for all pls jobs.
 export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1
+export PLS_FOLD_NORM=1 LEVANTER_NORM_GUARD=1e-3
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
