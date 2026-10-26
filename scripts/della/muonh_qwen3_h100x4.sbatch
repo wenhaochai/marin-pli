@@ -48,6 +48,11 @@ fi
 # deterministic A/B): the cross-entropy label term as a select instead of a scatter, so XLA fuses the dlogits pass. The
 # same additions on the same values: every run's numbers are unchanged.
 export LEVANTER_CE_BTILED_ONEHOT=${LEVANTER_CE_BTILED_ONEHOT:-1}
+# LEVANTER_CE_GRAD_IN_FWD=1 (speed, 2026-10-26; the pls session's CE commit): the fused cross-entropy computes its
+# gradients in the forward from the same logits GEMM per block (3 logits GEMMs instead of 4). Not bitwise: H100 det round
+# w245 at 300m 128K gives per-step loss within 1.9e-6 of the base over 58 steps, far inside the run-to-run spread of
+# GEMM autotuning (pls w205 vs w229: 0.076). -4.7% step time on top of A1 under FA4 (w227).
+export LEVANTER_CE_GRAD_IN_FWD=${LEVANTER_CE_GRAD_IN_FWD:-1}
 
 nvidia-smi -L
 .venv/bin/python -c 'import jax; print("jax", jax.__version__, "devices", jax.devices())'
