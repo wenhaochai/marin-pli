@@ -783,3 +783,19 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 
 - 结果：两者每步只损失 3–5% 的最后一层下降，损失集中在下层；HC 的 η 反而更低。“HC 的更新浪费得少”不成立。到此排除的解释：梯度方向（偏角）、读出看不到的状态（隐藏份额）、MuonH 的更新效率。剩下：多条流本身或门控（w194–w197，Fig 43）。
 - 注意：都在终点检查点上测；一阶近似；1024 个 token。
+
+## 速度：GPU 结果（续，2026-10-26）
+
+| 项 | 结果 | 结论 |
+|---|---|---|
+| A1 加前向算梯度（w218） | Pre-LN d48 12.13 s/步（只开 A1 13.10，基线 14.96）；对同一调优类的基线 w229，40 步内 \|d\| ≤ 1e-6，两次相同基线之间差到 0.076 | 已对所有 pls job 打开（c9176a2e8b） |
+| 前向算梯度的回退分支（microbatch 1） | 02:25–02:50 开着时，回退分支在 shard_map 内建了带分片约束的数组，w195–w197、w221 的冒烟测试失败，宿主停取 job，w154 被取消后重排；已修（867c735932），GPU 上 HC 的回退与基线逐位相同（w255 = w219） | 已修，已重新打开 |
+| `EVAL_PDP=4`（w225/w226） | HC 每次 eval 7.5 → 5.1 min，无 OOM | 已对所有 pls job 打开 |
+| xla select（HC，w220） | 逐位相同（w220 = w230），但不快（24.75 对 24.68 s/步） | 不采用 |
+| CUDA graph 循环（w237/w238） | Pre-LN −0.7%，HC −1.1%；开着时 profiler 的 stop_trace 挂住，GPU 闲置（已取消） | 不采用 |
+| FA4 attention（w242–w244） | Pre-LN 14.83 → 12.44（−16.1%），HC 24.68 → 21.26（−13.9%），AttnRes 34.00 → 29.42（−13.5%） | 所有者弹窗：先用 Pre-LN 48 层一对验证（w261/w262），再用于新对照 |
+| microbatch-1 改走 b-tiled CE（`LEVANTER_CE_BTILED_MIN_BATCH=4096`，w266–w269、w275） | HC、AttnRes 都 OOM（加前向算梯度 96–98 GiB，只开 A1 也要 74 GiB） | 不采用；HC/AttnRes 继续用 xla 流式 CE |
+| Triton lse kernel（Tokenizer Size session 写，`LEVANTER_CE_LSE_KERNEL=1`） | 基准（w271）：8192×512 每块 2.46 ms，同样输出的 XLA 路径 6.84 ms；合并误差 5.8e-8（两遍法 5.6e-8）；f32 logits 与 cuBLAS 逐位相同 | 已接入（b3f40f216f，默认关）；GPU 检查 w278 |
+
+- profile（w239，Pre-LN d48，开 A1，关 command buffer）：每步 GPU 时间里读出头和 CE 占 68%（矩阵乘 4.09 s，lse 两次规约 1.70 s，A1 的 dlogits 一遍 1.02 s），attention 占 20%（2.05 s）。
+- det 轮的教训：两次完全相同的 run 也不逐位一致（GEMM 自动调优按计时选算法，run 分成“调优类”）；判断一个开关要和两个基线比，看是否在两次基线的差别以内（速度计划的 G4），或固定调优（`--xla_gpu_autotune_level=0`）。
