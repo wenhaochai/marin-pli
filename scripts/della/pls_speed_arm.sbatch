@@ -31,7 +31,8 @@
 #   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
 # Rounds (default: det time for preln, time for hc and attnres; a -det, -time or -dettime suffix sets them): det
 # (XLA_FLAGS --xla_gpu_exclude_nondeterministic_ops=true, 40 steps: bitwise comparison between arms); time (default
-# flags, 40 steps: step time); prof (-prof only: no command buffers, HLO dumped,
+# flags, 40 steps: step time); fix (-fix only: det with --xla_gpu_autotune_level=0, so two arms differ only by the knob);
+# prof (-prof only: no command buffers, HLO dumped,
 # PROFILE=20:2, for trace_families.py).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -45,7 +46,7 @@ trap pls_tmp_cleanup EXIT
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 NAME=${FETCHED_JOB_NAME:-$SLURM_JOB_NAME}
 spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}; rounds=
-case $knobs in *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; *-prof) rounds="prof"; knobs=${knobs%-prof};; esac
+case $knobs in *-fix) rounds="fix"; knobs=${knobs%-fix};; *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; *-prof) rounds="prof"; knobs=${knobs%-prof};; esac
 case $design in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ROUNDS="det time";;
   hc) A="LAYERS=48 PDP=4 ARCH=hc"; ROUNDS="time";;
@@ -79,6 +80,7 @@ for r in $ROUNDS; do
   xf=; pr=
   case $r in
     det) xf="--xla_gpu_exclude_nondeterministic_ops=true";;
+    fix) xf="--xla_gpu_exclude_nondeterministic_ops=true --xla_gpu_autotune_level=0";;   # det with the autotuner off: no per-run GEMM choices, so arms compare without autotune classes
     time) pr=;;   # no profile here: with command buffers on, jax.profiler.stop_trace hung and left GPUs idle (w237/w238, 2026-10-26)
     # prof: no command buffers (each kernel then shows in the trace under its own HLO instruction) and the optimized HLO
     # dumped, for trace_families.py (the Tokenizer Size session's speed-all 7b2eba3a51); its step time is not the measure
