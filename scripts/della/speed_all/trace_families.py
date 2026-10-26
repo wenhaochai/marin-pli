@@ -20,7 +20,7 @@ from jax.profiler import ProfileData
 
 prof, hlo_dir = Path(sys.argv[1]), Path(sys.argv[2])
 steps = int(sys.argv[3]) if len(sys.argv) > 3 else 3
-mods = sorted(hlo_dir.glob("*jit__train_step*.after_optimizations.txt"), key=lambda p: p.stat().st_size)
+mods = sorted(hlo_dir.glob("*jit__train_step*after_optimizations.txt"), key=lambda p: p.stat().st_size)   # A40: .after_optimizations.txt; H100: .sm_9.0a_gpu_after_optimizations.txt
 if not mods:
     sys.exit(f"no jit__train_step after_optimizations module in {hlo_dir}")
 OPNAME, COMP_OP, CALLS = {}, {}, {}
