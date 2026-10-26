@@ -797,6 +797,7 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 | FA4 attention（w242–w244） | Pre-LN 14.83 → 12.44（−16.1%），HC 24.68 → 21.26（−13.9%），AttnRes 34.00 → 29.42（−13.5%） | 所有者弹窗：先用 Pre-LN 48 层一对验证（w261/w262），再用于新对照 |
 | microbatch-1 改走 b-tiled CE（`LEVANTER_CE_BTILED_MIN_BATCH=4096`，w266–w269、w275） | HC、AttnRes 都 OOM（加前向算梯度 96–98 GiB，只开 A1 也要 74 GiB） | 不采用；HC/AttnRes 继续用 xla 流式 CE |
 | Triton lse kernel（Tokenizer Size session 写，`LEVANTER_CE_LSE_KERNEL=1`） | 基准（w271）：8192×512 每块 2.46 ms，同样输出的 XLA 路径 6.84 ms；合并误差 5.8e-8（两遍法 5.6e-8）；f32 logits 与 cuBLAS 逐位相同 | 已接入（b3f40f216f，默认关）；GPU 检查 w278 |
+| lse kernel v3（`LEVANTER_CE_LSE_MGPU=1`，Pallas Mosaic GPU，3 级流水，w385/w386/w440） | Pre-LN 10.06 → 9.83 s/步（−2.3%），HC b-tiled 10.12 → 9.86（−2.6%）；梯度与 Triton kernel 相对差 1.2e-6 到 1.5e-5，两者相对 f32 都是 2e-3 到 1.3e-2；重跑逐位相同 | 候选，等下一次弹窗 |
 
 - profile（w239，Pre-LN d48，开 A1，关 command buffer）：每步 GPU 时间里读出头和 CE 占 68%（矩阵乘 4.09 s，lse 两次规约 1.70 s，A1 的 dlogits 一遍 1.02 s），attention 占 20%（2.05 s）。
 - det 轮的教训：两次完全相同的 run 也不逐位一致（GEMM 自动调优按计时选算法，run 分成“调优类”）；判断一个开关要和两个基线比，看是否在两次基线的差别以内（速度计划的 G4），或固定调优（`--xla_gpu_autotune_level=0`）。
