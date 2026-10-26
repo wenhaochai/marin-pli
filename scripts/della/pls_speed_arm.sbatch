@@ -46,7 +46,7 @@ trap pls_tmp_cleanup EXIT
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
 NAME=${FETCHED_JOB_NAME:-$SLURM_JOB_NAME}
 spec=${NAME#pls-speed-arm-}; design=${spec%%-*}; knobs=${spec#*-}; rounds=
-case $knobs in *-fix) rounds="fix"; knobs=${knobs%-fix};; *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; *-prof) rounds="prof"; knobs=${knobs%-prof};; esac
+case $knobs in *-mem) rounds="mem"; knobs=${knobs%-mem};; *-fix) rounds="fix"; knobs=${knobs%-fix};; *-det) rounds="det"; knobs=${knobs%-det};; *-time) rounds="time"; knobs=${knobs%-time};; *-dettime) rounds="det time"; knobs=${knobs%-dettime};; *-prof) rounds="prof"; knobs=${knobs%-prof};; esac
 case $design in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ROUNDS="det time";;
   hc) A="LAYERS=48 PDP=4 ARCH=hc"; ROUNDS="time";;
@@ -76,6 +76,8 @@ case $knobs in
   prodthdpf) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 ATTN_BACKEND=fa4thd PLS_DETACH_BB=1 PLS_FOLD_NORM=1";;
   # LEVANTER_NORM_GUARD: guard (1e-3, the live candidate: must not stop) and guardtrip (1e-9: f32 rounding of ~1e-6 must
   # stop the run at the first compared watch step, which tests the stop path)
+  # b-tiled CE for the microbatch-1 shards (4096 tokens) with the live settings, the lse kernel and fa4thd
+  prodkthdbt4k) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096";;
   prodkguard) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_NORM_GUARD=1e-3";;
   prodkguardtrip) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_NORM_GUARD=1e-9";;
   xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
@@ -100,6 +102,9 @@ for r in $ROUNDS; do
   xf=; pr=
   case $r in
     det) xf="--xla_gpu_exclude_nondeterministic_ops=true";;
+    # mem (-mem only): the train step's HLO, buffer assignment and memory-usage report dumped at compile time (for an
+    # arm that runs out of memory: the report shows which buffers are live at the peak)
+    mem) xf="--xla_dump_to=/scratch/gpfs/GROUP/USER/tmp/pls_speed/hlo_${NAME}_${JID} --xla_dump_hlo_as_text --xla_dump_hlo_module_re=.*train_step.*";;
     fix) xf="--xla_gpu_exclude_nondeterministic_ops=true --xla_gpu_autotune_level=0";;   # det with the autotuner off: no per-run GEMM choices, so arms compare without autotune classes
     time) pr=;;   # no profile here: with command buffers on, jax.profiler.stop_trace hung and left GPUs idle (w237/w238, 2026-10-26)
     # prof: no command buffers (each kernel then shows in the trace under its own HLO instruction) and the optimized HLO
