@@ -24,7 +24,7 @@ _pp=$WT; for d in "$WT"/lib/*/src; do _pp=$_pp:$d; done; export PYTHONPATH=$_pp 
 export MARIN_PREFIX=/scratch/gpfs/GROUP/USER/marin_store_big HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}
 unset VOCAB_K VARIANT SEQ_LEN DATA_EPOCHS PASS_DATA
-S=$MARIN_PREFIX/speedrun O=/scratch/gpfs/GROUP/USER/project/trec/out/smoke
+S=$MARIN_PREFIX/speedrun O=/scratch/gpfs/GROUP/USER/project/trec/out/smoke2
 nvidia-smi -L
 fail=0
 # run model step

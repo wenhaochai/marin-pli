@@ -5,8 +5,8 @@
 loss on every batch it trained on, in training order, and on batches after them that it never read.
 
 Every run here reads the same stream: the fineweb-edu-10B cache under the Marin tokenizer (or its K-token truncation),
-linearly permuted with data seed 42, batch t = sequences t*128 .. t*128+127 (vocab_trec.training_stream(), checked
-against the materialized 8-pass subset). The 130m depth control of the pls runs (12 layers, 4959 steps) reads the first
+linearly permuted with data seed 42 and then permuted inside every block of 2048 sequences by MixtureDataset, exactly as
+train_lm builds it (training_batches()); batch t = indices t*128 .. t*128+127 of that dataset. The 130m depth control of the pls runs (12 layers, 4959 steps) reads the first
 4959 batches of the 300m stream (same cache, seed, permutation and batch), so its tail batches are taken after step
 11444, where neither size read, and the two models are scored on the same unread text.
 
@@ -56,6 +56,22 @@ TOTAL = {"130m-d12": 4959}   # the depth control's steps; the 300m runs take the
 TAIL_FROM = {"130m-d12": 11444}   # after the 300m run's steps, so both sizes are scored on the same unread batches
 
 
+def training_batches(Pos):
+    """The training examples in the order train_lm read them: LmDataConfig.train_set(Pos, batch_schedule,
+    key=PRNGKey(data_seed)), whose index i is sequence i of the run (batch t = indices 128t .. 128t+127). On top of the
+    shuffled component that vocab_trec.training_stream() rebuilds, MixtureDataset permutes the sequences inside every
+    block of mixture_block_size (2048) sequences with mix_key, even for a single component (randomize_blocks=True); a
+    replay of the component alone scores the right 16-step blocks but not the right batches (smoke w439: the last
+    batches missed the W&B train loss by up to 0.07 nats)."""
+    tc = vt.scaling.muonh_qwen3_run(vt.SIZE).build_config(vt.mock.MagicMock()).train_config
+    data = tc.data
+    (name,) = [n for n, w in data.train_weights.items() if w > 0]
+    if not vt.K:   # as in vocab_trec.training_stream(): the executor resolves this path at run time; the same prebuilt cache
+        tok = os.path.dirname(vt.glob.glob("/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/*/tokenizer.json")[0])
+        data = vt.dataclasses.replace(data, tokenizer=tok, components={**data.components, name: vt.scaling._cache_component(f"{vt.scaling._PREFIX}/fineweb-edu-10B/2026.06.28/train")})
+    return data.train_set(Pos, tc.trainer.batch_schedule, key=jax.random.PRNGKey(tc.data_seed))
+
+
 def model_config():
     if MODEL == "130m-d12":   # marin-pls della_muonh_qwen3_scaling.py, SIZE=130m LAYERS=12 (run tag -d12)
         return Qwen3Config(max_seq_len=vt.SEQ, hidden_dim=512, intermediate_dim=1792, num_layers=12, num_heads=8, num_kv_heads=8,
@@ -96,7 +112,8 @@ def main():
                                 mesh=vtk.MeshConfig(axes={"data": -1, "replica": 1, "model": 1},
                                                     compute_mapping={"token": (vtk.ResourceAxis.REPLICA_DCN, vtk.ResourceAxis.REPLICA, vtk.ResourceAxis.DATA),
                                                                      "token_repeat": (vtk.ResourceAxis.REPLICA_DCN, vtk.ResourceAxis.REPLICA, vtk.ResourceAxis.DATA)}))
-    named = NamedLmDataset(ds, Pos)
+    named = training_batches(Pos)
+    assert isinstance(named, NamedLmDataset), type(named)
     with trainer.use_device_mesh(), hax.axis_mapping(trainer.compute_axis_mapping):
         Vocab = round_axis_for_partitioning(Axis("vocab", len(vtk.data_config().the_tokenizer)), trainer.parameter_axis_mapping)
         t0 = time.time()
