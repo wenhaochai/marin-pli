@@ -106,6 +106,9 @@ VERSION = "2026.09.13"
 NUM_GPUS = int(os.environ.get("NUM_GPUS", "4"))
 SEQ_LEN = 4096
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
+# SMOKE_MID=<k>: a smoke also evaluates and saves a checkpoint every k steps, so it trains on after an eval and a checkpoint
+# (the H100 check a speed default needs before it goes live: two knobs passed short A/Bs and then broke real runs there).
+SMOKE_MID = int(os.environ.get("SMOKE_MID", "0")) if SMOKE_STEPS else 0
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | ov | ovss | pls | twin | sr | twinsr | ...
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
@@ -532,13 +535,13 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # evaluate in fewer, larger batches at 4; zero-weight padding keeps the evaluated tokens the same (speed work 2026-10-24).
                 per_device_eval_parallelism=int(os.environ.get("EVAL_PDP", "-1")),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
-                steps_per_eval=SMOKE_STEPS or 1000,
+                steps_per_eval=SMOKE_MID or SMOKE_STEPS or 1000,
                 # SMOKE_EVAL_BATCHES=<n>: a smoke evaluates n batches instead of 1 (an A/B of EVAL_PDP sets n so both arms
                 # see the same sequences).
                 max_eval_batches=int(os.environ.get("SMOKE_EVAL_BATCHES", "1")) if SMOKE_STEPS else None,
                 # CKPT_MIN=<n>: minutes between temporary checkpoints (default 10); with a deadline save before the time limit
                 # (LEVANTER_CKPT_DEADLINE) a longer interval loses work only on a crash (speed work 2026-10-25).
-                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=float(os.environ.get("CKPT_MIN", "10"))), keep=[dict(every=10000)]),
+                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=float(os.environ.get("CKPT_MIN", "10"))), keep=[dict(every=SMOKE_MID or 10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
                     compute_mapping={

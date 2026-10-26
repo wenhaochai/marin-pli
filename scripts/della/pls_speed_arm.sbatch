@@ -59,6 +59,11 @@ case $knobs in
   gif) ON="LEVANTER_CE_GRAD_IN_FWD=1";;
   a1gif) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
   a1gifk) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1";;
+  # the live job script's settings (prod) and the candidates on top of them, for the check before a default goes live
+  prod) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4";;
+  prodk) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1";;
+  prodthd) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 ATTN_BACKEND=fa4thd";;
+  prodkthd) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 ATTN_BACKEND=fa4thd";;
   xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
   cbw) ON="XLA_CMD_BUFFER_WHILE=1";;
   fa4) ON="ATTN_BACKEND=fa4";;
@@ -73,7 +78,8 @@ case $knobs in
   *) echo "unknown knobs in '$NAME'"; exit 2;;
 esac
 ROUNDS=${rounds:-$ROUNDS}
-BASE="SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=0 PARAM_MAP=vocab NUM_GPUS=4 $A SMOKE_STEPS=40"
+# SMOKE_MID=20: an eval and a checkpoint at step 20, then 20 more train steps (compare_arms.py leaves steps 20-22 out of the time)
+BASE="SIZE=130m PLS_W=1 PLS_SEP=1 PLS_DETACH_BB=0 PARAM_MAP=vocab NUM_GPUS=4 $A SMOKE_STEPS=40 SMOKE_MID=20"
 echo "arm $NAME: design $design, knobs [$ON], rounds $ROUNDS, GPUs ${CUDA_VISIBLE_DEVICES:-all}"; nvidia-smi -L || true
 for r in $ROUNDS; do
   echo "round $r $(date +%T)"
