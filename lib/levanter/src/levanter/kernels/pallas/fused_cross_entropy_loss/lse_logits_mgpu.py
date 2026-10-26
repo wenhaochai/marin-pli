@@ -2,7 +2,7 @@
 2026-10-26 with the pls session): the same outputs as ``lse_logits_triton.lse_and_logits`` (bf16 logits, f32 logsumexp,
 f32 label logit) from a persistent, warp-specialized TMA + wgmma GEMM (jax.experimental.pallas.ops.gpu.hopper_matmul_mgpu:
 one memory warpgroup and two compute warpgroups). On one H100 at the b-tiled CE block (8192 rows, 128256 columns) the plain
-GEMM runs at 2.41 ms for K 768 and 1.76 ms for K 512, against 3.09 and 2.46 ms for the Triton kernel and 2.15 and 1.61 ms
+GEMM runs at 2.44 ms for K 768 and 1.83 ms for K 512 with 3 pipeline stages, against 3.09 and 2.46 ms for the Triton kernel and 2.15 and 1.61 ms
 for cuBLAS (wq w356).
 
 The epilogue of each warpgroup's [tile_m, tile_n] tile takes the f32 accumulator before the bf16 store and writes the row
@@ -30,11 +30,13 @@ def merge_lse_partials(m_part: jax.Array, s_part: jax.Array) -> jax.Array:
     m_max = jnp.max(m_part, axis=0)
     return m_max + jnp.log(jnp.sum(s_part * jnp.exp(m_part - m_max[None, :]), axis=0))
 
-# Fastest plain-GEMM configs of wq w356 (one H100, M 8192, N 128256), by K.
+# Fastest plain-GEMM configs of wq w356 (one H100, M 8192, N 128256) with 3 pipeline stages, by K: with 4 stages the
+# stats buffer of the epilogue passes the 227 KB of shared memory by 1 KB (w366). The 4-stage plain GEMM was 1.3% (K 768)
+# and 4% (K 512) faster.
 CONFIGS = {
-    768: hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=4, epi_tile_n=64, epi_tile_m=64,
-                         grid_minor_dim=hm.MatmulDimension.N, grid_tile_width=8, wg_dimension=hm.MatmulDimension.M),
-    512: hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=4, epi_tile_n=64, epi_tile_m=64,
+    768: hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=3, epi_tile_n=64, epi_tile_m=64,
+                         grid_minor_dim=hm.MatmulDimension.N, grid_tile_width=16, wg_dimension=hm.MatmulDimension.M),
+    512: hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=3, epi_tile_n=64, epi_tile_m=64,
                          grid_minor_dim=hm.MatmulDimension.M, grid_tile_width=16, wg_dimension=hm.MatmulDimension.N),
 }
 
