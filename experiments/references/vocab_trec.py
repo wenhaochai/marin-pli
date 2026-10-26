@@ -5,16 +5,19 @@
 unique-token run's training stream (owner 2026-10-26: read the training data again with the final weights, to see which
 part of it the repeated run does worse on).
 
-The unique-token run reads its shuffled training set in order: batch t is sequences t*B .. t*B+B-1 of the fineweb-edu
-component after its linear permutation (data seed 42; MixtureDataset of one component keeps the order). Its 8-pass
-partner reads the first T/8 of those batches 8 times in the same order (vocab_materialize_passes.py rebuilds that subset
-the same way and checks it). This scores CKPT on the batches of N_STEPS steps spread evenly over the unique run's T steps
-and on N_TAIL batches spread over the sequences after them, which neither run of a pair has read (held-out text from
-the same shuffled set). For every sequence it keeps the summed loss in nats and the loss weight, and for the first KEEP
-sequences of each batch the per-position loss and the tokens, for token-frequency splits.
+The unique-token run's fineweb-edu component is linearly permuted (data seed 42), and training reads it through a
+MixtureDataset that permutes the sequences again inside every block of 2048 (16 batches). main() scores the component in
+position order (training_stream): its "step" t is component positions t*B .. t*B+B-1, the right 16-batch block of the run
+(read at steps 16*floor(t/16) .. +15) but not the exact batch; training_batches() gives the exact batches. Positions are
+what the analysis needs: the 8-pass partner reads exactly positions 0 .. round(T/8)*B - 1 (about 8 times each, in a new
+order inside every block), so a sequence is subset, read once by the unique run only, or unread by both, by its position
+alone (the block that holds position T*B is partly read: leave it out). This scores CKPT on N_STEPS position blocks spread
+over the unique run's T steps and on N_TAIL blocks after them, which neither run of a pair has read (held-out text from the
+same shuffled set). For every sequence it keeps the summed loss in nats and the loss weight, and for the first KEEP
+sequences of each block the per-position loss and the tokens, for token-frequency splits.
 
-Output npz: steps [n] (training steps; tail batches carry their stream index, all >= T), total_steps (T), seq_loss
-[n, B], seq_weight [n, B], pos_loss [n, KEEP, SEQ_LEN], tokens [n, KEEP, SEQ_LEN], ckpt.
+Output npz: steps [n] (component position blocks t, positions t*B .. t*B+B-1; tail blocks all >= T), total_steps (T),
+seq_loss [n, B], seq_weight [n, B], pos_loss [n, KEEP, SEQ_LEN], tokens [n, KEEP, SEQ_LEN], ckpt.
 
     CKPT=<.../checkpoints/step-N> SIZE=300m [VOCAB_K=8000] [N_STEPS=192] [N_TAIL=16] [KEEP=4] OUT=<file.npz>
     python -m experiments.references.vocab_trec
@@ -56,8 +59,29 @@ import experiments.references.vocab_token_losses as vtk  # noqa: E402
 from experiments.references import della_muonh_qwen3_scaling as scaling  # noqa: E402
 
 
+def training_batches():
+    """The unique-token run's training examples in the order it read them (a NamedLmDataset: batch t is examples
+    t*B .. t*B+B-1), its batch size and its step count. Built as train_lm builds it, data.train_set(Pos, batch_schedule,
+    key=PRNGKey(data_seed)): the MixtureDataset around the one component permutes the sequences inside every block of
+    mixture_block_size (2048 sequences, 16 batches) with its own key, so training_stream() below (the component before the
+    mixture) has the right 16-batch blocks but not the right batches. Found by the TREC session (2026-10-26): its replay of
+    the last 12 batches of -s1-rerun with training_stream() missed W&B train/loss by up to 0.05 nats, at a learning rate
+    near 0 where the final weights must reproduce it."""
+    tc = scaling.muonh_qwen3_run(SIZE).build_config(mock.MagicMock()).train_config
+    batch, data = tc.trainer.train_batch_size, tc.data
+    assert not data.max_train_batches, data.max_train_batches
+    if not K:
+        (name,) = [n for n, w in data.train_weights.items() if w > 0]
+        tok = os.path.dirname(glob.glob("/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/*/tokenizer.json")[0])
+        data = dataclasses.replace(data, tokenizer=tok, components={**data.components, name: scaling._cache_component(f"{scaling._PREFIX}/fineweb-edu-10B/2026.06.28/train")})
+    ds = data.train_set(Axis("position", SEQ), tc.trainer.batch_schedule, key=jax.random.PRNGKey(tc.data_seed))
+    return ds, batch, tc.trainer.num_train_steps
+
+
 def training_stream():
-    """The unique-token run's shuffled training sequences (an AsyncDataset), its batch size and its step count."""
+    """The unique-token run's shuffled component before the mixture (an AsyncDataset), its batch size and its step count.
+    Its index p is a component position: p // 2048 is the mixture block, read at steps 16 * (p // 2048) .. +15. The 8-pass
+    run reads exactly positions 0 .. round(T/8)*B - 1 (about 8 times each), so classify sequences by position here."""
     tc = scaling.muonh_qwen3_run(SIZE).build_config(mock.MagicMock()).train_config
     batch, data = tc.trainer.train_batch_size, tc.data
     assert not data.max_train_batches, data.max_train_batches
