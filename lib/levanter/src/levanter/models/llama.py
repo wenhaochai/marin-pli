@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
+import functools
 import os
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Type, Union, cast
@@ -290,11 +291,45 @@ class LlamaMlp(eqx.Module):
     @named_call
     def __call__(self, x: NamedArray, *, key=None) -> NamedArray:
         k_gate, k_up, k_down = maybe_rng_split(key, 3)
+        if _SWIGLU_VJP and self.down_proj.bias is None:
+            gate = _checkpoint_name(self.gate_proj(x, key=k_gate), "mlp_gate")
+            up = _checkpoint_name(self.up_proj(x, key=k_up), "mlp_up")
+            w = self.down_proj.weight * self.down_proj.reparam.active_scale
+            return _act_mul_down(gate, up, w, self.act, self.down_proj.In, self.down_proj.dot_general)
         hidden_states = _checkpoint_name(self.gate_proj(x, key=k_gate), "mlp_gate")
         hidden_states = self.act(hidden_states)
         hidden_states = hidden_states * _checkpoint_name(self.up_proj(x, key=k_up), "mlp_up")
         outputs = self.down_proj(hidden_states, key=k_down)
         return outputs
+
+
+# LEVANTER_SWIGLU_VJP=1 (speed test, 2026-10-26): act(gate) * up through down_proj as one custom_vjp whose backward
+# recomputes the product beside its two gradients. Under remat the plain backward recomputes the product in one
+# elementwise pass and forms the gradients in another, each reading gate and up (2 x 704 MB per layer at 300m, 32 x 4096
+# per device; 8.5 + 13.9 ms per 128K step, profile w350); here XLA can fuse them into one pass. Same ops as the autodiff
+# backward (both come from jax.vjp of the same functions).
+_SWIGLU_VJP = os.environ.get("LEVANTER_SWIGLU_VJP", "0") == "1"
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(3, 4, 5))
+def _act_mul_down(gate: NamedArray, up: NamedArray, w: NamedArray, act, In, dot_general) -> NamedArray:
+    return hax.auto_sharded((act(gate) * up).dot(w, axis=In, dot_general=dot_general))
+
+
+def _act_mul_down_fwd(gate, up, w, act, In, dot_general):
+    return _act_mul_down(gate, up, w, act, In, dot_general), (gate, up, w)
+
+
+def _act_mul_down_bwd(act, In, dot_general, residuals, d_out):
+    gate, up, w = residuals
+    hidden, act_mul_vjp = jax.vjp(lambda g, u: act(g) * u, gate, up)
+    _, down_vjp = jax.vjp(lambda h, w_: hax.auto_sharded(h.dot(w_, axis=In, dot_general=dot_general)), hidden, w)
+    d_hidden, d_w = down_vjp(d_out)
+    d_gate, d_up = act_mul_vjp(d_hidden)
+    return d_gate, d_up, d_w
+
+
+_act_mul_down.defvjp(_act_mul_down_fwd, _act_mul_down_bwd)
 
 
 class LlamaDecoderLayer(eqx.Module):
@@ -336,7 +371,7 @@ class LlamaDecoderLayer(eqx.Module):
         # self attention and skip connection
         residual = x
         x = self.input_layernorm(x)
-        attn_output = self.self_attn(x=x, mask=mask, key=k_attn, pos_ids=pos_ids)
+        attn_output = _checkpoint_name(self.self_attn(x=x, mask=mask, key=k_attn, pos_ids=pos_ids), "attn_out")
         if self.post_attn_layernorm is not None:
             attn_output = self.post_attn_layernorm(attn_output)
         x = residual + attn_output
@@ -344,7 +379,7 @@ class LlamaDecoderLayer(eqx.Module):
         # MLP and skip connection
         residual = x
         x = self.post_attention_layernorm(x)
-        mlp_output = self.mlp(x, key=k_mlp)
+        mlp_output = _checkpoint_name(self.mlp(x, key=k_mlp), "mlp_out")
         if self.post_mlp_layernorm is not None:
             mlp_output = self.post_mlp_layernorm(mlp_output)
         output = residual + mlp_output
@@ -498,7 +533,8 @@ _take_rows_f32_grad.defvjp(_take_rows_f32_grad_fwd, _take_rows_f32_grad_bwd)
 
 
 def _checkpoint_name(x: NamedArray, name: str) -> NamedArray:
-    """Names ``x`` for a remat policy that saves values by name (the MLP's matmul outputs: mlp_gate, mlp_up); a no-op for
+    """Names ``x`` for a remat policy that saves values by name (mlp_gate, mlp_up, and the attention and MLP outputs that
+    hybrid_norm's post-norms read in the backward pass: attn_out, mlp_out); a no-op for
     every other policy."""
     return hax.named(checkpoint_name(x.array, name), x.axes)
 

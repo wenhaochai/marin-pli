@@ -147,9 +147,13 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # 20 steps (median ms per step): 128K flash 516, fgate 511, fmlp 505 (w339); 8K 399, 392, 386 (w340); at SEQ_LEN 5504
 # fgate 522 against 530 and fmlp out of memory (w341). Default since the owner popup of 2026-10-26: at 300m fmlp up to
 # SEQ_LEN 4096 and fgate above it; other sizes keep flash.
+# "fmlpo" / "fmlpoa" (speed test, 2026-10-26): fmlp plus the MLP output (mlp_out), or plus the MLP and attention outputs
+# (attn_out), the inputs of hybrid_norm's post-norms: without them the backward pass recomputes the down projection (and
+# the product feeding it) and the attention output projection to give those norms their inputs (profile w350: the down
+# GEMM 8.8 ms and the product 8.5 ms of the 128K step); ~2.4 GB per name at 300m (32 x 4096 per device).
 REMAT = os.environ.get("REMAT", ("fmlp" if SEQ_LEN <= 4096 else "fgate") if os.environ.get("SIZE", "130m") == "300m" else "flash")
-if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj", "fgate", "fmlp"):
-    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj | fgate | fmlp")
+if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj", "fgate", "fmlp", "fmlpo", "fmlpoa"):
+    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj | fgate | fmlp | fmlpo | fmlpoa")
 
 
 class _DotsCheckpointPolicy(ScanCheckpointPolicy):
@@ -800,11 +804,16 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif REMAT == "fproj":
         model_extra = dict(model_extra, gradient_checkpointing=_ProjCheckpointPolicy(
             save_block_internals=["flash_o", "flash_ell"], mlp_dim=s["inter"]))
-    elif REMAT in ("fgate", "fmlp"):
-        names = ["flash_o", "flash_ell", "mlp_gate"] + (["mlp_up"] if REMAT == "fmlp" else [])
+    elif REMAT in ("fgate", "fmlp", "fmlpo", "fmlpoa"):
+        names = ["flash_o", "flash_ell", "mlp_gate"] + (["mlp_up"] if REMAT != "fgate" else []) + (["mlp_out"] if REMAT in ("fmlpo", "fmlpoa") else []) + (["attn_out"] if REMAT == "fmlpoa" else [])
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=names))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
+    # SCAN_LAYERS=0 (speed test, 2026-10-26): the layers unrolled (BlockSeq) instead of one scan (Stacked): no copies of
+    # the saved residuals into the stacked buffers (3% of the 128K step with fmlp, w350). A different parameter tree, so
+    # not for a run that resumes from a scanned checkpoint.
+    if os.environ.get("SCAN_LAYERS", "1") == "0":
+        model_extra = dict(model_extra, scan_layers=False)
     model = model_cls(
         max_seq_len=SEQ_LEN,
         hidden_dim=s["hidden"],
@@ -960,7 +969,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                     keep=[] if VARIANT in OV_VARIANTS or TPP != 20 else [dict(every=10000)],
                 ),
                 mesh=MeshConfig(
-                    axes={"data": -1, "replica": 1, "model": 1},
+                    # MESH=dp (speed test, 2026-10-26): plain data parallelism, every parameter replicated on each GPU and
+                    # one gradient all-reduce, instead of FSDP over embed (all-gathers and reduce-scatters per layer)
+                    axes={"data": 1, "replica": -1, "model": 1} if os.environ.get("MESH", "fsdp") == "dp" else {"data": -1, "replica": 1, "model": 1},
                     compute_mapping={
                         "token": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
                         "token_repeat": (ResourceAxis.REPLICA_DCN, ResourceAxis.REPLICA, ResourceAxis.DATA),
