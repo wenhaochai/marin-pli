@@ -80,8 +80,20 @@ projections 9%, norms 6.5%; 8K = attention 27%, MLP 23%, remat 12%, projections 
   as the segmented kernel); one document per row 2.07 / 6.80 against 5.45 / 17.68. Zero-length padding of cu_seqlens
   costs (w273): 256 sequences 3.58 ms, 512 3.94, 1024 5.37, 2048 11.0; fineweb-edu rows hold 4-5 documents (max 17 over
   ~2.4M windows; 32 rows 163 +- 14, max 240 in 200K draws; tmp_plots/vocab/docs_per_row.py), so 10 per row is safe.
-  Backend ATTN_BACKEND=fa4thd / AttentionBackend.FA4_THD on branch fa4-sm90: its first H100 call aborts in C++
-  (std::bad_variant_access, w276/w277); debug job w281.
+  Backend ATTN_BACKEND=fa4thd / AttentionBackend.FA4_THD (branch fa4-sm90, merged into speed-all 3fd2d8f254). Its first
+  H100 call aborted in C++ (std::bad_variant_access, w276/w277): levanter's THD wrapper passed q/k/v/out as static
+  layouts, and upstream's SM90 varlen forward builds a ragged TMA tensor for O on top of them (quack
+  create_ragged_tensor_for_tma, sentinel extents near 2^31), which cute.make_tensor cannot form statically; the old
+  head_dim 128 GQA path aborted the same way (w281). Dynamic layouts fix it (386de97318; w282: forward and backward at
+  head_dim 128 GQA and 64 MHA). Through levanter at 32 x T x 12 x 64 (w283; fwd / fwd+bwd ms, fa4 against fa4thd):
+  T 4096 packed 2.42 / 7.41 against 1.31 / 3.94, one document per row 5.52 / 17.68 against 2.27 / 6.84; T 5504 packed
+  3.46 / 10.38 against 1.86 / 5.48, one per row 9.54 / 31.26 against 3.62 / 11.70; errors against fp32 equal to fa4's
+  in all digits shown (out 2.0e-3, dq/dk/dv 2.5-2.8e-3). Training A/B w284 (300m 128K, 4096): 1206 -> 1107 ms (-8.2%),
+  loss within noise, but eval loss NaN: eval batches carry document segment ids too, and Paloma rows hold far more
+  documents than the bound (per 4096-token row twitterAAE mean 244, gab 100, subreddits 21; the densest 32 rows up to
+  8680; tmp_plots/vocab/docs_per_row_paloma.py). Fix 8ae15eec59: one custom_vjp per device whose primal (no gradient,
+  so evaluation) is the segmented kernel, exact for any document count and equal to today's eval, and whose fwd/bwd
+  (training) are the THD kernels with the NaN guard; checks w290 (both paths, guard) and w291 (A/B, finite eval).
 
 ## Measured baseline (logs, 4x H100)
 
