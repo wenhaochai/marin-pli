@@ -723,3 +723,30 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 - 另一个观察（d48g4.npz，普通模型的探针损失）：HC 普通模型在中间层已经能很好地读出（48 层的第 24 层探针 3.365，Pre-LN 4.154，mHC 4.380）。上半层探针与最后一层的平均差：HC 0.12，HC_pos 0.20，LNS 0.26，Sandwich 0.33，Pre-LN 0.48，mHC 0.70。HC 两个变体的差最小，代价也最小；其余结构的差从 0.26 到 1.26，代价都在 0.09–0.11，不随差变化。所以这不是一条通用规律，只说明 HC 的普通模型本来就接近“每层都能读出”。
 - 优化器注记：MuonH 对每个矩阵的更新先做 Newton-Schulz 正交化，再按参数范数定步长，所以梯度的大小不影响矩阵参数的更新，只有每个矩阵内的方向起作用。|g_int|/|g_fin| = 41 的意义是：在下层的矩阵里，更新方向几乎完全由中间层损失决定。
 - 新作业（所有者弹窗 2026-10-25 16:30，队列降到 3 时）：w194/w195 HC 48 层 1 条流（独立头、探针），w196/w197 HC 48 层 2 条流。1 条流的 HC = Pre-LN 加上 HC 随输入变化的标量门。代价回到约 0.09 → 低代价来自多条流；仍约 0.05 → 来自标量门。启动开关 `HC_STREAMS`（run id 标签 `-hcs{m}`），CPU 测试 1、2 条流的损失和梯度都是有限值。 结果放在新图 Fig 43（所有者选“新图”）。
+
+## 速度：应上尽上（2026-10-25，所有者经 marin.cpp 和 terminal 转达）
+
+- 所有者改了 10-24 的决定：「建议是修改，我纠正我的指令」「应上尽上，尽可能快！」，又说「可以再考虑底层，比如kernel」「你可以和另一个pretrain的session那边深度协同一下共同推进」。测试 job 改走 wq，优先级 10，不再用 pli-cp（terminal 转达，20:30）。
+- 约束：研究 run 都要和已完成的老 run 比较，所以只有结果逐位相同的加速能用在研究 run 上。会改变结果的加速只能用在新的一组对照上（两边都用）。
+- 分工（与 Tokenizer Size session）：pls 负责 CE；它负责 attention、remat、启动开销和 run 层面的 infra。每个改动一个 commit，可以单独 cherry-pick，两边互相 A/B。
+- 已上线（计算不变；运行中的 job 在下一段开始时用上）：
+  1. 合并 pls-speed 的开关，全部默认关（f40fafa15d）。
+  2. A3：每段在训练时限前 150 s 存一个临时检查点（`LEVANTER_CKPT_DEADLINE`），临时检查点间隔 30 min（`CKPT_MIN=30`）；A4：不写 jaxpr/HLO 文本（`LOG_JAXPR=0`）（b7d1fe023d）。CPU 测试 `tmp/pls_speed/deadline_test.py`。
+- 8 GPU：只适用单流结构。HC 和 Full AttnRes 在 PARAM_MAP=vocab 下用 8 GPU 会在第一个 AllToAll 卡住并中止（wq w16/w17，10-22）。HC 现在每步 25 s，因为它的 microbatch 是 1；早先 16 s 的 run 用 microbatch 4，第 257 步 OOM。
+- CE 的账（Pre-LN d48，每个读出、每块 GPU、每个 8192 行的块）：前向的 f32 logits GEMM 写 4.2 GB、logsumexp 再读 4.2 GB；反向重算 bf16 logits、算 dlogits、两个 GEMM。共 4 个 logits 大小的 GEMM。隐藏宽度 512 时，每个 logit 元素的 GEMM 是 1024 FLOP，对应 2–18 B 的显存流量，所以 GEMM 的个数和流量一样重要。
+- 新改动（默认关）：
+  1. 前向算梯度（`LEVANTER_CE_GRAD_IN_FWD=1`，b-tiled 路径；`batched_xla._full_vocab_b_tiled_forward_with_grads`，`models/loss.py` 的载体）：均值损失的余切是 weight / sum(weight) 乘一个标量 c，所以前向就能算出梯度；每块用一个 logits GEMM 同时算损失和梯度，省掉反向的重算 GEMM。梯度经一个值为 0 的“载体”传回（每个样本一个 0，调用方求和，它的余切正好是 c），所以损失值不变，dW 的 reduce-scatter 也不变。c 是 2 的幂时（权重为 1 的 run 都是 c = 1）应逐位相同。不求导时（eval）走原来的前向。
+  2. xla 路径（microbatch 1：hc、mhc、attnres）的标签项改成 select（`LEVANTER_CE_XLA_ONEHOT=1`），和 A1 同理。这条路径的 CE 约占 HC 每步 25 s 中的 14 s（反向的两个 GEMM 吃 f32 delta）。CPU 测试（`tmp/pls_speed/xla_onehot_test.py`，4096 token、宽度 512、词表 128256，有无 soft cap）：损失和两个梯度逐位相同。
+  3. 手写 Triton 融合 CE 的估计：flash 式（不存 logits）要 4 个 GEMM，隐藏宽度 512 时效率低，不比 1 快；只在 1 之后的流量上还有约 10%，而且改变结果。先不做。
+- GPU 测试（wq，优先级 10，4 GPU，每个 1.5 h，`scripts/della/pls_speed_arm.sbatch`）：w205/w206 Pre-LN 不开与开 A1（det：逐位比较；time：每步时间与 profile），w207/w208 HC、AttnRes 的 profile。
+- CPU 测试的一个陷阱（`tmp/pls_speed/dot_round_test.py`）：XLA 默认允许多余精度，在 CPU 上把老路径反向里的 bf16 logits 舍入删掉了（bf16 输出的 dot 再转 f32，几乎每个元素都等于没有舍入的 f32 结果）。GPU 上 cuBLAS 确实写 bf16。所以前向算梯度在 CPU 上的对比要关掉多余精度（`--xla_allow_excess_precision=false`）才有意义；新实现用 `lax.reduce_precision` 做这个舍入，XLA 不会删它。GPU 上是否逐位相同由 det 轮决定（w217、w218）。
+- 更多 GPU 测试（wq，优先级 10）：w217 Pre-LN 前向算梯度，w218 A1 加前向算梯度，w219 HC 不开（det 轮），w220 HC 开 xla select（det 和 time 两轮）。
+
+## 补充 4 个 job（2026-10-25，所有者经 terminal：「让两个pretrain各补四个job吧」，这 4 个不需要弹窗）
+
+- 两组“剂量-反应”实验，都检验各自对比所指的那个性质：
+  1. w221/w222：HC 48 层 8 条流（独立头、普通模型加探针）。和 w194–w197（1、2 条流）、HC（4 条流，代价 0.048）一起，得到代价随流数的曲线。
+  2. w223/w224：AttnRes Block 24 个块（独立头、普通模型加探针；开关 `AR_BLOCKS`，tag `-arb{n}`）。Block（8 个块）代价 0.113，Full（每个子层一个源）种子 1 是 0.061：代价是否随每次读取混合的源变多而下降。
+- CPU 检查 `tmp/pls_fill/fill_test.py`：8 条流的 HC、3/6 个块的 AttnRes Block 损失和梯度有限，块数改变损失。dry run 的 run id 正确。代码 e1f3efbd9c。
+- 占位（所有者弹窗 2026-10-25）：8 条流加到 Fig 43；AttnRes 按源的个数做新图 Fig 44（`fig-ar-sources`，已有 Block 8 个块和 Full 两个种子的点）。网页 b7d417e，artifact 版本 102。
+- 这 4 个 job 都和老 run 比较，所以用老的 CE 路径；只有逐位相同的加速会用到它们。
