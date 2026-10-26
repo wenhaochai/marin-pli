@@ -136,9 +136,13 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # ms) and -3.6% at 5504 (w274: 1276 -> 1230 ms), loss within bf16 noise. It was the default at 130m/300m for half an hour
 # on 2026-10-26 and is not any more: the first production run with it (w160, 300m 8K) ran out of memory 14 min in, the
 # train step asking for one 40 GiB block after an eval and checkpoint (the 60-step A/Bs never ran a step after an eval).
+# "fproj" (speed, 2026-10-26): flash plus the attention projections' outputs (q, k, v, o), so the backward pass
+# recomputes the MLP matmuls but no projection; ~10 GB more than flash at 300m (32 x 4096 per device) against fdots'
+# ~29 GB. Under the async host loop the next step's buffers are allocated while the running step's are held, and
+# fdots' 37 GiB twice does not fit (w324); fproj's does.
 REMAT = os.environ.get("REMAT", "flash")
-if REMAT not in ("full", "flash", "none", "dots", "fdots"):
-    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots")
+if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj"):
+    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj")
 
 
 class _DotsCheckpointPolicy(ScanCheckpointPolicy):
@@ -150,6 +154,30 @@ class _DotsCheckpointPolicy(ScanCheckpointPolicy):
         return jax.checkpoint_policies.save_from_both_policies(
             jax.checkpoint_policies.save_only_these_names(carry_name, *(self.save_block_internals or ())),
             jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
+
+
+@dataclasses.dataclass(frozen=True)
+class _ProjCheckpointPolicy(ScanCheckpointPolicy):
+    """REMAT=fproj: REMAT=flash plus the outputs of the matmuls with no batch dimension that have no operand with the MLP
+    axis (size mlp_dim): the attention projections, not the MLP's gate, up and down."""
+
+    mlp_dim: int = 0
+
+    def _to_jax_policy(self, carry_name: str, input_name: str):
+        import jax
+        from jax._src.lax import lax as lax_internal
+
+        mlp_dim = self.mlp_dim
+
+        def projection_dots(prim, *avals, **params):
+            if prim is not lax_internal.dot_general_p:
+                return False
+            (_, _), (lhs_batch, _) = params["dimension_numbers"]
+            return not lhs_batch and all(mlp_dim not in a.shape for a in avals)
+
+        return jax.checkpoint_policies.save_from_both_policies(
+            jax.checkpoint_policies.save_only_these_names(carry_name, *(self.save_block_internals or ())),
+            projection_dots)
 # PROFILE=<start>:<steps> (speed, 2026-10-25): a JAX profiler trace of that many train steps from that step, kept locally under
 # logs/<run id>/profiler (perfetto trace too). Off by default; changes nothing else.
 PROFILE = os.environ.get("PROFILE", "")
@@ -168,6 +196,14 @@ if ATTN_BACKEND not in ("jax_flash", "fa4", "fa4thd"):
     raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4 | fa4thd")
 BATCH = int(os.environ.get("BATCH", "0"))
 SMOKE_STEPS = int(os.environ.get("SMOKE_STEPS", "0"))
+# SMOKE_EVAL_EVERY / SMOKE_CKPT_SECONDS (speed checks, 2026-10-26): a smoke that also evaluates every that many steps and
+# saves its temporary checkpoint every that many seconds, so train steps run after an eval and a checkpoint (w160: a
+# change that passed a 60-step smoke ran out of memory after its first eval). Smoke runs only; 0 = off.
+SMOKE_EVAL_EVERY = int(os.environ.get("SMOKE_EVAL_EVERY", "0"))
+SMOKE_CKPT_SECONDS = int(os.environ.get("SMOKE_CKPT_SECONDS", "0"))
+# SMOKE_FULL_EVAL=1: the smoke's evaluations run every Paloma batch, as a real run's do (by default a smoke evaluates one
+# batch), so a memory check sees the real eval's allocations.
+SMOKE_FULL_EVAL = os.environ.get("SMOKE_FULL_EVAL", "0") == "1"
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
@@ -743,6 +779,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy())
     elif REMAT == "fdots":
         model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
+    elif REMAT == "fproj":
+        model_extra = dict(model_extra, gradient_checkpointing=_ProjCheckpointPolicy(
+            save_block_internals=["flash_o", "flash_ell"], mlp_dim=s["inter"]))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
@@ -883,15 +922,15 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 train_batch_size=s["batch"],
                 per_device_parallelism=PDP or PER_DEVICE_PARALLELISM.get(size, -1),
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
-                steps_per_eval=SMOKE_STEPS or eval_every,
-                max_eval_batches=1 if SMOKE_STEPS else None,
+                steps_per_eval=(SMOKE_EVAL_EVERY or SMOKE_STEPS) if SMOKE_STEPS else eval_every,
+                max_eval_batches=1 if SMOKE_STEPS and not SMOKE_FULL_EVAL else None,
                 # OV checkpoints carry the n-gram tables with their Adam state (79 GB at 300m, 112 GB at 520m, ~227 GB at
                 # 1_2b), so OV variants (a) keep no step-interval checkpoints (the GROUP fileset was 96% full on
                 # 2026-09-30) and (b) save the temporary (resume) checkpoint hourly: a save stalls training while it stages
                 # to host (300m ov: ~70 s per save, ~11% of wall-clock at the 10-minute interval). The final checkpoint is
                 # unchanged and training is unaffected; a killed job loses at most an hour.
                 checkpointer=CheckpointerConfig(
-                    save_interval=timedelta(minutes=60 if VARIANT in OV_VARIANTS else 10),
+                    save_interval=timedelta(seconds=SMOKE_CKPT_SECONDS) if SMOKE_STEPS and SMOKE_CKPT_SECONDS else timedelta(minutes=60 if VARIANT in OV_VARIANTS else 10),
                     # TPP != 20 (owner, 2026-10-11): no step-interval checkpoints either (~40 GB at TPP=200 otherwise);
                     # the final and the temporary (resume) checkpoints stay
                     keep=[] if VARIANT in OV_VARIANTS or TPP != 20 else [dict(every=10000)],

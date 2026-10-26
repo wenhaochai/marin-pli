@@ -337,6 +337,17 @@ def _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
 
     loss_init = jnp.zeros((b_pad,), dtype=out_dtype)
     lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
+    # LEVANTER_CE_LSE_KERNEL_EVAL=1 (speed, 2026-10-26): this forward-only path (evaluation's per-token losses) uses the
+    # training path's Triton lse kernel too; its logsumexp and label logit come from the same f32 GEMM accumulators, so the
+    # loss differs only by the GEMM's and the lse merge's summation order (the kernel's bf16 logits are not used here).
+    use_kernel = (
+        os.environ.get("LEVANTER_CE_LSE_KERNEL_EVAL", "0") == "1"
+        and x.dtype == jnp.bfloat16
+        and w.dtype == jnp.bfloat16
+        and logit_soft_cap is None
+        and (dtype is None or jnp.dtype(dtype) == jnp.float32)
+        and h_dim % 64 == 0
+    )
 
     def body(block_index, state):
         loss, lse = state
@@ -346,16 +357,20 @@ def _linear_softmax_cross_entropy_loss_full_vocab_b_tiled(
 
         valid_rows = labels_block >= 0
         safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
-        reference_out = linear_softmax_cross_entropy_loss_reference(
-            x_block,
-            safe_labels,
-            w,
-            dtype=dtype,
-            logit_soft_cap=logit_soft_cap,
-            precision=precision,
-        )
-        loss_block = reference_out[0]
-        lse_block = reference_out[1]
+        if use_kernel:
+            _, lse_block, label_logits = _lse_kernel(x_block, w, safe_labels)
+            loss_block = lse_block - label_logits
+        else:
+            reference_out = linear_softmax_cross_entropy_loss_reference(
+                x_block,
+                safe_labels,
+                w,
+                dtype=dtype,
+                logit_soft_cap=logit_soft_cap,
+                precision=precision,
+            )
+            loss_block = reference_out[0]
+            lse_block = reference_out[1]
 
         loss_block = jnp.where(valid_rows, loss_block, 0.0).astype(out_dtype)
         lse_block = jnp.where(valid_rows, lse_block, 0.0).astype(out_dtype)
