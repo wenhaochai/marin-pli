@@ -175,7 +175,7 @@ for ARM in "${ARMS[@]}"; do
   err=$(grep -a -m1 -E "RESOURCE_EXHAUSTED|out of memory|Traceback|NotImplementedError|CUDA_ERROR" $log | cut -c1-200)
   { [ "$rc" -ne 0 ] || [ -n "$err" ]; } && fail=1
   echo "SMOKE $run_id END rc=$rc $(date +%H:%M:%S)"
-  $PY - "$run_id" "$rc" "$err" "$peak" <<'PY'
+  timeout 180 $PY - "$run_id" "$rc" "$err" "$peak" <<'PY'
 import sys
 import numpy as np
 import wandb
@@ -199,7 +199,7 @@ cd "$WT"
 REF=${ARMS[0]}
 for ARM in "${ARMS[@]:1}"; do
   [ -n "${RID[$REF]:-}" ] && [ -n "${RID[$ARM]:-}" ] || continue
-  $PY - "${RID[$REF]}" "${RID[$ARM]}" <<'PY'
+  timeout 180 $PY - "${RID[$REF]}" "${RID[$ARM]}" <<'PY'
 import sys
 import numpy as np
 import wandb
