@@ -511,7 +511,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 # SMOKE_EVAL_BATCHES=<n>: a smoke evaluates n batches instead of 1 (an A/B of EVAL_PDP sets n so both arms
                 # see the same sequences).
                 max_eval_batches=int(os.environ.get("SMOKE_EVAL_BATCHES", "1")) if SMOKE_STEPS else None,
-                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
+                # CKPT_MIN=<n>: minutes between temporary checkpoints (default 10); with a deadline save before the time limit
+                # (LEVANTER_CKPT_DEADLINE) a longer interval loses work only on a crash (speed work 2026-10-25).
+                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=float(os.environ.get("CKPT_MIN", "10"))), keep=[dict(every=10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
                     compute_mapping={

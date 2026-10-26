@@ -47,6 +47,11 @@ if [ "${WANDB_MODE:-}" != offline ] && ! curl -s -o /dev/null --max-time 20 http
 fi
 export VARIANT=pls
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+# Speed items (owner 2026-10-25, via the marin.cpp session: ship every speed item that can go in). None changes the math:
+#   LOG_JAXPR=0  no jaxpr / StableHLO text dumps (the same compiled programs; 35-213 s of idle GPUs per process start)
+#   CKPT_MIN=30  temporary checkpoints every 30 min instead of 10 (each save blocks the loop ~20 s); the training task
+#                also saves once at LEVANTER_CKPT_DEADLINE, 150 s before its time limit, so a segment end redoes ~no work
+export LOG_JAXPR=0 CKPT_MIN=30
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
@@ -157,10 +162,11 @@ fi
 
 # 2. training
 TRAIN_LIMIT=$(( JOB_MIN * 60 - SECONDS - 300 ))s
-echo "training limit $TRAIN_LIMIT"
+DEADLINE=$(( $(date +%s) + ${TRAIN_LIMIT%s} - 150 ))
+echo "training limit $TRAIN_LIMIT, checkpoint deadline $(date -d @$DEADLINE +%F_%T)"
 log=logs/slurm/${JNAME}_${JID}_train.log
 # shellcheck disable=SC2086
-setsid env $SINGLE bash $PT train "${rid#muonh-qwen3-}" main $NG "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
+setsid env $SINGLE LEVANTER_CKPT_DEADLINE=$DEADLINE bash $PT train "${rid#muonh-qwen3-}" main $NG "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
 pid=$!
 watchdog "$pid" "$log" & dog=$!
 echo "run $rid [$SINGLE]: pid $pid $(date +%H:%M:%S)"
