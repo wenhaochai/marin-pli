@@ -239,6 +239,20 @@ mode 2 64.6 ms, 1.7e-3 / 1.7e-3 (the bf16 gradient outputs alone set ~1.1e-3); f
 One GPU, 200 steps of 4 microbatches: 1904 -> 1790 ms per step with mode 1 (-6.0%, w425). Queued: 4 GPUs past full
 evals and checkpoints with the CE items together (w428), mode 2 on one GPU (w429).
 
+**Results and adoption (2026-10-26 17:30-19:45).** One GPU (4 microbatches per step, 200 steps; w421-w433): the SwiGLU
+custom_vjp alone +0.8% (hybrid_norm's post-MLP norm reads the MLP output, so the remat still recomputes the product);
+saving the MLP output too (REMAT=fmlpo) with it -2.0%, with the attention output (fmlpoa) -2.6%; LEVANTER_CE_UNNORM
+mode 1 -6.0%, mode 2 -5.4%; XLA's DUS-accumulator zero-init elimination -3.1% to -3.5% (dynamic-slice fusion, with or
+without legacy cuBLAS: no change); everything together -11.1% to -11.2%, fmlpo and fmlpoa alike, and without the
+zero-init flag the combination ran out of memory on one GPU. 4 GPUs past full evaluations and checkpoints every 20 steps
+(median ms per step, 8 checkpoints and 6 evaluations per arm, losses within noise): 128K 503 -> 457 (-9.1%, w435; a full
+evaluation 24 -> 20 s), 8K 388 -> 336 (-13.4%, w436), 32K at SEQ_LEN 4480 with fgate 477 -> 423 (-11.3%, w437).
+**Adopted (owner popup ~19:15, "全部设为默认，不重跑"; c6886d9b2b, jobs that start after 19:45):** LEVANTER_CE_UNNORM=2,
+LEVANTER_CE_BTILED_MIN_VOCAB=4096 (f32 logits below 65536), LEVANTER_CE_LSE_MGPU=1 with LEVANTER_CE_LSE_KERNEL_EVAL=1,
+LEVANTER_SWIGLU_VJP=1 and the zero-init flag in speed_env.sh, and REMAT code default fmlpo up to SEQ_LEN 4096. The two CE
+items change gradient numerics, both toward f32; the rest is the same math. Not adopted: plain data parallelism, the f32
+grad_w GEMM (+0.7% on pls, w404), LEVANTER_SCAN_EMPTY. Still queued: w398, w403, w408, w413, w420 (individual items).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
