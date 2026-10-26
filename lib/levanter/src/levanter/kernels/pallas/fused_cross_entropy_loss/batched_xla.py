@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float, Int
 
 from .config import BlockSizes
-from .reference import linear_softmax_cross_entropy_loss_reference
+from .reference import _cross_entropy_logsumexp, linear_softmax_cross_entropy_loss_reference
 from .xla import linear_softmax_cross_entropy_loss_xla
 
 
@@ -634,6 +634,117 @@ def _backward_b_tiled_from_lse(
 
     grad_x, grad_w = jax.lax.fori_loop(0, num_b_blocks, body, (grad_x_init, grad_w_init))
     return grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
+
+
+@partial(jax.jit, static_argnames=["b_block_size", "dtype", "logit_soft_cap", "precision"])
+def _full_vocab_b_tiled_forward_with_grads(
+    x: Float[Array, "B H"],
+    labels: Int[Array, "B"],
+    w: Float[Array, "H V"],
+    g_loss: Float[Array, "B"],
+    *,
+    b_block_size: int,
+    dtype: Optional[jnp.dtype],
+    logit_soft_cap: Optional[float],
+    precision: jax.lax.PrecisionLike,
+) -> tuple[Float[Array, "B"], Float[Array, "B"], Float[Array, "B H"], Float[Array, "H V"]]:
+    """The b-tiled forward and backward in one pass over the batch blocks, from one logits GEMM per block.
+
+    Returns the per-example loss and logsumexp of ``_linear_softmax_cross_entropy_loss_full_vocab_b_tiled`` and the
+    input and weight gradients that ``_backward_b_tiled_from_lse`` returns for the cotangent ``g_loss`` (and a zero
+    logsumexp cotangent), with the same operations in the same order. The forward reads f32 logits and the backward
+    re-runs the GEMM with bf16 output; here the bf16 logits are the f32 ones rounded, which is the same value when the
+    two GEMMs accumulate alike. For a caller that knows the cotangent before the backward (a mean loss, whose cotangent
+    is weight / sum(weight) times one scalar), this drops one of the four logits GEMMs per block and the backward's
+    logits write (speed work, 2026-10-25).
+    """
+    b_dim, h_dim = x.shape
+    v_dim = w.shape[1]
+    out_dtype = jnp.dtype(dtype) if dtype is not None else x.dtype
+
+    x_pad = _zero_pad(x, axis=0, multiple=b_block_size, pad_value=0.0)
+    labels_pad = _zero_pad(labels.astype(jnp.int32), axis=0, multiple=b_block_size, pad_value=-1)
+    g_loss_pad = _zero_pad(g_loss, axis=0, multiple=b_block_size, pad_value=0.0)
+    b_pad = x_pad.shape[0]
+    num_b_blocks = b_pad // b_block_size
+
+    loss_init = jnp.zeros((b_pad,), dtype=out_dtype)
+    lse_init = jnp.zeros((b_pad,), dtype=out_dtype)
+    grad_x_init = jnp.zeros((b_pad, h_dim), dtype=jnp.float32)
+    grad_w_init = jnp.zeros((h_dim, v_dim), dtype=jnp.float32)
+
+    def body(block_index, state):
+        loss, lse, grad_x, grad_w = state
+        b_start = block_index * b_block_size
+        x_block = jax.lax.dynamic_slice(x_pad, (b_start, 0), (b_block_size, h_dim))
+        labels_block = jax.lax.dynamic_slice(labels_pad, (b_start,), (b_block_size,))
+        g_loss_block = jax.lax.dynamic_slice(g_loss_pad, (b_start,), (b_block_size,)).astype(jnp.float32)
+
+        valid_rows = labels_block >= 0
+        safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
+
+        # forward: linear_softmax_cross_entropy_loss_reference(x_block, safe_labels, w, ...)
+        logits_f32 = jax.lax.dot_general(
+            x_block,
+            w,
+            (((1,), (0,)), ((), ())),
+            precision=precision,
+            preferred_element_type=jnp.float32,
+        )
+        fwd_logits = logits_f32.astype(dtype) if dtype is not None else logits_f32
+        fwd_logits = _apply_logit_soft_cap(fwd_logits, logit_soft_cap)
+        lse_raw = _cross_entropy_logsumexp(fwd_logits)
+        label_logits = fwd_logits[jnp.arange(b_block_size), safe_labels]
+        loss_block = jnp.where(valid_rows, lse_raw - label_logits, 0.0).astype(out_dtype)
+        lse_block = jnp.where(valid_rows, lse_raw, 0.0).astype(out_dtype)
+        loss = jax.lax.dynamic_update_slice(loss, loss_block, (b_start,))
+        lse = jax.lax.dynamic_update_slice(lse, lse_block, (b_start,))
+
+        # backward: _backward_b_tiled_from_lse's body on the same GEMM (its logits are the GEMM's bf16 output)
+        # the bf16 rounding as reduce_precision: XLA may drop an f32 -> bf16 -> f32 convert pair (excess precision)
+        if x.dtype == jnp.bfloat16:
+            logits_raw = jax.lax.reduce_precision(logits_f32, exponent_bits=8, mantissa_bits=7)
+        else:
+            logits_raw = logits_f32.astype(x.dtype).astype(jnp.float32)
+        logits = _apply_logit_soft_cap(logits_raw, logit_soft_cap)
+        probs = jnp.exp(logits - lse_block.astype(jnp.float32)[:, None])
+        dlogits = probs * (g_loss_block + jnp.zeros_like(g_loss_block))[:, None]
+
+        row_indices = jnp.arange(b_block_size, dtype=jnp.int32)
+        label_grad = jnp.where(valid_rows, -g_loss_block, 0.0)
+        if os.environ.get("LEVANTER_CE_BTILED_ONEHOT", "0") == "1":
+            hit = jnp.arange(v_dim, dtype=jnp.int32)[None, :] == safe_labels[:, None]
+            dlogits = jnp.where(hit, dlogits + label_grad[:, None], dlogits)
+        else:
+            dlogits = dlogits.at[row_indices, safe_labels].add(label_grad)
+
+        if logit_soft_cap is not None:
+            cap = jnp.asarray(logit_soft_cap, dtype=jnp.float32)
+            soft_cap_grad = 1.0 - jnp.square(logits / cap)
+            dlogits = dlogits * soft_cap_grad
+
+        dlogits_for_matmul = dlogits.astype(x.dtype)
+        grad_x_block = jax.lax.dot_general(
+            dlogits_for_matmul,
+            w,
+            (((1,), (1,)), ((), ())),
+            precision=precision,
+        ).astype(jnp.float32)
+        grad_w_block = jax.lax.dot_general(
+            x_block,
+            dlogits_for_matmul,
+            (((0,), (0,)), ((), ())),
+            precision=precision,
+        ).astype(jnp.float32)
+
+        grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
+        grad_w = grad_w + grad_w_block
+        return loss, lse, grad_x, grad_w
+
+    loss, lse, grad_x, grad_w = jax.lax.fori_loop(
+        0, num_b_blocks, body, (loss_init, lse_init, grad_x_init, grad_w_init)
+    )
+    return loss[:b_dim], lse[:b_dim], grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
 @partial(jax.jit, static_argnames=["v_block_size", "logit_soft_cap", "precision"])
