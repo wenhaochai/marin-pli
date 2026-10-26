@@ -53,6 +53,7 @@ from levanter.models.qwen import Qwen3Config
 from levanter.optim.muonh import MuonHConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
+from levanter.callbacks.profiler import ProfilerConfig, XprofUploadConfig
 from levanter.utils.mesh import MeshConfig
 from marin.execution.lazy import ArtifactStep, StepContext, lower, run
 from marin.execution.remote import remote
@@ -124,6 +125,9 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 REMAT = os.environ.get("REMAT", "full")
 if REMAT not in ("full", "flash"):
     raise ValueError(f"REMAT={REMAT}: full | flash")
+# PROFILE=<start>:<steps> (speed, 2026-10-25): a JAX profiler trace of that many train steps from that step, kept locally under
+# logs/<run id>/profiler (perfetto trace too). Off by default; changes nothing else.
+PROFILE = os.environ.get("PROFILE", "")
 # ATTN_BACKEND=fa4 (speed candidate, 2026-10-24): attention through levanter's grug FA4/CuTe segmented kernel
 # (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop. Same mask (causal + same document), fp32 softmax
 # statistics, no block size. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag fa4_cute.
@@ -806,6 +810,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         inner = train_lm.TrainLmConfig(
             data=data,
             trainer=TrainerConfig(
+                **({"profiler": ProfilerConfig(enabled=True, start_step=int(PROFILE.split(":")[0]), num_steps=int(PROFILE.split(":")[1]), create_perfetto_trace=True, upload=XprofUploadConfig(enabled=False))} if PROFILE else {}),
                 tracker=WandbConfig(
                     entity=os.environ.get("WANDB_ENTITY"),
                     project=os.environ.get("WANDB_PROJECT", "marin-della"),
