@@ -191,8 +191,11 @@ echo "run $rid [$SINGLE]: pid $pid $(date +%H:%M:%S)"
 rc=0; wait "$pid" || rc=$?
 pid=
 echo "run $rid exited rc=$rc $(date +%H:%M:%S)"
-# a crash (not the time limit: timeout's 124, or 143 after TERM) stops the later jobs of the chain
-if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 143 ]; then echo "job $JID: training rc=$rc" > "$FAILDIR/$rid.fail"; fi
+# LEVANTER_NORM_GUARD stopped it (a weight its optimizer keeps at a constant norm moved: an update read a wrong value,
+# the marin vocab run w158): exit 99, so wq runs it again from its last checkpoint, and no fail marker
+if [ $rc -ne 0 ] && grep -q "norm guard: " "$log"; then echo "run $rid: stopped by the norm guard; wq resumes it from its last checkpoint"; rc=99; fi
+# a crash (not the time limit: timeout's 124, or 143 after TERM; not the norm guard's 99) stops the later jobs of the chain
+if [ $rc -ne 0 ] && [ $rc -ne 124 ] && [ $rc -ne 143 ] && [ $rc -ne 99 ]; then echo "job $JID: training rc=$rc" > "$FAILDIR/$rid.fail"; fi
 
 # 3. a finished probe run drops its checkpoints (only this run's own dir, only for a probe run id)
 if [ $rc -eq 0 ] && [[ $rid == *-probes[0-9]*at[0-9]* ]] && [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then
