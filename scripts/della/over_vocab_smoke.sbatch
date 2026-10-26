@@ -24,6 +24,7 @@ export HF_HOME=/scratch/gpfs/GROUP/USER/cache/huggingface
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}  # never inherited from the submitting shell (a stray .50 halved the GPUs, 2026-10-04)
 export SMOKE_STEPS=${SMOKE_STEPS:-60} RUN_TAG=-j${SLURM_JOB_ID}
+source scripts/della/speed_env.sh   # the main run's speed settings (CUDA-graph loops, CE knobs), so the smoke runs the same code paths
 nvidia-smi -L
 fail=0
 # SMOKE_ENVS: ';'-separated sets of VAR=value assignments, each run as its own smoke for every SIZE x VARIANT (e.g.
