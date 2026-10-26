@@ -60,6 +60,7 @@ case $CFG in
   w160repro) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 VARIANT=unismooth US_EPS=0.02 US_FROM_PASS=2 DATA_EPOCHS=8 SMOKE_STEPS=120 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 SMOKE_FULL_EVAL=1 ;;   # the w160 job on 4 GPUs, full evals
   5504post) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 ;;
   4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
+  v8klong) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 SMOKE_STEPS=200 ;;   # the w160 shape, 200 steps
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
 export SMOKE_STEPS=${SMOKE_STEPS:-60}
@@ -70,7 +71,7 @@ fail=0
 declare -A RID
 for ARM in "${ARMS[@]}"; do
   if [ $ARM = old ]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old = the main checkout; every other arm = speed-all
-  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP
+  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP XLA_PYTHON_CLIENT_ALLOCATOR
   export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   export ATTN_BACKEND=fa4   # an arm that names no backend keeps the segmented FA4 kernel (the code default at 300m is fa4thd since 2026-10-26)
   DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
@@ -97,6 +98,8 @@ for ARM in "${ARMS[@]}"; do
     live) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # the live defaults since 2026-10-26 05:41
     liveasync) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="$CB" ;;   # live with the async host loop
     livefdots) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # live with fdots (w160 ran out of memory)
+    livecua) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async XLA_FLAGS="$CB" ;;   # live on the CUDA stream-ordered allocator (no contiguous-block need)
+    livefdotscua) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async XLA_FLAGS="$CB" ;;   # fdots on that allocator
     livenocb) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600" ;;
     liveasyncnocb) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600" ;;
     liveoff) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=" ;;   # no CUDA graphs at all
