@@ -17,6 +17,7 @@
 #   base = today's path (JAX flash, full remat, no command buffers; at 4096 the block rule is unchanged)
 #   jax  = REMAT=flash
 #   fa4  = FA4/CuTe attention        none = REMAT=none (arms after the config on the command line; default base jax fa4)
+#   now  = the defaults since 2026-10-26 04:30 (FA4, REMAT=flash, CE A1 + GIF); nowdots = now with REMAT=fdots
 # Every arm runs with no command buffers and dumps its optimized HLO, so trace_families.py can name the part of the step
 # each kernel belongs to; step times come from the A/B jobs, not from here.
 # The traces and HLO go to $OUT/<arm>/; FAM lines: the trace_families.py summary per arm.
@@ -39,6 +40,8 @@ export NUM_GPUS=2 PDP=32   # the 2-GPU copy: 32 sequences per device per microba
 case $CFG in
   4096) export SIZE=300m SEQ_LEN=4096; unset VOCAB_K ;;
   4480) export SIZE=300m SEQ_LEN=4480 VOCAB_K=32000 ;;
+  4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
+  5504) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 ;;
   *) echo "unknown config $CFG"; exit 2 ;;
 esac
 export SMOKE_STEPS=30 PROFILE=20:3
@@ -49,7 +52,8 @@ nvidia-smi -L
 fail=0
 ARMS=("${@:2}"); [ ${#ARMS[@]} -ge 1 ] || ARMS=(base jax fa4)
 for ARM in "${ARMS[@]}"; do
-  unset XLA_FLAGS ATTN_BACKEND REMAT
+  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD
+  export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   # attribution: no command buffers in any arm (each kernel then names its own HLO instruction; kernel times are the
   # same), and the step's optimized HLO dumped for scripts/della/speed_all/trace_families.py
   mkdir -p $OUT/$ARM/hlo
@@ -60,6 +64,8 @@ for ARM in "${ARMS[@]}"; do
     none) export ATTN_BACKEND=jax_flash REMAT=none ;;
     fa4) export ATTN_BACKEND=fa4 ;;
     fa4dots) export ATTN_BACKEND=fa4 REMAT=dots ;;
+    now) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;   # the defaults since 2026-10-26 04:30
+    nowdots) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     *) echo "unknown arm $ARM"; fail=1; continue ;;
   esac
   export RUN_TAG=-abprof${ARM}-j$JID

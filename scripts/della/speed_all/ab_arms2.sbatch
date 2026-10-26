@@ -22,6 +22,7 @@
 #   fa4     = FA4/CuTe attention + cb  fa4none = FA4 + REMAT=none + cb
 #   a1      = CE label term as a select (pls 5ab04d3e45)   gif = a1 + CE gradient in the forward
 #   dbase, dbase2, da1, dgif = base, base again, a1, gif with --xla_gpu_exclude_nondeterministic_ops (per-step loss bitwise?)
+#   now     = the defaults since 2026-10-26 04:30 (FA4, REMAT=flash, CE A1 + GIF, cb)   nowdots = now with REMAT=fdots
 # Per arm a SUMMARY line (exit code, peak memory, mean and median step time over steps >= 3, final loss); per later arm a
 # PAIR line, its per-step train/loss minus the first arm's (same seed, data, schedule; bf16 noise is ~1e-3).
 set -uo pipefail
@@ -58,6 +59,7 @@ declare -A RID
 for ARM in "${ARMS[@]}"; do
   if [ $ARM = old ]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old = the main checkout; every other arm = speed-all
   unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT
+  export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
   CB="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
   case $ARM in
@@ -72,6 +74,8 @@ for ARM in "${ARMS[@]}"; do
     dots) export REMAT=dots XLA_FLAGS="$CB" ;;
     fa4dots) export ATTN_BACKEND=fa4 REMAT=dots XLA_FLAGS="$CB" ;;
     fa4flash) export ATTN_BACKEND=fa4 REMAT=flash XLA_FLAGS="$CB" ;;
+    now) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;   # the defaults since 2026-10-26 04:30
+    nowdots) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 XLA_FLAGS="$CB" ;;
     a1) export LEVANTER_CE_BTILED_ONEHOT=1 ;;
     gif) export LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
     dbase|dbase2) export XLA_FLAGS="$DET" ATTN_BACKEND=jax_flash ;;   # det arms on JAX flash (FA4 backward is not run-to-run deterministic)

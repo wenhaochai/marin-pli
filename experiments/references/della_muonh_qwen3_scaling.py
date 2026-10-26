@@ -118,29 +118,35 @@ SEQ_LEN = int(os.environ.get("SEQ_LEN", "4096"))
 FLASH_BLOCK = None if SEQ_LEN % 1024 == 0 else next((b for b in range(1024, 15, -16) if SEQ_LEN % b == 0), None)
 if SEQ_LEN % 1024 and FLASH_BLOCK is None:
     raise ValueError(f"SEQ_LEN={SEQ_LEN}: a multiple of 16 for the flash-attention blocks")
-# REMAT: per-layer gradient checkpointing. "full" (default, every run before 2026-10-24) saves only the layer carry, so
-# the backward pass re-runs each layer's whole forward, flash-attention while-loops included. "flash" also saves the
-# flash-attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py), so the backward pass
-# re-runs norms, projections and the MLP but not the attention forward. Same math (bf16 rounding differs); ~+2-3 GiB
-# per device at 300m. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag remat-flash.
+# REMAT: per-layer gradient checkpointing. "full" (default until 2026-10-26) saves only the layer carry, so
+# the backward pass re-runs each layer's whole forward, flash-attention while-loops included. "flash" (default since
+# 2026-10-26) also saves the attention output and logsumexp (named flash_o / flash_ell in levanter flash_attention.py and
+# in the FA4 forward, _fa4_cute_backend.py), so the backward pass re-runs norms, projections and the MLP but not the
+# attention forward. Same math (bf16 rounding differs); ~+2.5 GiB per device at 300m. H100 at 300m 128K: -14% under
+# JAX flash (w203), -3.7% under FA4 (w253, 2 GPUs: 1402 -> 1350 ms), loss within bf16 noise. Speed only: no run tag, so
+# a resumed segment keeps its run id; W&B tag remat-flash.
 # "none" (speed, 2026-10-25): no per-layer checkpointing; the backward pass reuses every saved forward value. Does not fit
 # at 300m: 179 GiB per device at 32 sequences x 4096 (H100 w212, 2026-10-26).
 # "dots" (speed, 2026-10-26): each layer saves its carry and every matmul output with no batch dimension (the q/k/v/o
 # projections and the MLP matmuls, not attention's batched dots), so the backward pass recomputes only the cheap
 # elementwise ops (norms, rotary, activations) and the attention forward. Same math up to bf16 rounding; about 20 KB per
-# token per layer more memory (~31 GiB at 300m, 32 x 4096 per device).
-REMAT = os.environ.get("REMAT", "full")
-if REMAT not in ("full", "flash", "none", "dots"):
-    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots")
+# token per layer more memory (~31 GiB at 300m, 32 x 4096 per device). H100 w248 under FA4: -2.5% (the saved outputs cost
+# ~40 ms of layer-scan copies per 2-GPU step). "fdots" (speed, 2026-10-26): dots plus the attention output and logsumexp,
+# so the backward pass recomputes no matmul and no attention forward.
+REMAT = os.environ.get("REMAT", "flash")
+if REMAT not in ("full", "flash", "none", "dots", "fdots"):
+    raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots")
 
 
 class _DotsCheckpointPolicy(ScanCheckpointPolicy):
-    """REMAT=dots: save the layer carry and the matmul outputs with no batch dimension; recompute the rest."""
+    """REMAT=dots: save the layer carry and the matmul outputs with no batch dimension; recompute the rest. REMAT=fdots also
+    saves the names in save_block_internals (the attention output and logsumexp, as REMAT=flash does)."""
 
     def _to_jax_policy(self, carry_name: str, input_name: str):
         import jax
         return jax.checkpoint_policies.save_from_both_policies(
-            jax.checkpoint_policies.save_only_these_names(carry_name), jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
+            jax.checkpoint_policies.save_only_these_names(carry_name, *(self.save_block_internals or ())),
+            jax.checkpoint_policies.dots_with_no_batch_dims_saveable)
 # PROFILE=<start>:<steps> (speed, 2026-10-25): a JAX profiler trace of that many train steps from that step, kept locally under
 # logs/<run id>/profiler (perfetto trace too). Off by default; changes nothing else.
 PROFILE = os.environ.get("PROFILE", "")
@@ -725,6 +731,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_extra = dict(model_extra, gradient_checkpointing=False)
     elif REMAT == "dots":
         model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy())
+    elif REMAT == "fdots":
+        model_extra = dict(model_extra, gradient_checkpointing=_DotsCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     model = model_cls(
