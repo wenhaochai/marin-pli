@@ -80,6 +80,13 @@ PROFILE = os.environ.get("PROFILE", "")
 # LOG_JAXPR=0 skips levanter's jaxpr / StableHLO text dumps of each program (minutes of host work with the GPUs idle);
 # the compiled programs are the same (speed work 2026-10-24).
 LOG_JAXPR = os.environ.get("LOG_JAXPR", "1") == "1"
+# XLA_CMD_BUFFER_WHILE=1 runs XLA while/conditional loops as CUDA-graph commands (the Tokenizer Size session's fe5a177339):
+# a loop with a data-dependent trip count otherwise copies its predicate to the host and relaunches its kernels every
+# iteration (~55 us). The fused CE's vocab- and batch-block fori_loops are such loops: the microbatch-1 designs (hc, mhc,
+# attnres) run ~50k CE loop iterations per step. Same kernels, same math (speed work, 2026-10-25). The flag goes into
+# XLA_FLAGS here, before anything creates the GPU backend.
+if os.environ.get("XLA_CMD_BUFFER_WHILE", "0") == "1" and "xla_gpu_enable_command_buffer" not in os.environ.get("XLA_FLAGS", ""):
+    os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL").strip()
 
 VERSION = "2026.09.13"
 # NUM_GPUS (default 4, the baselines' count) changes only the data-parallel width; the batch, and with PDP the

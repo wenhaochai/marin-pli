@@ -20,6 +20,7 @@
 #   gif    LEVANTER_CE_GRAD_IN_FWD=1 (b-tiled CE gradients computed in the forward, one logits GEMM per block)
 #   a1gif  both
 #   xoh    LEVANTER_CE_XLA_ONEHOT=1 (label term as a select in the xla streaming CE backward: microbatch 1)
+#   cbw    XLA_CMD_BUFFER_WHILE=1 (while/conditional loops as CUDA-graph commands); xohcbw: both
 #   evalbase  20 steps, then 160 eval batches at the train microbatch (640 sequences for a microbatch-1 design)
 #   evalpdp   20 steps, then the same 640 sequences at EVAL_PDP=4 (40 batches): eval time and memory (A7)
 # Rounds (default: det time for preln, time for hc and attnres; a -det, -time or -dettime suffix sets them): det
@@ -50,6 +51,8 @@ case $knobs in
   gif) ON="LEVANTER_CE_GRAD_IN_FWD=1";;
   a1gif) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
   xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
+  cbw) ON="XLA_CMD_BUFFER_WHILE=1";;
+  xohcbw) ON="LEVANTER_CE_XLA_ONEHOT=1 XLA_CMD_BUFFER_WHILE=1";;
   evalbase) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=160";;
   evalpdp) ON="SMOKE_STEPS=20 SMOKE_EVAL_BATCHES=40 EVAL_PDP=4";;
   *) echo "unknown knobs in '$NAME'"; exit 2;;
