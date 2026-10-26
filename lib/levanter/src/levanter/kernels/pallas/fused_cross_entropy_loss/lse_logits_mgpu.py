@@ -41,8 +41,13 @@ CONFIGS = {
 }
 
 
-def _kernel(a_gmem, b_gmem, out_gmem, m_gmem, s_gmem, config: hm.TuningConfig):
-    """hopper_matmul_mgpu.kernel without the C operand, clusters or callbacks, plus the logsumexp partials."""
+def _kernel(a_gmem, b_gmem, *refs, config: hm.TuningConfig, exp_out: bool = False):
+    """hopper_matmul_mgpu.kernel without the C operand, clusters or callbacks, plus the logsumexp partials. With exp_out
+    the kernel also reads a row offset c [M] and stores exp(z - c) instead of z (see probs_and_sum_mgpu)."""
+    if exp_out:
+        c_gmem, out_gmem, m_gmem, s_gmem = refs
+    else:
+        out_gmem, m_gmem, s_gmem = refs
     dtype = a_gmem.dtype
     out_dtype = out_gmem.dtype
     m, k = a_gmem.shape
@@ -108,9 +113,19 @@ def _kernel(a_gmem, b_gmem, out_gmem, m_gmem, s_gmem, config: hm.TuningConfig):
                 def _acc_scope(acc_ref):
                     eval_pipeline(acc_ref)
                     acc32 = acc_ref[...]
-                    row_max = acc32.max(axis=1)
-                    row_sum = jnp.exp(acc32 - lax.broadcast_in_dim(row_max, acc32.shape, [0])).sum(axis=1)
-                    acc = acc32.astype(out_dtype)
+                    if exp_out:
+                        # exp(z - c) clamped at 60, so neither a stored value nor a GEMM sum over a row overflows f32;
+                        # with c the label logit only a token whose loss passes 60 nats is changed
+                        c = plgpu.load(c_gmem.at[rows], layout=plgpu.Layout.WGMMA.reduce(1))
+                        shifted = jnp.minimum(acc32 - lax.broadcast_in_dim(c, acc32.shape, [0]), 60.0)
+                        row_max = shifted.max(axis=1)
+                        e = jnp.exp(shifted)
+                        row_sum = e.sum(axis=1)
+                        acc = e.astype(out_dtype)
+                    else:
+                        row_max = acc32.max(axis=1)
+                        row_sum = jnp.exp(acc32 - lax.broadcast_in_dim(row_max, acc32.shape, [0])).sum(axis=1)
+                        acc = acc32.astype(out_dtype)
                     # every earlier copy out of this warpgroup's SMEM (last tile's stats and logits) is done
                     plgpu.wait_smem_to_gmem(0, wait_read_only=True)
                     stats_smem[wg_idx, 0] = row_max
@@ -187,3 +202,35 @@ def lse_and_logits_mgpu(x: jax.Array, w: jax.Array, labels: jax.Array | None = N
     w_rows = jnp.take(w.T, labels, axis=0)   # [M, K]
     label_logits = jnp.sum(x.astype(jnp.float32) * w_rows.astype(jnp.float32), axis=1)
     return logits, lse, label_logits
+
+
+def probs_and_sum_mgpu(x: jax.Array, w: jax.Array, offset: jax.Array):
+    """bf16 P = exp(x @ w - offset[:, None]) [M, N] (the shifted logits clamped at 60), the f32 sum of each row's
+    exp(z - offset) [M] (from the f32 accumulators, before the bf16 rounding) and each row's largest shifted logit [M];
+    bf16 ``x`` [M, K] and ``w`` [K, N], f32 ``offset`` [M]; shapes must pass ``supported``. With the label logit as the
+    offset, P holds the probabilities times the row's sum (P at the label is 1), so the cross-entropy gradients are
+    GEMMs on P with the row factor g / sum outside them, and no pass over the logits is needed between the GEMMs."""
+    m_dim, k_dim = x.shape
+    _, n_dim = w.shape
+    if x.dtype != jnp.bfloat16 or w.dtype != jnp.bfloat16:
+        raise ValueError(f"probs_and_sum_mgpu takes bf16 x and w, got {x.dtype} and {w.dtype}")
+    if not supported(m_dim, k_dim, n_dim):
+        raise ValueError(f"probs_and_sum_mgpu: no config for x {x.shape}, w {w.shape}")
+    cfg = CONFIGS[k_dim]
+    n_tiles = n_dim // cfg.tile_n
+    probs, m_part, s_part = plgpu.kernel(
+        functools.partial(_kernel, config=cfg, exp_out=True),
+        out_type=(
+            jax.ShapeDtypeStruct((m_dim, n_dim), jnp.bfloat16),
+            jax.ShapeDtypeStruct((n_tiles, m_dim), jnp.float32),
+            jax.ShapeDtypeStruct((n_tiles, m_dim), jnp.float32),
+        ),
+        grid=(hm.get_num_sms(),),
+        grid_names=("cluster_grid",),
+        cluster=(1,),
+        cluster_names=("cluster",),
+        num_threads=3,
+        thread_name="wg",
+        compiler_params=plgpu.CompilerParams(approx_math=True, lowering_semantics=plgpu.LoweringSemantics.Warpgroup),
+    )(x, w, offset.astype(jnp.float32))
+    return probs, jnp.sum(s_part, axis=0), jnp.max(m_part, axis=0)
