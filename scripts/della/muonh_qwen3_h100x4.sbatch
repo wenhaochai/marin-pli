@@ -26,12 +26,13 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
 export SIZE=${SIZE:-130m}
 export XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}  # never inherited from the submitting shell (a stray .50 there halved the GPUs, 2026-10-04); XLA_PYTHON_CLIENT_ALLOCATOR passes through
-# XLA_CMD_BUFFER_WHILE=1 (speed, 2026-10-24; default 0 = unchanged): XLA also captures while/conditional loops in CUDA
-# graphs. The JAX_FLASH inner causal loops have data-dependent trip counts; without this each iteration copies its
-# predicate to the host and relaunches its kernels (~55 us per iteration in the charwin logs: 20K-34K iterations per step
-# at flash block 128). Same kernels in the same order, so the same math. The NCCL watchdog flag is repeated here because
-# marin's training env adds it only when XLA_FLAGS is unset (os.environ.setdefault), so the job keeps it.
-if [ "${XLA_CMD_BUFFER_WHILE:-0}" = 1 ]; then
+# XLA_CMD_BUFFER_WHILE=1 (speed, 2026-10-24; default 1 since 2026-10-26 after the H100 A/B w203/w204, 0 = the old launch):
+# XLA also captures while/conditional loops in CUDA graphs. The JAX_FLASH inner causal loops have data-dependent trip
+# counts; without this each iteration copies its predicate to the host and relaunches its kernels (~55 us per iteration in
+# the charwin logs: 20K-34K iterations per step at flash block 128). Same kernels in the same order, so the same math. The
+# NCCL watchdog flag is repeated here because marin's training env adds it only when XLA_FLAGS is unset
+# (os.environ.setdefault), so the job keeps it.
+if [ "${XLA_CMD_BUFFER_WHILE:-1}" = 1 ]; then
   case " ${XLA_FLAGS:-} " in *xla_gpu_nccl_termination_timeout_seconds*) ;; *) XLA_FLAGS="${XLA_FLAGS:-} --xla_gpu_nccl_termination_timeout_seconds=600" ;; esac
   export XLA_FLAGS="${XLA_FLAGS} --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
   echo "XLA_CMD_BUFFER_WHILE=1: XLA_FLAGS=$XLA_FLAGS"
@@ -43,6 +44,10 @@ if [ -n "${SLURM_JOB_END_TIME:-}" ]; then
   export LEVANTER_CKPT_DEADLINE=$((SLURM_JOB_END_TIME - 150))
   echo "LEVANTER_CKPT_DEADLINE=$LEVANTER_CKPT_DEADLINE ($(date -d @$LEVANTER_CKPT_DEADLINE +%F' '%T))"
 fi
+# LEVANTER_CE_BTILED_ONEHOT=1 (speed, 2026-10-25; the pls session's CE commit, bitwise equal to the scatter on H100 in its
+# deterministic A/B): the cross-entropy label term as a select instead of a scatter, so XLA fuses the dlogits pass. The
+# same additions on the same values: every run's numbers are unchanged.
+export LEVANTER_CE_BTILED_ONEHOT=${LEVANTER_CE_BTILED_ONEHOT:-1}
 
 nvidia-smi -L
 .venv/bin/python -c 'import jax; print("jax", jax.__version__, "devices", jax.devices())'

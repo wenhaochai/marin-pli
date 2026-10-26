@@ -70,6 +70,7 @@ from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
 from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
+from experiments.references.flood_qwen3 import FloodQwen3Config, flood_levels
 from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
 from experiments.references.embed_wd_muonh import EmbedWDMuonHConfig
 from experiments.references.lr_mult_muonh import LrMultMuonHConfig
@@ -132,8 +133,8 @@ if REMAT not in ("full", "flash", "none"):
 PROFILE = os.environ.get("PROFILE", "")
 # ATTN_BACKEND=fa4 (speed candidate, 2026-10-24): attention through levanter's grug FA4/CuTe segmented kernel
 # (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop. Same mask (causal + same document), fp32 softmax
-# statistics, no block size. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag fa4_cute.
-ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "jax_flash")
+# statistics, no block size. Speed only: no run tag, so a resumed segment keeps its run id; W&B tag fa4_cute or jax_flash.
+ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "fa4")   # default fa4 since 2026-10-26 (H100 A/B w203/w204: 2x at 4096, 4.3x at 4480, loss within bf16 noise); ATTN_BACKEND=jax_flash is the old path
 if ATTN_BACKEND not in ("jax_flash", "fa4"):
     raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4")
 BATCH = int(os.environ.get("BATCH", "0"))
@@ -341,6 +342,13 @@ DROP_FROM_PASS = int(os.environ.get("DROP_FROM_PASS", "0"))
 # in logs/vocab_token_losses/subset_counts_<K>.npy, K = 128000 or 8000). Evaluation is plain CE. Tag -us<eps>-fp<pass>.
 US_EPS = float(os.environ.get("US_EPS", "0.05"))
 US_FROM_PASS = int(os.environ.get("US_FROM_PASS", "0"))
+# VARIANT=flood (owner popup 2026-10-25, the four extra jobs): from the first update of pass FL_FROM_PASS of 8 on, the batch
+# loss L becomes |L - b| + b (Ishida et al. 2020), b = the step's level from logs/vocab_flood/level_<K>_f<FL_F>.npy
+# (scripts/della/flood_levels.py): the unique-token run's smoothed train loss, moved a share FL_F toward the plain 8-pass
+# run's. FL_F = 0 keeps the 8-pass run from fitting its repeated text better than the unique run (flood_qwen3.py).
+# Evaluation is plain. Tag -fl<f>-fp<pass>.
+FL_F = float(os.environ.get("FL_F", "0"))
+FL_FROM_PASS = int(os.environ.get("FL_FROM_PASS", "0"))
 # VARIANT=inoise (goal of 2026-10-21, owner popup, parallel batch C and D): input noise in training (InputNoiseQwen3Config):
 # each input position with probability INOISE_P gets a zero row (INOISE_MODE=zero, embedding dropout) or a uniformly random
 # ordinary token (rand), from the first update of repeated pass INOISE_FROM_PASS. Any VOCAB_K. Tag -in<mode><p>[-fp<pass>].
@@ -446,7 +454,7 @@ CVD_RATE_COUNT = int(os.environ.get("CVD_RATE_COUNT", "0"))
 # (DecayToPiecesMuonHConfig). Tag -dtp<lambda>-fp<p>.
 DTP = float(os.environ.get("DTP", "0"))
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -537,6 +545,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
         variant_tags += f"-us{US_EPS:g}-fp{US_FROM_PASS}"
+    if VARIANT == "flood":
+        variant_tags += f"-fl{FL_F:g}-fp{FL_FROM_PASS}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
     if VARIANT in ("ss", "ovss", "ovgramss"):
@@ -668,6 +678,16 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise FileNotFoundError(counts)
         model_cls, model_extra = UniSmoothQwen3Config, dict(us_eps=US_EPS, us_counts=counts,
                                                           us_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (US_FROM_PASS - 1))
+    elif VARIANT == "flood":
+        if not (DATA_EPOCHS == 8 and 2 <= FL_FROM_PASS <= 7 and 0 <= FL_F < 1 and VOCAB_K in (0, 32000, 8000) and PASS_DATA == "" and not TOTAL_STEPS):
+            raise ValueError("VARIANT=flood: DATA_EPOCHS=8, FL_FROM_PASS 2..7, 0 <= FL_F < 1, VOCAB_K 0, 32000 or 8000, plain passes, default steps")
+        level = f"/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_flood/level_{VOCAB_K or 128000}_f{FL_F:g}.npy"
+        if not os.path.exists(level):
+            raise FileNotFoundError(level)
+        n_level = len(flood_levels(level))
+        if not SMOKE_STEPS and n_level != s["steps"]:
+            raise ValueError(f"{level}: {n_level} steps, the run has {s['steps']}")
+        model_cls, model_extra = FloodQwen3Config, dict(fl_level=level, fl_from_step=round((SMOKE_STEPS or s["steps"]) / 8) * (FL_FROM_PASS - 1))
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)
