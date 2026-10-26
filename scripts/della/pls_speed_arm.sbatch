@@ -23,6 +23,7 @@
 #   xoh    LEVANTER_CE_XLA_ONEHOT=1 (label term as a select in the xla streaming CE backward: microbatch 1)
 #   cbw    XLA_CMD_BUFFER_WHILE=1 (while/conditional loops as CUDA-graph commands); xohcbw: both
 #   fa4    ATTN_BACKEND=fa4 (FA4/CuTe attention; changes the math, run tag -fa4); fa4cbw: with CUDA-graph loops
+#   fa4thd ATTN_BACKEND=fa4thd (upstream FA4 SM90 varlen kernels; run tag -fa4thd)
 #   bt4k   microbatch-1 shards on the b-tiled CE (LEVANTER_CE_BTILED_MIN_BATCH=4096) with A1 and GIF; fa4bt4k: plus FA4
 #          (both OOM on hc/attnres: 96-98 GiB, w266-w269); bt4ka1: the b-tiled CE with A1, no GIF
 #   a1     with -prof: the profiling round on today's production knobs (A1 on)
@@ -60,6 +61,7 @@ case $knobs in
   xoh) ON="LEVANTER_CE_XLA_ONEHOT=1";;
   cbw) ON="XLA_CMD_BUFFER_WHILE=1";;
   fa4) ON="ATTN_BACKEND=fa4";;
+  fa4thd) ON="ATTN_BACKEND=fa4thd";;
   fa4cbw) ON="ATTN_BACKEND=fa4 XLA_CMD_BUFFER_WHILE=1";;
   bt4k) ON="LEVANTER_CE_BTILED_MIN_BATCH=4096 LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1";;
   bt4ka1) ON="LEVANTER_CE_BTILED_MIN_BATCH=4096 LEVANTER_CE_BTILED_ONEHOT=1";;
