@@ -19,6 +19,7 @@
 #   fa4  = FA4/CuTe attention        none = REMAT=none (arms after the config on the command line; default base jax fa4)
 #   now  = the defaults since 2026-10-26 04:30 (FA4, REMAT=flash, CE A1 + GIF); nowdots = now with REMAT=fdots
 #   nowprod = the defaults since 2026-10-26 05:15 (fdots, CE kernel) with CUDA graphs on, as in training
+#   live = the live defaults since 2026-10-26 05:41 (fa4thd, REMAT=flash, CE A1 + GIF + lse kernel)
 # Every arm runs with no command buffers and dumps its optimized HLO, so trace_families.py can name the part of the step
 # each kernel belongs to; step times come from the A/B jobs, not from here.
 # The traces and HLO go to $OUT/<arm>/; FAM lines: the trace_families.py summary per arm.
@@ -67,6 +68,7 @@ for ARM in "${ARMS[@]}"; do
     fa4dots) export ATTN_BACKEND=fa4 REMAT=dots ;;
     now) export ATTN_BACKEND=fa4 REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;   # the defaults since 2026-10-26 04:30
     nowdots) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 ;;
+    live) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 ;;   # the live defaults since 2026-10-26 05:41
     nowprod) export ATTN_BACKEND=fa4 REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="${XLA_FLAGS/--xla_gpu_enable_command_buffer= /--xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL }" ;;   # the production flags, CUDA graphs on: GPU busy share as trained (family attribution may be partial)
     *) echo "unknown arm $ARM"; fail=1; continue ;;
   esac
