@@ -10,7 +10,7 @@ import time
 import jax
 import jax.numpy as jnp
 import numpy as np
-from levanter.kernels.pallas.fused_cross_entropy_loss.lse_logits_mgpu import lse_and_logits_mgpu
+from levanter.kernels.pallas.fused_cross_entropy_loss.lse_logits_mgpu import lse_and_logits_mgpu, probs_and_sum_mgpu
 from levanter.kernels.pallas.fused_cross_entropy_loss.lse_logits_triton import lse_and_logits
 
 
@@ -58,11 +58,21 @@ for K in (768, 512):
         "mgpu_v3_wt": jax.jit(lambda x, wt, labels=labels: lse_and_logits_mgpu(x, wt.T, labels)),
     }
     forms.update({name: (lambda f: lambda x, w: f(x, wt))(f) for name, f in prod.items()})
+    # probs_and_sum_mgpu (LEVANTER_CE_UNNORM): P = exp(z - z_label) and its row sums, against the f32 reference
+    off = jnp.asarray(ref_lab)
+    forms["probs_v3"] = jax.jit(lambda x, w, off=off: probs_and_sum_mgpu(x, w, off))
     for name, fn in forms.items():
         try:
             ms = bench(fn, x, w)
             row = {"K": K, "form": name, "ms": round(ms, 3), "tflops": round(flop / ms / 1e9, 1)}
-            if name in ("triton_prod", "mgpu_v3", "triton_prod_wt", "mgpu_v3_wt"):
+            if name == "probs_v3":
+                p, s, _ = fn(x, w)
+                ref_s = np.exp(ref_lse - ref_lab)
+                pf = np.asarray(p[:256].astype(jnp.float32))
+                ref_p = np.exp(np.asarray(jnp.dot(x[:256], w, preferred_element_type=jnp.float32)) - ref_lab[:256, None])
+                row["sum_max_rel_err"] = float(np.max(np.abs(np.asarray(s) - ref_s) / ref_s))
+                row["p_max_rel_err_256rows"] = float(np.max(np.abs(pf - ref_p) / np.maximum(ref_p, 1e-30)))
+            elif name in ("triton_prod", "mgpu_v3", "triton_prod_wt", "mgpu_v3_wt"):
                 logits, lse, lab = fn(x, w)
                 lg = np.asarray(logits.astype(jnp.float32))
                 row["logits_bf16_equal"] = float(np.mean(lg == ref_bf16))

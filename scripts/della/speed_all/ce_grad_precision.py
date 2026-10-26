@@ -105,6 +105,7 @@ for V in (8256, 32256, 128256):
         "gif_bf16": gif({"LEVANTER_CE_LSE_KERNEL": "0", "LEVANTER_CE_BTILED_ONEHOT": "1"}),
         "gif_f32": gif({"LEVANTER_CE_LSE_KERNEL": "1", "LEVANTER_CE_BTILED_ONEHOT": "1", "LEVANTER_CE_BTILED_F32_LOGITS": "1"}),
         "unnorm": jax.jit(unnorm),
+        "gif_unnorm": gif({"LEVANTER_CE_LSE_KERNEL": "1", "LEVANTER_CE_BTILED_ONEHOT": "1", "LEVANTER_CE_UNNORM": "1"}),
     }
     for name, fn in paths.items():
         try:

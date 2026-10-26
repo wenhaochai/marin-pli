@@ -658,6 +658,13 @@ def _backward_b_tiled_from_lse(
     return grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
 
+def _lse_mgpu_supported(m: int, k: int, n: int) -> bool:
+    """Whether lse kernel v3 (lse_logits_mgpu.py) takes an [m, k] x [k, n] block (imported here: Mosaic GPU only)."""
+    from .lse_logits_mgpu import supported
+
+    return supported(m, k, n)
+
+
 def _lse_kernel(x_block: jax.Array, w: jax.Array, labels: jax.Array):
     """bf16 logits, f32 logsumexp and f32 label logits of one block from the Triton kernel (imported here: jax_triton
     resets TRITON_CACHE_DIR at import, so default runs never import it). Config: the fastest at all four benchmarked
@@ -730,6 +737,51 @@ def _full_vocab_b_tiled_forward_with_grads(
         and (dtype is None or jnp.dtype(dtype) == jnp.float32)
         and h_dim % 64 == 0
     )
+    # LEVANTER_CE_UNNORM=1 (speed test, 2026-10-26): the lse kernel v3 stores P = exp(z - z_label) instead of the logits
+    # (lse_logits_mgpu.probs_and_sum_mgpu), and the gradients are GEMMs on P: dlogits = g (P / S - onehot) = (g / S) P'
+    # with S the row sum of P and P' = P with 1 - S at the label (where P is exp(0) = 1). The factor g / S goes on x for
+    # grad_w and on the output rows for grad_x, so the pass that turns logits into dlogits goes away, and P carries bf16's
+    # relative rounding of a probability instead of exp of a bf16-rounded logit.
+    use_unnorm = (
+        os.environ.get("LEVANTER_CE_UNNORM", "0") == "1"
+        and use_kernel
+        and _lse_mgpu_supported(b_block_size, h_dim, v_dim)
+    )
+    gradw_type = jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None
+
+    def unnorm_body(block_index, state):
+        from .lse_logits_mgpu import probs_and_sum_mgpu
+
+        loss, lse, grad_x, grad_w = state
+        b_start = block_index * b_block_size
+        x_block = jax.lax.dynamic_slice(x_pad, (b_start, 0), (b_block_size, h_dim))
+        labels_block = jax.lax.dynamic_slice(labels_pad, (b_start,), (b_block_size,))
+        g_loss_block = jax.lax.dynamic_slice(g_loss_pad, (b_start,), (b_block_size,)).astype(jnp.float32)
+        valid_rows = labels_block >= 0
+        safe_labels = jnp.clip(labels_block, 0, v_dim - 1)
+
+        w_label = jnp.take(w, safe_labels, axis=1)   # [H, B]: each row's label column
+        label_logits = jnp.sum(x_block.astype(jnp.float32) * w_label.T.astype(jnp.float32), axis=1)
+        probs, row_sum, _ = probs_and_sum_mgpu(x_block, w, label_logits)
+        log_sum = jnp.log(row_sum)   # the loss: logsumexp - label logit
+        loss = jax.lax.dynamic_update_slice(loss, jnp.where(valid_rows, log_sum, 0.0).astype(out_dtype), (b_start,))
+        lse = jax.lax.dynamic_update_slice(lse, jnp.where(valid_rows, label_logits + log_sum, 0.0).astype(out_dtype), (b_start,))
+
+        row_indices = jnp.arange(b_block_size, dtype=jnp.int32)
+        probs = probs.at[row_indices, safe_labels].set((1.0 - row_sum).astype(probs.dtype))
+        factor = jnp.where(valid_rows, g_loss_block / row_sum, 0.0)
+        grad_x_block = factor[:, None] * jax.lax.dot_general(
+            probs, w, (((1,), (1,)), ((), ())), precision=precision, preferred_element_type=jnp.float32
+        )
+        grad_w_block = jax.lax.dot_general(
+            (factor[:, None] * x_block.astype(jnp.float32)).astype(x.dtype),
+            probs,
+            (((0,), (0,)), ((), ())),
+            precision=precision,
+            preferred_element_type=gradw_type,
+        ).astype(jnp.float32)
+        grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
+        return loss, lse, grad_x, grad_w + grad_w_block
 
     def body(block_index, state):
         loss, lse, grad_x, grad_w = state
@@ -818,7 +870,7 @@ def _full_vocab_b_tiled_forward_with_grads(
         return loss, lse, grad_x, grad_w
 
     loss, lse, grad_x, grad_w = jax.lax.fori_loop(
-        0, num_b_blocks, body, (loss_init, lse_init, grad_x_init, grad_w_init)
+        0, num_b_blocks, unnorm_body if use_unnorm else body, (loss_init, lse_init, grad_x_init, grad_w_init)
     )
     return loss[:b_dim], lse[:b_dim], grad_x[:b_dim].astype(x.dtype), grad_w.astype(w.dtype)
 
