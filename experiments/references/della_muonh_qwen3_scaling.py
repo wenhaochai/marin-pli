@@ -151,7 +151,10 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # (attn_out), the inputs of hybrid_norm's post-norms: without them the backward pass recomputes the down projection (and
 # the product feeding it) and the attention output projection to give those norms their inputs (profile w350: the down
 # GEMM 8.8 ms and the product 8.5 ms of the 128K step); ~2.4 GB per name at 300m (32 x 4096 per device).
-REMAT = os.environ.get("REMAT", ("fmlp" if SEQ_LEN <= 4096 else "fgate") if os.environ.get("SIZE", "130m") == "300m" else "flash")
+# Default since the owner popup of 2026-10-26 ~19:15 ("全部设为默认，不重跑"): fmlpo up to SEQ_LEN 4096 (fmlp plus the MLP output,
+# with LEVANTER_SWIGLU_VJP in speed_env.sh), fgate above it; fmlpo fits beside the async loop at 128K and 8K past full
+# evaluations and checkpoints (fmlpoa, its superset, w435/w436), and one GPU gave fmlpo and fmlpoa the same step time (w433).
+REMAT = os.environ.get("REMAT", ("fmlpo" if SEQ_LEN <= 4096 else "fgate") if os.environ.get("SIZE", "130m") == "300m" else "flash")
 if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj", "fgate", "fmlp", "fmlpo", "fmlpoa"):
     raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj | fgate | fmlp | fmlpo | fmlpoa")
 
