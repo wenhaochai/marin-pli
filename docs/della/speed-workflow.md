@@ -93,7 +93,12 @@ projections 9%, norms 6.5%; 8K = attention 27%, MLP 23%, remat 12%, projections 
   documents than the bound (per 4096-token row twitterAAE mean 244, gab 100, subreddits 21; the densest 32 rows up to
   8680; tmp_plots/vocab/docs_per_row_paloma.py). Fix 8ae15eec59: one custom_vjp per device whose primal (no gradient,
   so evaluation) is the segmented kernel, exact for any document count and equal to today's eval, and whose fwd/bwd
-  (training) are the THD kernels with the NaN guard; checks w290 (both paths, guard) and w291 (A/B, finite eval).
+  (training) are the THD kernels with the NaN guard. w290: the two paths agree to bf16 rounding (rel L2 9.7e-4), and past
+  the bound only the gradient path holds the NaN; w291: 1206 -> 1107 ms (-8.3%) with finite eval (7.2705 / 7.2666);
+  w285 at 5504: 1269 -> 1073 ms (-15.4%). ATTN_BACKEND=fa4thd is the default at 130m/300m since 2026-10-26 05:45
+  (e50e2b3dfb; larger sizes keep fa4: their GQA at head_dim 64 is not checked on this path). Open: under FA4 the
+  CUDA-graph capture of while/conditional loops shows 70 ms/step of memcpy/memset and 8% idle in the production-flag
+  profile w286; w295/w296 time the full stack with and without it.
 
 ## Measured baseline (logs, 4x H100)
 
