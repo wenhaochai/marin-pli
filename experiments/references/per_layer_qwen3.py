@@ -250,6 +250,7 @@ class PerLayerQwen3Config(Qwen3Config):
     depth_route: str = "dynamic"  # "static": hc and attnres route with learned constants only (depth_arch_qwen3 docstring)
     depth_gain_init: str = "one"  # "lns": preln's pre-norm scales start at lns's 1/sqrt(l) (depth_arch_qwen3 docstring)
     depth_mhc_res: str = "sinkhorn"  # "identity": mhc's residual mixing fixed to I (depth_arch_qwen3 docstring)
+    depth_hc_rw: str = "linear"  # "sigmoid": hc's read and write through mHC's maps r = sigmoid, w = 2 sigmoid (docstring)
     depth_attnres_vnorm: bool = False  # attnres: every source enters the mix at unit RMS (depth_arch_qwen3 docstring)
 
     def __post_init__(self):

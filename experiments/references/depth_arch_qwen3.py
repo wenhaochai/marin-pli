@@ -55,6 +55,10 @@ Two variants (config fields, default off; tests: scripts/della/depth_arch_varian
                            scale-free per coordinate up to eps 1e-20), so the same trajectory up to rounding (Lean
                            ArchLean.PracTrain; tests: scripts/della/lns_equiv_test.py).
 Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.py):
+    depth_hc_rw="sigmoid"  hc with mHC's read and write maps (owner popup 2026-10-26): r = sigmoid(rho), w = 2 sigmoid(omega),
+                           rho = +8 on stream k mod m and -8 elsewhere plus hc's learned offset and dynamic term, omega =
+                           hc's learned offset and dynamic term (init 0). At init r = e_k to 3.4e-4 and w = 1, hc's function;
+                           read and write stay positive and bounded, as in mHC. Residual mixing stays hc's.
     depth_mhc_res="identity"  mhc with the residual mixing fixed to the identity, H <- H + w (x) F(RN(x)): only read and
                            write are learned (the m^2 residual columns of phi, their gain and biases get no gradient).
     DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
@@ -310,6 +314,9 @@ class DepthArchLayer(eqx.Module):
                 read = c_read + f32(p.read) + s_rr * hax.tanh(d_read)
                 res = c_res + f32(p.res) + s_rr * hax.tanh(d_res)
                 write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
+            if _hc_rw_sigmoid(self.config):  # mHC's maps on hc's logits: the learned offsets and dynamic terms of read and write
+                read = hax.nn.sigmoid(MHC_READ_BIAS * (2.0 * c_read - 1.0) + (read - c_read))
+                write = 2.0 * hax.nn.sigmoid(write - c_write)
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
@@ -384,6 +391,13 @@ def _mhc_identity(config) -> bool:
     if res not in ("sinkhorn", "identity"):
         raise ValueError(f"depth_mhc_res must be 'sinkhorn' or 'identity', got {res!r}")
     return res == "identity"
+
+
+def _hc_rw_sigmoid(config) -> bool:
+    rw = getattr(config, "depth_hc_rw", "linear")
+    if rw not in ("linear", "sigmoid"):
+        raise ValueError(f"depth_hc_rw must be 'linear' or 'sigmoid', got {rw!r}")
+    return rw == "sigmoid"
 
 
 def _static_weights(theta: NamedArray, n, d: int) -> NamedArray:
@@ -498,6 +512,8 @@ class DepthArchTransformer(eqx.Module):
         static = attnres and _static(config)
         if _mhc_identity(config) and arch != "mhc":
             raise ValueError(f"depth_mhc_res='identity' needs mhc, got {arch!r}")
+        if _hc_rw_sigmoid(config) and arch != "hc":
+            raise ValueError(f"depth_hc_rw='sigmoid' needs hc, got {arch!r}")
         if static and arch != "attnres":
             raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
         if _static(config) and arch not in ("hc", "attnres"):
