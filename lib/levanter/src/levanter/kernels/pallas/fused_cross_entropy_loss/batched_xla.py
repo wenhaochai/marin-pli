@@ -646,7 +646,16 @@ def _backward_b_tiled_from_lse(
 def _lse_kernel(x_block: jax.Array, w: jax.Array, labels: jax.Array):
     """bf16 logits, f32 logsumexp and f32 label logits of one block from the Triton kernel (imported here: jax_triton
     resets TRITON_CACHE_DIR at import, so default runs never import it). Config: the fastest at all four benchmarked
-    shapes (wq w271: 8192 x 512 in 2.46 ms against 6.84 ms for the XLA ops with the same outputs)."""
+    shapes (wq w271: 8192 x 512 in 2.46 ms against 6.84 ms for the XLA ops with the same outputs).
+
+    LEVANTER_CE_LSE_MGPU=1 (speed, 2026-10-26, kernel v3 with the pls session): the same outputs from a Pallas Mosaic GPU
+    GEMM (TMA, wgmma, warp-specialized) with the logsumexp partials in its epilogue (lse_logits_mgpu.py), for the shapes it
+    takes; the Triton kernel otherwise."""
+    if os.environ.get("LEVANTER_CE_LSE_MGPU", "0") == "1":
+        from .lse_logits_mgpu import lse_and_logits_mgpu, supported
+
+        if supported(x_block.shape[0], x_block.shape[1], w.shape[1]):
+            return lse_and_logits_mgpu(x_block, w, labels)
     from .lse_logits_triton import lse_and_logits
 
     return lse_and_logits(
