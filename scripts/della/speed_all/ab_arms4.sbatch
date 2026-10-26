@@ -72,7 +72,7 @@ fail=0
 declare -A RID
 for ARM in "${ARMS[@]}"; do
   if [ $ARM = old ] || [[ $ARM == main* ]]; then DIR=$MAIN; PP=""; else DIR=$WT; PP="$WT/lib/levanter/src:$WT/lib/haliax/src:$WT"; fi   # old and main* = the main checkout; every other arm = this worktree
-  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP XLA_PYTHON_CLIENT_ALLOCATOR LEVANTER_CE_LSE_KERNEL_EVAL
+  unset XLA_FLAGS ATTN_BACKEND REMAT LEVANTER_CE_BTILED_ONEHOT LEVANTER_CE_GRAD_IN_FWD LEVANTER_CE_XLA_ONEHOT LEVANTER_CE_LSE_KERNEL LEVANTER_ASYNC_STEP XLA_PYTHON_CLIENT_ALLOCATOR LEVANTER_CE_LSE_KERNEL_EVAL LEVANTER_EMBED_GRAD_F32
   export REMAT=full   # an arm that names no REMAT keeps full remat (the code default is flash since 2026-10-26)
   export ATTN_BACKEND=fa4   # an arm that names no backend keeps the segmented FA4 kernel (the code default at 300m is fa4thd since 2026-10-26)
   DET="--xla_gpu_nccl_termination_timeout_seconds=600 --xla_gpu_exclude_nondeterministic_ops=true"
@@ -105,6 +105,8 @@ for ARM in "${ARMS[@]}"; do
     livefproj) export ATTN_BACKEND=fa4thd REMAT=fproj LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_FLAGS="$CB" ;;   # flash + the attention projections saved
     liveasyncfproj) export ATTN_BACKEND=fa4thd REMAT=fproj LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_FLAGS="$CB" ;;
     liveasyncfprojcua) export ATTN_BACKEND=fa4thd REMAT=fproj LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async XLA_FLAGS="$CB" ;;
+    liveemb) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_EMBED_GRAD_F32=1 XLA_FLAGS="$CB" ;;   # the input-embedding gradient summed in f32
+    liveasyncemb) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 LEVANTER_EMBED_GRAD_F32=1 XLA_FLAGS="$CB" ;;
     livecua) export ATTN_BACKEND=fa4thd REMAT=flash LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async XLA_FLAGS="$CB" ;;   # live on the CUDA stream-ordered allocator (no contiguous-block need)
     liveasyncfdotscua) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_ASYNC_STEP=1 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async XLA_FLAGS="$CB" ;;   # the proposed stack: async loop, fdots, cuda_async
     livefdotscua) export ATTN_BACKEND=fa4thd REMAT=fdots LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1 XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async XLA_FLAGS="$CB" ;;   # fdots on that allocator
