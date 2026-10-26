@@ -111,12 +111,15 @@ def _kernel(a_gmem, b_gmem, *refs, config: hm.TuningConfig, exp_out: bool = Fals
             def compute_context(eval_pipeline):
                 @functools.partial(pl.run_scoped, acc_ref=plgpu.ACC((tile_m, tile_n), jnp.float32))
                 def _acc_scope(acc_ref):
+                    if exp_out:
+                        # this tile's row offsets, read from global memory (an unoptimized load: optimized loads take
+                        # SMEM only) before the main loop, which hides the read
+                        c = plgpu.load(c_gmem.at[rows], layout=plgpu.Layout.WGMMA.reduce(1), optimized=False)
                     eval_pipeline(acc_ref)
                     acc32 = acc_ref[...]
                     if exp_out:
                         # exp(z - c) clamped at 60, so neither a stored value nor a GEMM sum over a row overflows f32;
                         # with c the label logit only a token whose loss passes 60 nats is changed
-                        c = plgpu.load(c_gmem.at[rows], layout=plgpu.Layout.WGMMA.reduce(1))
                         shifted = jnp.minimum(acc32 - lax.broadcast_in_dim(c, acc32.shape, [0]), 60.0)
                         row_max = shifted.max(axis=1)
                         e = jnp.exp(shifted)
