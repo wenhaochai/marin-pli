@@ -132,16 +132,21 @@ def main():
 
         for c in todo:
             t1 = time.time()
-            seq_loss = np.zeros((len(c), batch), np.float32)
-            seq_weight = np.zeros((len(c), batch), np.float32)
-            for i, t in enumerate(c):
-                sub = named.slice_dataset(start_index=int(t) * batch, end_index=int(t + 1) * batch)
-                ls, ws = [], []
+            ls, ws = [], []
+            # each run of consecutive batches goes through one DataLoader, which prefetches while the GPUs work
+            for run in np.split(c, np.where(np.diff(c) != 1)[0] + 1):
+                sub = named.slice_dataset(start_index=int(run[0]) * batch, end_index=int(run[-1] + 1) * batch)
+                rl, rw = [], []
                 for b in DataLoader(sub, trainer.EvalBatch, mesh=trainer.device_mesh, axis_resources=trainer.compute_axis_mapping):
                     l, w = per_sequence(model, b)
-                    ls.append(np.asarray(jax.device_get(l)))
-                    ws.append(np.asarray(jax.device_get(w)))
-                seq_loss[i], seq_weight[i] = np.concatenate(ls)[:batch], np.concatenate(ws)[:batch]
+                    rl.append(np.asarray(jax.device_get(l)))
+                    rw.append(np.asarray(jax.device_get(w)))
+                n = len(run) * batch
+                rl, rw = np.concatenate(rl), np.concatenate(rw)
+                assert len(rl) >= n, (len(rl), n)
+                ls.append(rl[:n].reshape(len(run), batch))
+                ws.append(rw[:n].reshape(len(run), batch))
+            seq_loss, seq_weight = np.concatenate(ls), np.concatenate(ws)
             dt = time.time() - t1
             path = os.path.join(OUT_DIR, f"{c[0]:06d}.npz")
             np.savez(path + ".tmp.npz", ckpt=vtk.CKPT, model=MODEL, index=c, total_steps=total, seq_loss=seq_loss,

@@ -3,19 +3,19 @@
 #SBATCH --account=pli
 #SBATCH --partition=pli-c
 #SBATCH --qos=pli-short
-#SBATCH --comment=fetchable
+#SBATCH --comment=fetchable-partial
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=48
 #SBATCH --mem-per-gpu=48G
-#SBATCH --time=03:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=/scratch/gpfs/GROUP/USER/project/trec/logs/slurm/%x_%j.out
 #FETCHABLE self-contained: every setting is in this file; needs nothing from the submitting shell
 # Training re-evaluation curves (Bergsma et al. 2025, arXiv 2509.25380; owner 2026-10-26): the final checkpoints of the
 # 130m depth control (12 layers, WSD, lr 0.02) and the 300m Marin-tokenizer run (cosine, lr 0.01), scored by
 # experiments/references/trec_score.py on every training batch of each checkpoint and 512 unread batches.
-# Each output chunk is skipped when present, so a rerun continues.
+# Each output chunk is skipped when present, so a rerun continues (resumable: wq --partial; a stop by signal exits 143 and requeues).
 set -uo pipefail
 WT=/scratch/gpfs/GROUP/USER/project/marin-trec
 cd $WT
