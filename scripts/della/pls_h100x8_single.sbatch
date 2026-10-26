@@ -54,7 +54,10 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #   LEVANTER_CE_BTILED_ONEHOT=1  the label term of the b-tiled CE backward as a select, not a scatter: one fused pass
 #                instead of three over each 8192 x 128256 block (bitwise equal on H100: det A/B wq w205 vs w206, every
 #                logged metric over 40 steps, 2026-10-25); the microbatch-1 designs take another CE path and are unchanged
-export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1
+#   EVAL_PDP=4   eval at 4 sequences per device: the microbatch-1 designs (hc, mhc, attnres) evaluate in a quarter of
+#                the batches (HC: 7.5 -> 5.1 min per eval, no OOM, wq w225 vs w226); training is untouched and the eval
+#                values move at summation-order level (b-tiled instead of the streaming CE); PDP=4 designs are unchanged
+export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
