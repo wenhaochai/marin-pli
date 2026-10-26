@@ -70,6 +70,7 @@ from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
 from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
+from experiments.references.cvd_flood_qwen3 import CvdFloodQwen3Config
 from experiments.references.flood_qwen3 import FloodQwen3Config, flood_levels
 from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
 from experiments.references.embed_wd_muonh import EmbedWDMuonHConfig
@@ -500,7 +501,7 @@ if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr") and VOCAB_K:
 # VARIANT=cvd on a truncation (survey idea 1, owner popup 2026-10-21): the 64K, 32K and 16K tokenizers are prefixes of the
 # Marin tokenizer, so their rare tokens (ids CV_K and up) are replaced by the 8K pieces through the cut map expand_v<K>k.npz
 # (vocab_cut_expand_map.py)
-if VARIANT == "cvd" and VOCAB_K not in (0, 16000, 32000, 64000):
+if VARIANT in ("cvd", "cvdflood") and VOCAB_K not in (0, 16000, 32000, 64000):
     raise ValueError(f"VARIANT=cvd with VOCAB_K={VOCAB_K}: the Marin tokenizer or its 64K, 32K or 16K truncation")
 # LAZY_EMBED_FROM_PASS=p (survey idea 6, owner popup 2026-10-21): from the first update of repeated pass p of 8, input
 # embedding rows of tokens absent from the batch get no update (LazyEmbedMuonHConfig; Adam moments decay as before). Tag -lazyfp<p>.
@@ -525,7 +526,7 @@ CVD_RATE_COUNT = int(os.environ.get("CVD_RATE_COUNT", "0"))
 # (DecayToPiecesMuonHConfig). Tag -dtp<lambda>-fp<p>.
 DTP = float(os.environ.get("DTP", "0"))
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", "cvdflood", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -600,7 +601,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-rm{RM_K // 1000}kp{RM_FROM_PASS}" + {"loss": "", "freeze": "f", "drop": "d"}[RM_MODE]
     if VARIANT == "cvr":
         variant_tags += f"-cv{CV_SIDE}{CV_K // 1000}k-res{CV_RES_SCALE:g}" + (f"-resfp{FOP_FROM_PASS}" if CVR_RES_FREEZE else "") + (f"-oslow{CVR_OUT_SLOW:g}" if CVR_OUT_SLOW else "")
-    if VARIANT == "cvd":
+    if VARIANT in ("cvd", "cvdflood"):
         variant_tags += f"-cvd{CV_K // 1000}k-p{CVD_P:g}" + (f"-rc{CVD_RATE_COUNT}" if CVD_RATE_COUNT else "") + (f"-m{CVD_MODE}" if CVD_MODE != "pieces" else "") + (f"-fp{CVD_FROM_PASS}" if CVD_FROM_PASS else "")
     if LAZY_EMBED_FROM_PASS:
         variant_tags += f"-lazyfp{LAZY_EMBED_FROM_PASS}"
@@ -616,7 +617,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
         variant_tags += f"-us{US_EPS:g}-fp{US_FROM_PASS}"
-    if VARIANT == "flood":
+    if VARIANT in ("flood", "cvdflood"):
         variant_tags += f"-fl{FL_F:g}-fp{FL_FROM_PASS}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
         variant_tags += f"-odhash{OD_M / 1e6:g}m" + ("-o23" if VARIANT == "ovgram3" else "")
@@ -732,7 +733,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             model_cls, model_extra = ComposedBothResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=True, cv_res_scale=CV_RES_SCALE)
         else:
             model_cls, model_extra = ComposedResidualQwen3Config, dict(cv_map=cv_map, cv_input=True, cv_output=False, cv_res_scale=CV_RES_SCALE)
-    elif VARIANT == "cvd":
+    elif VARIANT in ("cvd", "cvdflood"):
         if TIE:
             raise ValueError("VARIANT=cvd replaces input rows only: untied tables (TIE=0)")
         model_cls, model_extra = ComposedDropoutQwen3Config, dict(cvd_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/" + (f"expand_v{VOCAB_K // 1000}k.npz" if VOCAB_K else "expand_full.npz"), cvd_p=CVD_P, cvd_seed=SEED, cvd_mode=CVD_MODE,
@@ -777,6 +778,17 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         )
     else:
         model_cls, model_extra = Qwen3Config, {}
+    if VARIANT == "cvdflood":
+        # owner popup 2026-10-26 ("128K 最好设置 + flood 0.5"): cvd's input rows and flood's loss in one model
+        # (cvd_flood_qwen3.py); the level is the plain runs' one. A new order each pass (rs) is allowed here: the level is
+        # a curve over steps, and a pass's order does not change its step.
+        if not (DATA_EPOCHS == 8 and 2 <= FL_FROM_PASS <= 7 and 0 <= FL_F < 1 and not VOCAB_K and PASS_DATA in ("", "rs") and not TOTAL_STEPS):
+            raise ValueError("VARIANT=cvdflood: DATA_EPOCHS=8, FL_FROM_PASS 2..7, 0 <= FL_F < 1, 128K, plain or rs passes, default steps")
+        level = f"/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_flood/level_128000_f{FL_F:g}.npy"
+        if not SMOKE_STEPS and len(flood_levels(level)) != s["steps"]:
+            raise ValueError(f"{level}: {len(flood_levels(level))} steps, the run has {s['steps']}")
+        model_cls = CvdFloodQwen3Config
+        model_extra = dict(model_extra, fl_level=level, fl_from_step=round((SMOKE_STEPS or s["steps"]) / 8) * (FL_FROM_PASS - 1))
     if REMAT == "flash":
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=["flash_o", "flash_ell"]))
     elif REMAT == "none":
@@ -818,7 +830,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         raise ValueError("FOP_IN=1 freezes input rows apart from output rows: untied tables (TIE=0)")
     if CVR_RES_FREEZE and VARIANT != "cvr":
         raise ValueError("CVR_RES_FREEZE=1: only with VARIANT=cvr")
-    if CVD_MODE != "pieces" and VARIANT != "cvd":
+    if CVD_MODE != "pieces" and VARIANT not in ("cvd", "cvdflood"):
         raise ValueError(f"CVD_MODE={CVD_MODE}: only with VARIANT=cvd")
     if INOISE_FROM_PASS and not (VARIANT == "inoise" and DATA_EPOCHS == 8 and not PASS_DATA.startswith("bpd") and 2 <= INOISE_FROM_PASS <= 7):
         raise ValueError(f"INOISE_FROM_PASS={INOISE_FROM_PASS}: 2..7, only with VARIANT=inoise, DATA_EPOCHS=8 and equal passes (not bpd)")
