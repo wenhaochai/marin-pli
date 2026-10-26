@@ -26,6 +26,10 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_PROJECT=marin-della
 export SIZE=${SIZE:-130m}
 export XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}  # never inherited from the submitting shell (a stray .50 there halved the GPUs, 2026-10-04); XLA_PYTHON_CLIENT_ALLOCATOR passes through
+# LEVANTER_CE_BTILED_ONEHOT=1 (speed, 2026-10-25; the pls session's CE commit, bitwise equal to the scatter on H100 in its
+# deterministic A/B): the cross-entropy label term as a select instead of a scatter, so XLA fuses the dlogits pass. The
+# same additions on the same values: every run's numbers are unchanged.
+export LEVANTER_CE_BTILED_ONEHOT=${LEVANTER_CE_BTILED_ONEHOT:-1}
 
 nvidia-smi -L
 .venv/bin/python -c 'import jax; print("jax", jax.__version__, "devices", jax.devices())'
