@@ -57,6 +57,7 @@ case $CFG in
   5504) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 ;;   # charwin v8k (w138)
   4096post) export SIZE=300m SEQ_LEN=4096 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20; unset VOCAB_K ;;   # train steps after evals and checkpoints
   4096long) export SIZE=300m SEQ_LEN=4096 SMOKE_STEPS=200; unset VOCAB_K ;;   # 200 steps, one eval at the end: steady-state wall per step
+  4096postfull) export SIZE=300m SEQ_LEN=4096 SMOKE_STEPS=120 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 SMOKE_FULL_EVAL=1; unset VOCAB_K ;;   # 128K with full Paloma evals and checkpoints mid-run
   w160repro) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 VARIANT=unismooth US_EPS=0.02 US_FROM_PASS=2 DATA_EPOCHS=8 SMOKE_STEPS=120 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 SMOKE_FULL_EVAL=1 ;;   # the w160 job on 4 GPUs, full evals
   5504post) export SIZE=300m SEQ_LEN=5504 VOCAB_K=8000 SMOKE_STEPS=80 SMOKE_EVAL_EVERY=20 SMOKE_CKPT_SECONDS=20 ;;
   4096v8k) export SIZE=300m SEQ_LEN=4096 VOCAB_K=8000 ;;
