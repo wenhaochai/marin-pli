@@ -22,6 +22,22 @@ on by default in the launcher since 0f2a3941b0. First H100 number (w202): 300m 1
 REMAT=flash and CUDA-graph loops, against 1.51-1.56 s on the old code in recent runs; per-GPU throughput is flat
 from 1 to 4 GPUs within 2% (130m 232-243K, 300m 106-108K tokens/s/GPU).
 
+**H100 A/B, 2026-10-25 (w203, w204; 300m seed 0, 60 steps at the real batch, 4 H100s, median step after step 3).**
+
+| Config | old checkout | JAX flash + REMAT=flash + CUDA-graph loops | FA4 + CUDA-graph loops |
+|---|---|---|---|
+| 128K, SEQ_LEN 4096 | 1434 ms | 1228 ms (-14%) | 719 ms (-50%) |
+| 32K, SEQ_LEN 4480 (charwin, block 128 -> 896) | 2609 ms | 1196 ms (-54%) | 607 ms (-77%) |
+
+Per-step train loss against the old checkout over the 60 steps: max abs difference 0.021-0.025, mean -0.0015 to
++0.0014, last-10 mean -0.002 to +0.006, so within bf16 noise for all arms (no same-code repeat in these jobs). FA4's sm90
+backward ran here for the first time and trained normally. **Switch (2026-10-26, 0:30):** the live checkout
+(vocab-overfitting, fast-forwarded to speed-all a2e3335945) defaults to ATTN_BACKEND=fa4 and XLA_CMD_BUFFER_WHILE=1;
+ATTN_BACKEND=jax_flash and XLA_CMD_BUFFER_WHILE=0 give the old path. Every queued vocab plan dry-runs with an unchanged
+run id, so resumed runs keep their checkpoints. The owner chose numerics-changing items for the queued jobs too
+(popup 「全部都上」), so runs from here on differ from earlier ones at the rounding level. Still pending: w210 (kernel
+errors against fp32 with document masks), w212 (REMAT=none), w227/w228 (CE gradient in the forward), w231 (profile).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
