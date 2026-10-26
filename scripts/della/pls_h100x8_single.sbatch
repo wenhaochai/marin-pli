@@ -64,7 +64,12 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #                w218), inside the twins' envelope (plan rule G4)
 #   (2026-10-26 02:25-02:50 its fallback for microbatch-1 shards built a sharded NamedArray inside the shard_map and failed
 #   four HC smokes; fixed in 867c735932; on GPU the fallback is bitwise equal to the old path: hc w255 = w219, 40 det steps)
-export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1
+#   LEVANTER_CE_LSE_KERNEL=1  inside the gradient-in-forward block one Triton kernel (the Tokenizer Size session's) runs the
+#                logits GEMM and writes the bf16 logits, the label logit and the logsumexp (preln d48 12.13 -> 10.06 s/step,
+#                w299). Gradients differ from the XLA path by rel 1.5e-6 to 1.6e-5, against 2e-3 to 1.3e-2 for both paths to
+#                an f32 reference, bias ~1e-10 (w306); trains on after an eval and a checkpoint (w299, w301). Only the
+#                b-tiled path (PDP=4 designs) reaches it. Owner popup 2026-10-26 ~06:40: on for all pls jobs.
+export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
