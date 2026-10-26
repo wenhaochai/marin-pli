@@ -201,6 +201,11 @@ class PerLayerQwen3Config(Qwen3Config):
     # them. The hidden coordinates are state the later layers read and no intermediate loss grades (owner popup
     # 2026-10-23: does the separate-heads cost come from the readouts seeing the whole state?). 1.0: all visible.
     pls_visible_frac: float = 1.0
+    # Speed (2026-10-26): with pls_detach_backbone, each intermediate readout folds its RMSNorm scale into its head,
+    # norm(h) @ W = (h / rms(h)) @ (scale * W): the same function, rounded in another order. The readout's input then
+    # takes no part in the differentiation (it is under stop_gradient and no parameter acts on it before the head), so
+    # the CE needs no input-gradient GEMM; the scale's gradient comes through the folded head.
+    pls_fold_norm: bool = False
     # With separate heads: layer k's loss trains its head and layer k only. Its readout recomputes layer k on the
     # stop-gradient output of layer k-1 (the same values), so no layer loss reaches earlier layers or the embedding;
     # the final loss trains everything as usual. One extra forward of layers 0..L-2 per step.
@@ -471,9 +476,26 @@ class PerLayerQwen3LMHeadModel(Qwen3LMHeadModel):
         lm_head = self._head(k)
         if detach_head:
             lm_head = jax.lax.stop_gradient(lm_head)
+        if detach_input and not detach_head and cast(PerLayerQwen3Config, self.config).pls_fold_norm:
+            x, lm_head = self._folded_readout(outs, k, lm_head)
+        else:
+            x = self._layer(outs, k, detach_head=detach_head, detach_input=detach_input)
         return maybe_fused_next_token_loss(
-            self.Pos, self.Embed, self.Vocab, self._layer(outs, k, detach_head=detach_head, detach_input=detach_input), lm_head, example.tokens, loss_weight=example.loss_weight, **kw
+            self.Pos, self.Embed, self.Vocab, x, lm_head, example.tokens, loss_weight=example.loss_weight, **kw
         )
+
+    def _folded_readout(self, outs: NamedArray, k: int, lm_head: NamedArray) -> tuple[NamedArray, NamedArray]:
+        """pls_fold_norm: a detached readout's input normalized without its scale, and its head times the scale (the
+        values of _layer(outs, k, detach_input=True) @ lm_head up to rounding). A norm with a bias, or none, is not folded."""
+        norm = cast(Any, self.aux_norms)[k] if self._separate(k) else self.transformer.norm
+        if not isinstance(norm, hnn.RmsNorm) or norm.weight is None or norm.bias is not None:
+            return self._layer(outs, k, detach_input=True), lm_head
+        h = jax.lax.stop_gradient(outs[self.transformer.layers.Block.name, k])
+        if self._separate(k) and self.config.pls_visible_frac < 1.0:  # as in _layer
+            n = round(self.config.pls_visible_frac * self.Embed.size)
+            h = h * hax.named((jnp.arange(self.Embed.size) < n).astype(h.dtype), self.Embed)
+        x = dataclasses.replace(norm, weight=None)(h)  # the same normalization, no scale
+        return x, norm.weight.astype(lm_head.dtype) * lm_head
 
     def _subset_ce(self, outs: NamedArray, k: int, example: LmExample, select, *, logit_soft_cap) -> jax.Array:
         """Stop-gradient CE of layer k's readout on the positions ``select`` keeps (targets x_{t+1}, the baseline's
