@@ -57,7 +57,12 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #   EVAL_PDP=4   eval at 4 sequences per device: the microbatch-1 designs (hc, mhc, attnres) evaluate in a quarter of
 #                the batches (HC: 7.5 -> 5.1 min per eval, no OOM, wq w225 vs w226); training is untouched and the eval
 #                values move at summation-order level (b-tiled instead of the streaming CE); PDP=4 designs are unchanged
-export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4
+#   LEVANTER_CE_GRAD_IN_FWD=1  the b-tiled CE computes its gradients in the forward from one logits GEMM per block (3
+#                GEMMs instead of 4; preln d48 13.10 -> 12.13 s/step with A1). Two identical base runs differ already
+#                (GEMM autotuning picks per run: w205 vs w229 up to 0.076 nats over 40 det steps); against the base run
+#                of its own autotune class (w229) it moves the logged losses by at most 1e-6 and does not grow (w217,
+#                w218), inside the twins' envelope (plan rule G4)
+export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
