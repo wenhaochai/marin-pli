@@ -741,12 +741,16 @@ def _full_vocab_b_tiled_forward_with_grads(
     # (lse_logits_mgpu.probs_and_sum_mgpu), and the gradients are GEMMs on P: dlogits = g (P / S - onehot) = (g / S) P'
     # with S the row sum of P and P' = P with 1 - S at the label (where P is exp(0) = 1). The factor g / S goes on x for
     # grad_w and on the output rows for grad_x, so the pass that turns logits into dlogits goes away, and P carries bf16's
-    # relative rounding of a probability instead of exp of a bf16-rounded logit.
+    # relative rounding of a probability instead of exp of a bf16-rounded logit. LEVANTER_CE_UNNORM=2 keeps P as stored
+    # and adds the label terms apart in f32 (-g w_label to grad_x, -g x scattered into grad_w's label columns): the
+    # dominant label term is then not rounded to bf16 (w422, XLA prototype: gradient error 2.0e-4 / 2.8e-4 at 128K against
+    # 3.2e-3 / 3.6e-3 for the current path).
     use_unnorm = (
-        os.environ.get("LEVANTER_CE_UNNORM", "0") == "1"
+        os.environ.get("LEVANTER_CE_UNNORM", "0") in ("1", "2")
         and use_kernel
         and _lse_mgpu_supported(b_block_size, h_dim, v_dim)
     )
+    unnorm_fold = os.environ.get("LEVANTER_CE_UNNORM", "0") == "1"
     gradw_type = jnp.float32 if os.environ.get("LEVANTER_CE_GRADW_F32", "0") == "1" else None
 
     def unnorm_body(block_index, state):
@@ -768,7 +772,8 @@ def _full_vocab_b_tiled_forward_with_grads(
         lse = jax.lax.dynamic_update_slice(lse, jnp.where(valid_rows, label_logits + log_sum, 0.0).astype(out_dtype), (b_start,))
 
         row_indices = jnp.arange(b_block_size, dtype=jnp.int32)
-        probs = probs.at[row_indices, safe_labels].set((1.0 - row_sum).astype(probs.dtype))
+        if unnorm_fold:
+            probs = probs.at[row_indices, safe_labels].set((1.0 - row_sum).astype(probs.dtype))
         factor = jnp.where(valid_rows, g_loss_block / row_sum, 0.0)
         grad_x_block = factor[:, None] * jax.lax.dot_general(
             probs, w, (((1,), (1,)), ((), ())), precision=precision, preferred_element_type=jnp.float32
@@ -780,6 +785,10 @@ def _full_vocab_b_tiled_forward_with_grads(
             precision=precision,
             preferred_element_type=gradw_type,
         ).astype(jnp.float32)
+        if not unnorm_fold:
+            g_valid = jnp.where(valid_rows, g_loss_block, 0.0)
+            grad_x_block = grad_x_block - g_valid[:, None] * w_label.T.astype(jnp.float32)
+            grad_w_block = grad_w_block.at[:, safe_labels].add(-(g_valid[:, None] * x_block.astype(jnp.float32)).T)
         grad_x = jax.lax.dynamic_update_slice(grad_x, grad_x_block, (b_start, 0))
         return loss, lse, grad_x, grad_w + grad_w_block
 
