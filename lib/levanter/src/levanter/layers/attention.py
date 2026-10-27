@@ -57,7 +57,7 @@ from levanter.inference.page_table import PageBatchInfo, PageTableSpec
 from .attention_mask import AttentionMask, materialize_mask
 from .kv_cache import KvPageCache
 from .normalization import LayerNormConfigBase
-from .rotary import RotaryEmbeddings, RotaryEmbeddingsConfig
+from .rotary import DefaultRotaryEmbeddings, RotaryEmbeddings, RotaryEmbeddingsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1455,6 +1455,85 @@ class AttentionConfig:
             return Axis("gate_size", self.head_size)
 
 
+# LEVANTER_QK_ROPE_FUSED=1 (speed test, 2026-10-27): the per-head RMS norm of q and k and the rotary embedding in one pass
+# each way (kernels/pallas/qk_norm_rope.py, Pallas Triton), instead of XLA's norm fusion, then a rotary fusion that reads
+# cos and sin broadcast to the activation's full shape (~15 ms per 300m step forward and in the remat recompute, ~11 ms
+# backward, profile w476). Taken when q and k are normed by weight-only RmsNorms over a 64-wide head, the rotary is the
+# default one and positions are 0 .. S - 1 (pos_ids None); per device under the mesh (rows by batch), XLA's ops off the GPU.
+def _qk_rope_fused() -> bool:
+    """LEVANTER_QK_ROPE_FUSED, read when attention is traced."""
+    return os.environ.get("LEVANTER_QK_ROPE_FUSED", "0") == "1"
+
+
+def _fused_norm_ok(norm) -> bool:
+    return isinstance(norm, hnn.RmsNorm) and norm.weight is not None and norm.bias is None and norm.axis.size == 64
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(4, 5))
+def _norm_rope_rows(x, w, cos, sin, eps: float, row_spec):
+    """x [rows, heads, 2, 32] (rows = batch x position, sharded by row_spec), norm weight w [64], cos / sin [S, 32]."""
+    return _norm_rope_rows_fwd(x, w, cos, sin, eps, row_spec)[0]
+
+
+def _norm_rope_call(local, row_spec, in_row, out_row, *args):
+    mesh = haliax.partitioning._get_mesh()
+    if mesh is None or mesh.empty:
+        return local(*args)
+    rows, rep = PartitionSpec(row_spec, None, None, None), PartitionSpec()
+    in_specs = tuple(rows if r else rep for r in in_row)
+    out_specs = tuple(rows if r else PartitionSpec(row_spec, None) for r in out_row)
+    return shard_map(local, mesh=mesh, in_specs=in_specs, out_specs=out_specs if len(out_specs) > 1 else out_specs[0],
+                     check_rep=False)(*args)
+
+
+def _norm_rope_rows_fwd(x, w, cos, sin, eps, row_spec):
+    from levanter.kernels.pallas import qk_norm_rope as K  # noqa: PLC0415  # Pallas Triton, imported when traced
+
+    def local(x_loc, w_, c, s):
+        if jax.default_backend() == "gpu" and K.supported(x_loc.shape[0], x_loc.shape[1], 64, c.shape[0]):
+            return K._fwd_call(x_loc, w_, c, s, eps, False)
+        return K.reference(x_loc, w_, c, s, eps)
+
+    return _norm_rope_call(local, row_spec, (True, False, False, False), (True,), x, w, cos, sin), (x, w, cos, sin)
+
+
+def _norm_rope_rows_bwd(eps, row_spec, residuals, dy):
+    from levanter.kernels.pallas import qk_norm_rope as K  # noqa: PLC0415  # Pallas Triton, imported when traced
+
+    x, w, cos, sin = residuals
+
+    def local(x_loc, w_, c, s, dy_loc):
+        if jax.default_backend() == "gpu" and K.supported(x_loc.shape[0], x_loc.shape[1], 64, c.shape[0]):
+            dx, dw = K._bwd_call(x_loc, w_, c, s, dy_loc, eps, False)
+        else:
+            _, vjp = jax.vjp(lambda a, b: K.reference(a, b, c, s, eps), x_loc, w_.astype(jnp.float32))
+            dx, dw = vjp(dy_loc)
+        return dx, dw.astype(jnp.float32)[None, :]   # this device's sum over its rows; summed across devices below
+
+    dx, dw_parts = _norm_rope_call(local, row_spec, (True, False, False, False, True), (True, False), x, w, cos, sin, dy)
+    return dx, jnp.sum(dw_parts, axis=0).astype(w.dtype), jnp.zeros_like(cos), jnp.zeros_like(sin)
+
+
+_norm_rope_rows.defvjp(_norm_rope_rows_fwd, _norm_rope_rows_bwd)
+
+
+def _norm_rope(t: NamedArray, norm, rope: DefaultRotaryEmbeddings, Pos: Axis) -> NamedArray:
+    """norm then rope of q or k (axes: batch..., position, heads..., head) through _norm_rope_rows."""
+    from levanter.kernels.pallas import qk_norm_rope as K  # noqa: PLC0415  # Pallas Triton, imported when traced
+
+    Head = norm.axis
+    pos_i = t.axes.index(t.resolve_axis(Pos.name))
+    batch_axes = t.axes[:pos_i]
+    head_axes = tuple(ax for ax in t.axes[pos_i + 1:] if ax.name != Head.name)
+    t = t.rearrange((*batch_axes, Pos, *head_axes, Head))
+    n_rows = math.prod(ax.size for ax in batch_axes) * Pos.size
+    heads = math.prod(ax.size for ax in head_axes)
+    cos, sin = K.rope_tables(Pos.size, rope.config.theta, rope.config.factor, dtype=t.dtype)
+    out = _norm_rope_rows(t.array.reshape(n_rows, heads, 2, 32), norm.weight.array.astype(t.dtype), cos, sin, float(norm.eps),
+                          _fa4_flat_physical_axes(batch_axes))
+    return haliax.named(out.reshape(t.array.shape), t.axes)
+
+
 class Attention(eqx.Module):
     """A multi-head attention layer that uses dot product attention.
 
@@ -1636,6 +1715,11 @@ class Attention(eqx.Module):
         q = self.q_proj(x, key=key_q)
         k = self.k_proj(x, key=key_k)
         v = self.v_proj(x, key=key_v)
+
+        if (_qk_rope_fused() and pos_ids is None and self.q_norm is not None and self.k_norm is not None
+                and isinstance(self.rot_embs, DefaultRotaryEmbeddings) and _fused_norm_ok(self.q_norm) and _fused_norm_ok(self.k_norm)):
+            Pos = x.resolve_axis("position")
+            return _norm_rope(q, self.q_norm, self.rot_embs, Pos), _norm_rope(k, self.k_norm, self.rot_embs, Pos), v
 
         if self.config.qk_norm is not None:
             q = self.q_norm(q)  # type: ignore[misc]
