@@ -1455,7 +1455,8 @@ class AttentionConfig:
             return Axis("gate_size", self.head_size)
 
 
-# LEVANTER_QK_ROPE_FUSED=1 (speed test, 2026-10-27): the per-head RMS norm of q and k and the rotary embedding in one pass
+# LEVANTER_QK_ROPE_FUSED=1 (speed; default in the 300m launcher's speed_env.sh since the owner popup of 2026-10-27 ~03:55;
+# 128K -2.7%, 8K -4.7% per step, w490 / w491): the per-head RMS norm of q and k and the rotary embedding in one pass
 # each way (kernels/pallas/qk_norm_rope.py, Pallas Triton), instead of XLA's norm fusion, then a rotary fusion that reads
 # cos and sin broadcast to the activation's full shape (~15 ms per 300m step forward and in the remat recompute, ~11 ms
 # backward, profile w476). Taken when q and k are normed by weight-only RmsNorms over a 64-wide head, the rotary is the
