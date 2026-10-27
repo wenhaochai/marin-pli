@@ -281,6 +281,24 @@ device without a host sync per batch; and a batch takes ~175 ms against ~150 ms 
 Making it cheaper means fewer or smaller evaluations between the first and the last (m2d2_s2orc alone is 16.8M tokens;
 c4_100_domains, dolma_100_subreddits and the programming languages 8.5-9.5M each): a protocol choice, not infra.
 
+**Profile of the production state after the bundle (w458, 2026-10-26 23:00; 4 H100s, 300m, 32 x 4096 per device, steps
+20-22 of a 30-step smoke; profile_now.sbatch).** Summed GPU-0 kernel time per step (arm attr: command buffers off, HLO
+dumped): 128K 445 ms = output head and CE 123.3 (the mgpu lse forward 46.1, the two cuBLAS gradient GEMMs 34.3 and 33.3),
+MLP 103.2 (nine GEMMs of ~8.7; the SwiGLU backward pass 16.8, its product 8.2), attention projections 53.0, attention
+kernel 51.1 (FA4 THD backward 35.1, forward 15.9), norms and residual adds 35.2, recompute 23.8 (the q/k/v/o GEMMs 10.2,
+norms and rotary 13.6), collectives 21.6, layer-scan copies 17.2 (gate and up 5.62 each, two 201 MB saves 1.66 and 1.64,
+a backward slice copy 1.64), optimizer 10.5; 8K 329 ms = MLP 103.1, attention kernel 56.5 (more tokens per document),
+projections 53.1, norms 35.2, recompute 23.9, copies 17.2, head and CE 13.1, collectives 12.9, optimizer 9.1. With the
+production flags (arm prod: command buffers, async loop) the GPU idles 2.0% (128K) and 2.6% (8K) of the trace: ~8.5 ms in
+~4650 launch gaps under 50 us and one ~10 ms gap at the trace's start, none between steps. The step is kernel-bound:
+only kernel time is left to cut. Figure: tmp_plots/vocab/flip/step_families.png. Exact-numerics candidates: (1) the
+copies of saved activations plus the recompute, 41 ms together (9% at 128K, 12.5% at 8K): the scan copies each saved
+value out of its producer's buffer, because XLA lets a cuBLAS call write into a dynamic-update-slice in place only when
+the slice is the call's only user, and here the forward pass reads the value too; scan_save_bench.py (w468) tests whether
+explicit buffers in a custom_vjp over the layer stack let the GEMMs write in place (unrolled layers are no way out: a 59
+GiB temporary at 128K and 61 GiB at 8K, out of memory in w357/w358); (2) the two SwiGLU passes (25 ms) into GEMM
+epilogues, ~11 ms; (3) the head's forward at cuBLAS speed, ~12 ms at 128K. Not exact: an fp8 head (fp8_head_bench.py, w468).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
