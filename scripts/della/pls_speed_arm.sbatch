@@ -88,6 +88,7 @@ case $knobs in
   # summation order changes; at microbatch 2 the threshold 16384 keeps the EVAL_PDP=4 eval (16384 rows) on the b-tiled path as today
   prodk2st) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 PARAM_MAP_PDP=2 LEVANTER_CE_BTILED_MIN_BATCH=16384";;
   prodk4st) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 PARAM_MAP_PDP=4 LEVANTER_CE_BTILED_MIN_BATCH=1048576";;
+  prodk4sts8) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 PARAM_MAP_PDP=4 LEVANTER_CE_BTILED_MIN_BATCH=1048576 HC_STREAMS=8";;   # hc only: 8 streams at microbatch 4
   # LEVANTER_CE_UNNORM=2 on lse kernel v3, with the kernel in evaluation too (the Tokenizer Size session's bundle, c6886d9b2b;
   # pls 457d8dd438); z: XLA's DUS-accumulator zero-init elimination (XK below; same math, -3.1% to -3.5% for its runs, w430)
   prodkmu) ON="LEVANTER_CE_BTILED_ONEHOT=1 LEVANTER_CE_GRAD_IN_FWD=1 EVAL_PDP=4 LEVANTER_CE_LSE_KERNEL=1 LEVANTER_CE_LSE_MGPU=1 LEVANTER_CE_UNNORM=2 LEVANTER_CE_LSE_KERNEL_EVAL=1";;
