@@ -813,6 +813,8 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
   - Pre-LN 一类（b-tiled CE）：UNNORM + lse kernel v3 + 评估 kernel + 串行读出 + 每个 microbatch 8 条：10.03 → 8.32 s/步（−17%，w478），临时缓冲区 20.95 GiB（w479）。fa4thd 等验证对 w333/w334。
   - HC：新 CE 路径（microbatch 的 b-tiled、串行读出、GIF barrier、fa4thd）+ UNNORM + 每个 microbatch 4 条：7.34 s/步（w480），临时缓冲区 17.49 GiB（w481）。正在跑的旧路径 4 条是 19.37，原来的 1 条是 24.78。验证对 w387/w388 检验 HC 的代价是否依赖 CE 实现。
 - DEPTH_INNER_REMAT=save（AttnRes/MoDA 两层 scan 的内层不再逐层 checkpoint）：CPU 上损失和梯度不变，但 AttnRes 新路径每步 17.35 → 25.07 s（+44.5%，w485）。逐层保存的中间结果里有整个 407 MB 来源缓冲区（和它的 f32 形式），存储流量超过省下的重算。不采用，默认关。真正的修法：反向不保存每层的缓冲区，用最终缓冲区加掩码（被掩码的槽权重正好是 0），需要给整个 AttnRes 层栈写 custom VJP。
+- 每段开头的冒烟测试（30 步 + 评估 + 两道门）：HC 4 条 11–12 min（w196、w197），HC 1 条 14.5 min（w221），AttnRes 17–19 min（w122、w152、w223），一个 run 约 3 段，所以占 2–3% 的 GPU 时间。候选（未上线，等弹窗）：SINGLE_SMOKE_REUSE=1，续跑时如果代码（commit 加未提交的 diff）和开关与这个 run 上次通过冒烟时相同，就跳过冒烟；任何改动都照常冒烟。改好的脚本在 scripts/della/pls_h100x8_single.sbatch.smokereuse（未提交，未生效）。
+- mHC 每个 microbatch 4 条（流式 CE，w487/w488/w489）：25.35 → 19.67 s/步（−22.4%），临时缓冲区 21.71 GiB。HCMB 只开了 HC；mHC 等弹窗。
 - det 轮的教训：两次完全相同的 run 也不逐位一致（GEMM 自动调优按计时选算法，run 分成“调优类”）；判断一个开关要和两个基线比，看是否在两次基线的差别以内（速度计划的 G4），或固定调优（`--xla_gpu_autotune_level=0`）。
 
 ## 速度：新组合上线（2026-10-26）
