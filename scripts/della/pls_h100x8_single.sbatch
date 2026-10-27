@@ -85,8 +85,8 @@ export PLS_FOLD_NORM=1 LEVANTER_NORM_GUARD=1e-3
 # 21.67 GiB against 17.27 at microbatch 1 (w461, w462), under half the ~64 GiB pool. Runs whose SINGLE sets their own CE
 # threshold or microbatch keep theirs. A smoke that fails at microbatch 4 is run again at microbatch 1, which then trains.
 HCMB=
-# HC with 8 streams waits for its own memory check (wq w473).
-if [[ " $SINGLE " == *" ARCH=hc "* && " $SINGLE " != *" LEVANTER_CE_BTILED_MIN_BATCH="* && " $SINGLE " != *" PARAM_MAP_PDP="* && " $SINGLE " != *" HC_STREAMS=8 "* ]]; then
+# HC with 8 streams: temp 24.86 GiB at microbatch 4 (w473).
+if [[ " $SINGLE " == *" ARCH=hc "* && " $SINGLE " != *" LEVANTER_CE_BTILED_MIN_BATCH="* && " $SINGLE " != *" PARAM_MAP_PDP="* ]]; then
   HCMB="PARAM_MAP_PDP=4 LEVANTER_CE_BTILED_MIN_BATCH=1048576"
 fi
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
