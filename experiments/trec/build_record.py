@@ -28,7 +28,7 @@ ROWS = [
     dict(model="300m", run="muonh-qwen3-300m-della4xh100-s1-rerun", setup={"en": "Cosine to zero, lr 0.01", "zh": "cosine 降到零，lr 0.01"},
          size="300m", layers=12, steps=11444, batches=11444 + 512, jobs=[], figs="1, 2, 3"),
 ]
-OTHER = ["w439"]   # smoke of trec_score.py
+OTHER = ["w439", "w447"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check)
 CODE = ""   # the public commit of trec_score.py (wenhaochai/marin-pli, branch trec) once pushed
 
 

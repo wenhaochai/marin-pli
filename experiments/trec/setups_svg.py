@@ -21,17 +21,18 @@ def svg(body):
             + "".join(body) + "</svg>")
 
 
-def run_panel(sched):
+def run_panel(sched, n=8):
     x0, x1, base, h = 60, 400, 190, 110
     pts = [(x0 + (x1 - x0) * k / 80, base - h * sched(k / 80)) for k in range(81)]
     d = " L".join(f"{x:.1f} {y:.1f}" for x, y in pts)
     body = [f'<path d="M{x0} {base} L{d} L{x1} {base} Z" fill="{REST}"/>',
             f'<path d="M{d}" fill="none" stroke="{LINE}" stroke-width="{SW}" stroke-linecap="round" stroke-linejoin="round"/>']
-    n, ts = 8, 30
+    gap = (x1 - x0) / n
+    ts = min(30, 0.62 * gap)
     for i in range(n):
-        cx = x0 + (x1 - x0) * (i + 0.5) / n
-        body.append(f'<rect x="{cx - ts / 2:.1f}" y="{250 - ts / 2}" width="{ts}" height="{ts}" rx="7" fill="{TINT}" stroke="{LINE}" stroke-width="{SW}"/>')
-        body.append(f'<circle cx="{cx:.1f}" cy="300" r="6" fill="{BLUE}"/>')
+        cx = x0 + gap * (i + 0.5)
+        body.append(f'<rect x="{cx - ts / 2:.1f}" y="{250 - ts / 2:.1f}" width="{ts:.1f}" height="{ts:.1f}" rx="{min(7, ts / 4):.1f}" fill="{TINT}" stroke="{LINE}" stroke-width="{min(SW, ts / 8):.2f}"/>')
+        body.append(f'<circle cx="{cx:.1f}" cy="300" r="{min(6, ts / 5):.1f}" fill="{BLUE}"/>')
     body.append(f'<rect x="430" y="228" width="44" height="44" rx="10" fill="{INK}"/>')
     return svg(body)
 
@@ -98,10 +99,18 @@ Q2 = [setup(step_panel("fixed"), L("Fixed norm", "固定范数"),
               "什么都不缩小：每次更新保留学习率给它的权重。"))]
 
 
+Q3 = [setup(run_panel(COS, 6), L("Marin tokenizer, 128K", "Marin tokenizer，128K"),
+            L("The text takes 11444 steps of 128 sequences of 4096 tokens.", "这段文本切成 11444 步，每步 128 条长 4096 个 token 的序列。")),
+      setup(run_panel(COS, 8), L("8K truncation", "8K 截短版"),
+            L("Smaller tokens: the same text takes 15464 steps.", "词更短：同样的文本切成 15464 步。")),
+      setup(run_panel(COS, 28), L("Bytes", "字节"),
+            L("One byte per token: the same text takes 54248 steps.", "每个字节一个 token：同样的文本切成 54248 步。"))]
+
+
 def main():
     page = sys.argv[1]
     s = open(page).read()
-    for key, items, cls in (("trec-q1", Q1, "setups two"), ("trec-q2", Q2, "setups")):
+    for key, items, cls in (("trec-q1", Q1, "setups two"), ("trec-q2", Q2, "setups"), ("trec-q3", Q3, "setups")):
         a, b = f"<!-- setups:{key} -->", f"<!-- /setups:{key} -->"
         assert s.count(a) == 1 and s.count(b) == 1, key
         s = re.sub(re.escape(a) + ".*?" + re.escape(b), lambda m: a + f'<figure class="{cls}">' + "".join(items) + "</figure>" + b, s, flags=re.S)

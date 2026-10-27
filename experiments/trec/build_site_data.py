@@ -31,9 +31,9 @@ SMOOTH = 100
 N_PLOT = 400   # points per drawn curve
 INK, BLUE, RED, GREY, BAND = "#202124", "#1A73E8", "#D93025", "#9AA0A6", "#DADCE0"
 PANELS = [("130m-d12", {"en": "130m, WSD", "zh": "130m，WSD"}), ("300m", {"en": "300m, cosine", "zh": "300m，cosine"})]
-READINGS = [("fixed-norm", {"en": "Fixed norm", "zh": "固定范数"}, BLUE),
-            ("adamw-0.1", {"en": "Weight decay 0.1", "zh": "权重衰减 0.1"}, RED),
-            ("schedule", {"en": "Schedule only", "zh": "只看学习率调度"}, GREY)]
+READINGS = [("momentum", {"en": "Fixed norm, momentum", "zh": "固定范数，带动量"}, BLUE),
+            ("independent", {"en": "Fixed norm, independent steps", "zh": "固定范数，各步不相关"}, GREY),
+            ("adamw-0.1", {"en": "Weight decay 0.1", "zh": "权重衰减 0.1"}, RED)]
 QUEUED, PLANNED = {"en": "Queued", "zh": "排队中"}, {"en": "Planned", "zh": "计划中"}
 XLABEL = {"en": "Training fraction", "zh": "训练进度"}
 XTICKS = [[v, f"{v:g}"] for v in (0, 0.25, 0.5, 0.75, 1)]
@@ -116,8 +116,8 @@ def fig_coef():
     for model, label in PANELS:
         eta = predict.lr_schedule(model)
         t = (np.arange(len(eta)) + 1) / len(eta)
-        marks = [{"type": "line", "pts": thin(t, predict.coefficients(eta, r)), "color": col, "width": 1.8, "alpha": 0.85}
-                 for r, _, col in reversed(READINGS)]   # the fixed-norm line on top
+        marks = [{"type": "line", "pts": thin(t, predict.coefficients(eta, r, model)), "color": col, "width": 1.8, "alpha": 0.85}
+                 for r, _, col in reversed(READINGS)]   # the momentum line on top
         panels.append({"label": label, "xlim": [0, 1], "ylim": [0, 1.15], "xticks": XTICKS, "yticks": ticks(0, 1, 0.25, 2), "marks": marks})
     return {"title": {"en": "Weight of each update in the final model", "zh": "每次更新在最终模型里的权重"},
             "quantity": {"en": "Share of the largest update", "zh": "相对最大一次更新的份额"}, "xlabel": XLABEL, "cols": 2, "height": 200,
@@ -135,27 +135,85 @@ def fig_predict(data):
         t = (np.arange(len(s)) + 1) / len(s)
         eta = predict.lr_schedule(model)
         marks = [{"type": "line", "pts": thin(t, minmax(s)), "color": INK, "width": 1.8, "alpha": 0.85}]
-        for r, _, col in READINGS[:2]:
-            c = predict.coefficients(eta, r)
+        for r, _, col in READINGS:
+            c = predict.coefficients(eta, r, model)
             m, rp = predict.fit_m(c, s)
             fits[f"{model}/{r}"] = {"m": m, "pearson": round(rp, 4)}
             marks.append({"type": "line", "pts": thin(t, minmax(predict.predicted(c, m))), "color": col, "width": 1.8, "alpha": 0.85})
         panels.append(dict(base, marks=marks))
     return {"title": {"en": "Predicted and measured TREC shapes", "zh": "预测与实测的 TREC 形状"},
             "quantity": {"en": "Normalized loss", "zh": "归一化损失"}, "xlabel": XLABEL, "cols": 2, "height": 200,
-            "legend": [[{"en": "Measured", "zh": "实测"}, INK, "line"]] + [[lab, col, "line"] for _, lab, col in READINGS[:2]],
+            "legend": [[{"en": "Measured", "zh": "实测"}, INK, "line"]] + [[lab, col, "line"] for _, lab, col in READINGS],
             "panels": panels, "fits": fits}
+
+
+W438 = "/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_trec"   # the vocab session's wq w438, read-only
+BYTES = "/scratch/gpfs/GROUP/USER/tmp_plots/vocab/trec/trec_bytes_{}.npz"   # exact UTF-8 bytes of each target token
+TOKENIZERS = [("300m", "128K", "-s1-rerun", "-rep8-s1", 128000, "#5F6368"), ("300m-8k", "8K", "-v8k-s1", "-v8k-rep8-s1", 8000, "#681DA8"),
+              ("300m-bytes", {"en": "Bytes", "zh": "字节"}, "-bytes", "-bytes-rep8", 256, "#B80672")]   # the vocab page's colours
+
+
+def fig_tokenizers():
+    """The vocab session's recipe (tmp_plots/vocab/trec/trec_check_pred.py): on 192 blocks spread over each unique run,
+    d(t) = bits per byte of the unique model minus that of its 8-pass partner, which never read the blocks after the
+    first eighth, so batch difficulty cancels there; a valid moving mean over 16 sampled blocks, kept after the subset;
+    minus d on the unread tail, the level of a batch the unique model has forgotten. The low points come from the
+    momentum reading, 1 - sqrt(c) t^m, with m fitted to the 128K curve and kept for 8K and bytes."""
+    P = "muonh-qwen3-300m-della4xh100"
+    curves, lows = [], []
+    for model, label, u, r, k, col in TOKENIZERS:
+        a, b = np.load(f"{W438}/{P}{u}.npz"), np.load(f"{W438}/{P}{r}.npz")
+        by = np.load(BYTES.format(k))["seq_bytes"]
+        steps, T = a["steps"], int(a["total_steps"])
+        assert np.array_equal(steps, b["steps"]) and T == predict.TOTAL[model], (model, T)
+        bpb = lambda z: z["seq_loss"].sum(1) / np.log(2) / by.sum(1)
+        d = bpb(a) - bpb(b)
+        tr = steps < T
+        unread = (steps >= T) & (steps != steps[steps >= T].min())   # the first tail block shares mixture block with step T-1
+        x = steps[tr] / T
+        sm = np.convolve(d[tr], np.ones(16) / 16, mode="valid") - d[unread].mean()
+        xm = np.convolve(x, np.ones(16) / 16, mode="valid")
+        fresh = xm > 0.125 + 8 / len(x)
+        curves.append((model, label, col, xm[fresh], sm[fresh]))
+    # m from the 128K curve: the prediction's shape against the measured one on the same t
+    m128 = None
+    for model, label, col, xm, sm in curves:
+        c = predict.coefficients(predict.lr_schedule(model), "momentum", model)
+        T = len(c)
+        if m128 is None:
+            idx = np.clip((xm * T).round().astype(int) - 1, 0, T - 1)
+            ms = np.arange(0.0, 20.01, 0.1)
+            rs = [predict.pearson(predict.predicted(c, m)[idx], sm) for m in ms]
+            m128 = float(ms[int(np.argmax(rs))])
+        v = predict.valley(c, m128)
+        y = float(np.interp(v, xm, sm))
+        lows.append((model, col, v, y))
+    marks = [{"type": "line", "pts": [[round(float(p), 4), round(float(q), 5)] for p, q in zip(xm, sm)], "color": col, "width": 1.8, "alpha": 0.85}
+             for _, _, col, xm, sm in curves]
+    marks += [{"type": "rings", "pts": [[round(v, 4), round(y, 5)]], "color": col} for _, col, v, y in lows]
+    lo = min(float(sm.min()) for *_, sm in curves)
+    step = 0.01
+    ylo = np.floor(lo * 1.15 / step) * step
+    yhi = 0.01
+    panel = {"xlim": [0, 1], "ylim": [round(ylo, 4), yhi], "xticks": XTICKS, "yticks": ticks(ylo, yhi, step, 2), "marks": marks}
+    meas = {model: (float(xm[np.argmin(sm)]), float(sm.min())) for model, _, _, xm, sm in curves}
+    return {"title": {"en": "TRECs of three tokenizers at 300m", "zh": "300m 上三种 tokenizer 的 TREC"},
+            "quantity": {"en": "Loss minus unread level (bits per byte)", "zh": "损失减去未读水平（每字节比特数）"}, "xlabel": XLABEL,
+            "cols": 1, "height": 240,
+            "legend": [[lab, col, "line"] for _, lab, _, _, _, col in TOKENIZERS] + [[{"en": "Predicted low point", "zh": "预测的最低点"}, "#5F6368", "ring"]],
+            "panels": [panel], "fit": {"m_from_128k": m128, "predicted_low": {m: round(v, 3) for m, _, v, _ in lows},
+                                       "measured_low": {m: [round(x, 3), round(y, 4)] for m, (x, y) in meas.items()}}}
 
 
 def main():
     site = sys.argv[1]
     data = {m: scored(m) for m, _ in PANELS}
-    figs = {"fig-trec": fig_trec(data), "fig-coef": fig_coef(), "fig-predict": fig_predict(data)}
+    figs = {"fig-trec": fig_trec(data), "fig-coef": fig_coef(), "fig-predict": fig_predict(data), "fig-tokenizers": fig_tokenizers()}
     path = os.path.join(site, "assets/data/trec-figs.js")
     with open(path, "w") as f:
         f.write("/* Generated by experiments/trec/build_site_data.py (marin branch trec); regenerate rather than hand-edit. */\n")
         f.write("window.TREC_FIGS = " + json.dumps(figs, ensure_ascii=False, separators=(",", ":")) + ";\n")
-    print(path, {k: [("empty" if "empty" in p else "data") for p in v["panels"]] for k, v in figs.items()}, figs["fig-predict"]["fits"])
+    print(path, {k: [("empty" if "empty" in p else "data") for p in v["panels"]] for k, v in figs.items()}, figs["fig-predict"]["fits"], figs["fig-tokenizers"]["fit"])
 
 
 if __name__ == "__main__":

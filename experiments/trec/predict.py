@@ -2,14 +2,18 @@
 with c_i the weight of update i in the final weights, normalized to a maximum of 1 (shape only; c_0, the
 initialization, is dropped), for three readings of our optimizer:
 
-  fixed-norm  MuonH and AdamH keep each matrix's Frobenius norm: an update orthogonal to W of relative size eta shrinks
-              the old weights by 1/sqrt(1 + eta^2) per step, so c_i = eta_i * prod_{j>i} (1 + eta_j^2)^(-1/2)
-  adamw-0.1   the config's weight_decay=0.1 taken at face value (AdamW): c_i = eta_i * prod_{j>i} (1 - 0.1 * eta_j)
-  schedule    no decay at all (the paper's lambda -> 0 limit, and the plain-Adam embeddings): c_i = eta_i
+  momentum     MuonH and AdamH as they run (the vocab session's derivation, tmp/trec/muonh_prediction.md): every step
+               W <- a_t (W - eta_t R O_t), a_t = (1 + 2 eta_t r_t + eta_t^2)^(-1/2), with r_t the outward radial part of
+               the unit step O_t. Momentum makes steps point the same way, so r_t = kappa eta_t + r0 with
+               kappa = (A - 1) / 2, A the two-sided sum of the step autocorrelation: A = 73 measured on the 300m
+               checkpoints (momentum 0.98), A = 23 from the toy (experiments/trec/toy_sphere.py) at the 130m momentum
+               0.95; r0 = 0.004 (the final checkpoints). c_i = eta_i prod_{j>=i} a_j.
+  independent  the same rescaling with steps at right angles to the weights (A = 1, r = 0): a_t = (1 + eta_t^2)^(-1/2)
+  adamw-0.1    the config's weight_decay=0.1 taken at face value (AdamW): c_i = eta_i prod_{j>i} (1 - 0.1 * eta_j)
 
 eta is the matrix learning rate logged in W&B (optim/learning_rate), one value per step.
 
-    python experiments/trec/predict.py      # prints each reading's valley for a range of m (vis node)
+    python experiments/trec/predict.py      # prints each reading's peak and valley for a range of m (vis node)
 """
 
 import json
@@ -18,8 +22,11 @@ import os
 import numpy as np
 
 CACHE = "/scratch/gpfs/GROUP/USER/project/trec/cache/wandb"
-RUNS = {"130m-d12": "muonh-qwen3-130m-della4xh100-d12", "300m": "muonh-qwen3-300m-della4xh100-s1-rerun"}
-TOTAL = {"130m-d12": 4959, "300m": 11444}
+RUNS = {"130m-d12": "muonh-qwen3-130m-della4xh100-d12", "300m": "muonh-qwen3-300m-della4xh100-s1-rerun",
+        "300m-8k": "muonh-qwen3-300m-della4xh100-v8k-s1", "300m-bytes": "muonh-qwen3-300m-della4xh100-bytes"}
+TOTAL = {"130m-d12": 4959, "300m": 11444, "300m-8k": 15464, "300m-bytes": 54248}   # final checkpoint step + 1
+A = {"130m-d12": 23.0, "300m": 73.0, "300m-8k": 73.0, "300m-bytes": 73.0}
+R0 = 0.004
 
 
 def lr_schedule(model):
@@ -29,14 +36,23 @@ def lr_schedule(model):
     return np.interp(np.arange(TOTAL[model]), s, v)
 
 
-def coefficients(eta, reading):
-    if reading == "schedule":
-        c = eta.copy()
-    else:
-        keep = 1 / np.sqrt(1 + eta ** 2) if reading == "fixed-norm" else 1 - 0.1 * eta
-        assert reading in ("fixed-norm", "adamw-0.1"), reading
-        after = np.concatenate([np.cumsum(np.log(keep)[::-1])[::-1][1:], [0.0]])   # sum over j > i
-        c = eta * np.exp(after)
+def keep(eta, reading, model):
+    """The factor by which step t shrinks everything already in the weights."""
+    if reading == "momentum":
+        r = (A[model] - 1) / 2 * eta + R0
+        return 1 / np.sqrt(1 + 2 * eta * r + eta ** 2)
+    if reading == "independent":
+        return 1 / np.sqrt(1 + eta ** 2)
+    assert reading == "adamw-0.1", reading
+    return 1 - 0.1 * eta
+
+
+def coefficients(eta, reading, model):
+    k = np.log(keep(eta, reading, model))
+    after = np.cumsum(k[::-1])[::-1]          # sum over j >= i
+    if reading == "adamw-0.1":
+        after = np.concatenate([after[1:], [0.0]])   # AdamW: the decay of the steps after i
+    c = eta * np.exp(after)
     return c / c.max()
 
 
@@ -50,22 +66,23 @@ def pearson(a, b):
     return float((a * b).sum() / np.sqrt((a * a).sum() * (b * b).sum()))
 
 
-def fit_m(c, trec, ms=np.arange(0.25, 40.01, 0.25)):
+def fit_m(c, trec, ms=np.arange(0.0, 40.01, 0.1)):
     """The training-fraction exponent with the highest Pearson r between prediction and measured TREC (paper's m*)."""
     r = [pearson(predicted(c, m), trec) for m in ms]
     k = int(np.argmax(r))
     return float(ms[k]), r[k]
 
 
+def valley(c, m):
+    return float(np.argmin(predicted(c, m)) + 1) / len(c)
+
+
 if __name__ == "__main__":
     for model in RUNS:
         eta = lr_schedule(model)
         T = len(eta)
-        print(model, "T", T, "peak lr", eta.max(), "sum eta^2/2", (eta ** 2).sum() / 2, "sum 0.1*eta", 0.1 * eta.sum())
-        for reading in ("fixed-norm", "adamw-0.1", "schedule"):
-            c = coefficients(eta, reading)
-            row = []
-            for m in (1, 2, 4, 6, 8, 12, 18):
-                L = predicted(c, m)
-                row.append(f"m={m}: {np.argmin(L) / T:.2f}")
-            print(f"  {reading:10s} c(0)={c[1]:.3f} c(0.5)={c[T // 2]:.3f} c(0.9)={c[int(0.9 * T)]:.3f}  valley at", ", ".join(row))
+        print(model, "T", T, "peak lr", round(eta.max(), 4), "A", A[model])
+        for reading in ("momentum", "independent", "adamw-0.1"):
+            c = coefficients(eta, reading, model)
+            row = ", ".join(f"m={m}: {valley(c, m):.3f}" for m in (0, 0.5, 1, 2, 4, 8))
+            print(f"  {reading:11s} c peak {np.argmax(c) / T:.3f}  valley at {row}")
