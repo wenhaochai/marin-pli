@@ -32,14 +32,16 @@ mkdir -p $OUT
 nvidia-smi -L
 echo "BENCH START $(date +%H:%M:%S) $(git -C $WT log --oneline -1) XLA_FLAGS=$XLA_FLAGS"
 B=scripts/della/speed_all
+# this job's own GPUs as the host set them (a guest on GPUs 4-7 must not touch 0-3)
+IFS=, read -r -a GPUS <<<"${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 DSF="--xla_gpu_enable_dynamic_slice_fusion=true"
-CUDA_VISIBLE_DEVICES=0 HLO_DIR=$OUT timeout 20m $PY $B/scan_save_bench.py prod > $OUT/prod.log 2>&1 &
+CUDA_VISIBLE_DEVICES=${GPUS[0]} HLO_DIR=$OUT timeout 20m $PY $B/scan_save_bench.py prod > $OUT/prod.log 2>&1 &
 p0=$!
-CUDA_VISIBLE_DEVICES=1 HLO_DIR=$OUT XLA_FLAGS="$XLA_FLAGS $DSF" timeout 20m $PY $B/scan_save_bench.py dsf > $OUT/dsf.log 2>&1 &
+CUDA_VISIBLE_DEVICES=${GPUS[1]} HLO_DIR=$OUT XLA_FLAGS="$XLA_FLAGS $DSF" timeout 20m $PY $B/scan_save_bench.py dsf > $OUT/dsf.log 2>&1 &
 p1=$!
-CUDA_VISIBLE_DEVICES=2 HLO_DIR=$OUT XLA_FLAGS="$XLA_FLAGS $DSF --xla_gpu_enable_cublaslt=false" timeout 20m $PY $B/scan_save_bench.py dsflegacy > $OUT/dsflegacy.log 2>&1 &
+CUDA_VISIBLE_DEVICES=${GPUS[2]} HLO_DIR=$OUT XLA_FLAGS="$XLA_FLAGS $DSF --xla_gpu_enable_cublaslt=false" timeout 20m $PY $B/scan_save_bench.py dsflegacy > $OUT/dsflegacy.log 2>&1 &
 p2=$!
-CUDA_VISIBLE_DEVICES=3 timeout 20m $PY $B/fp8_head_bench.py > $OUT/fp8.log 2>&1 &
+CUDA_VISIBLE_DEVICES=${GPUS[3]} timeout 20m $PY $B/fp8_head_bench.py > $OUT/fp8.log 2>&1 &
 p3=$!
 fail=0
 for p in $p0 $p1 $p2 $p3; do wait $p || fail=$((fail + 1)); done
