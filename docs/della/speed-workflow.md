@@ -174,6 +174,86 @@ baseline reruns. Not adopted: REMAT=fdots and the cuda_async allocator (out of m
 REMAT=fproj (no gain), the XLA dot merger (slower), the lse kernel in evaluation (~0.6% of a run; its numerics were not
 checked on one checkpoint). Told the pls and terminal sessions.
 
+**MLP outputs saved, a silent corruption, a guard (2026-10-26 12:20-13:10).** On the new defaults (async + f32 embedding
+gradient), saving part of the MLP fits beside the async loop where fdots did not: REMAT=fgate (flash + the MLP gate
+output, ~8.5 GB) and fmlp (+ gate and up, ~17 GB; LlamaMlp names them mlp_gate / mlp_up, no-ops for other policies).
+200 steps: 128K 522.4 -> 514.7 / 509.9 ms (w335), 8K 402.4 -> 393.6 / 388.3 (w336). Full Paloma evals and checkpoints
+every 20 steps (median): 128K 516 -> 511 / 505 (w339), 8K unismooth 399 -> 392 / 386 (w340); SEQ_LEN 5504 (charwin
+v8k shape): fgate 530 -> 522, fmlp out of memory (one 38.89 GiB block, w341). Silent corruption: the vocab run w158
+(unismooth 128K 0.02, the stack of 10:17, sync loop) collapsed at step 3171 to near-uniform predictions (loss 3.556 ->
+11.597, final bpb 3.24) because its lm_head norm, which AdamH recomputes every step and keeps constant, went 353.33 ->
+3.556 in one update: the value of that step's train loss. Not at a save, eval, resume or fetch; only lm_head moved (the
+next of 92 constant-norm keys 5.6e-7); no NaN. A scan of every reself/marin-della run since 10-20 (375 runs,
+tmp_plots/vocab/flip/norm_jumps.py; pls ran its own over 25 runs) finds no other jump: healthy constant norms move ~1e-6
+between watch steps. The bad update ran in the hooks variant of the step (3170 is a watch step); its compiled HLO (w345,
+the w158 config) packs 317 scalars into one in-place async all-reduce (all-reduce-start.54, output aliased to input) whose
+element 0 is a jnp.linalg.norm sum (AdamH's lm_head path) and elements 1-2 the forward pass's loss sums, so a mix-up or an
+early read in that buffer would give exactly what w158 shows; one event in ~400 runs does not separate the capture, the
+async collectives and the kernels. LEVANTER_NORM_GUARD=<rel> (watch.py, d394c5f26e): the watch hook raises when a
+constant-norm weight moves by more than <rel> between watch steps, so the job's retry resumes from its last checkpoint;
+w343 with 1e-3: 516 ms on and off, no false stop over 6 evals and 7 checkpoints. **Adopted (owner popup ~13:07):** REMAT
+code default at 300m fmlp up to SEQ_LEN 4096, fgate above (81bdd4f5a8), and LEVANTER_NORM_GUARD=1e-3 in speed_env.sh
+(5ab7a4e9a5), for jobs that start after 13:09; w158 reruns as w342 (RUN_TAG=-rerun).
+
+**Where the time goes now, and the next round (2026-10-26 14:00-17:00).** A whole run on the live defaults (w117, 128K,
+11444 steps, 1:42:20 including its smoke) splits into the smoke 90 s, startup 49 s (first step 11 s with the compile cache),
+12 full Paloma evals of 24 s each (288 s, 4.6%), checkpoints ~2 s each and the train steps (0.496 s each). Profiles of the
+live stack before fmlp (w350 128K, w351 8K; 2 traces, graphs off): 128K summed kernels 498 ms = CE 31% (lse kernel 55 ms,
+the two gradient GEMMs 33 + 33 ms, the dlogits pass 25 ms, the f32 grad_w add 5 ms), MLP 20% (GEMMs at ~750 TFLOP/s; the
+SwiGLU elementwise passes 31 ms), attention projections 11%, attention 10%, remat recompute 8%, norms 8%, collectives
+4.8% (24 ms; summed kernels 498 ms against 487 ms busy, so they barely overlap), optimizer 3%, layer-scan bookkeeping 3%.
+The layer scan copies each layer's saved gate and up outputs from the GEMM's buffer into the stacked buffers (2 x 5.7
+ms) and fills both stacked buffers with zeros first (5.3 ms; jax's scan lowering broadcasts a zero scalar). The async
+host loop allocates the next step's temp buffer while the running step holds its own, so every GiB saved per layer
+costs twice: fmlp's 28 GiB temp fits twice in 71 GiB, fdots' 37 GiB does not. Lse kernel v3 (lse_logits_mgpu.py,
+Pallas Mosaic GPU, warp-specialized TMA + wgmma with the logsumexp partials in the epilogue): per 8192-row block at K
+768 2.92 ms against 3.20 for the Triton kernel and 2.16 for cuBLAS (w371); of its 0.47 ms over the plain Pallas GEMM,
+0.27 ms is the exp epilogue (MUFU-bound: 16 exp per clock per SM) and 0.19 ms the label gather-dot (w379); in training
+-1.0% (w368), and past full evals and checkpoints every 20 steps 499 -> 494 ms median, eval loss within noise (w384).
+Training gathers the head physically as [H, V] (its all-gather output has layout {0,1}), so a row gather of w.T may stay
+strided (631b5a3dac; w396 bench, w397 A/B). B-tiled CE below 65536 entries (LEVANTER_CE_BTILED_MIN_VOCAB=4096; the
+v-tiled path's GEMMs ran at 4.7-13.3 ms against ~2.5 for their FLOPs, w351): past full evals and checkpoints 8K 389 ->
+383 ms (w394), 32K at SEQ_LEN 4480 474 -> 419 ms (-11.6%, w395). Its backward reads bf16 logits, while the v-tiled path's
+bf16 dot feeds an f32 convert that XLA may compute in f32, so 8K/32K gradients may lose precision against every earlier
+8K/32K run; LEVANTER_CE_BTILED_F32_LOGITS=1 keeps f32 logits (d49d9708ed; precision by path w409, speed w410/w411).
+Not adopted: LEVANTER_SCAN_EMPTY (lax.empty's AllocateBuffer instead of the zero fill): XLA's SPMD partitioner does not
+shard AllocateBuffer, so each GPU asked for the unsharded buffers, 65.5 GiB (w402). Queued: plain data parallelism
+instead of FSDP (MESH=dp) and XLA dynamic-slice fusion (w398), the f32 grad_w GEMM with its sum folded into cuBLAS
+(LEVANTER_CE_GRADW_F32, asked by pls; w403), XLA's DUS-accumulator zero-init elimination, programmatic dependent launch
+and NCCL user buffers (w408), and the three CE items together past full evals and checkpoints (w405-w407).
+
+**The CE backward from unnormalized probabilities (LEVANTER_CE_UNNORM, async-hooks 90a6f7c73f..1bf8f97776, 2026-10-26
+17:10-17:40).** At 128K a GIF block (8192 rows) is the lse kernel 3.5 ms, the dlogits pass 1.5 ms (read the bf16
+logits, write the bf16 dlogits), two gradient GEMMs 2.1 ms each and the f32 grad_w add 0.3 ms. Now lse kernel v3 takes
+each row's label logit c (an f32 gather-dot before the kernel) as a row offset and stores P = bf16(exp(z - c)), clamped
+at 60, with the f32 row sums S of the same exps (probs_and_sum_mgpu); the loss is log S. Since P at the label is exp(0) =
+1 and S >= 1, nothing overflows unless a token's loss passes 60 nats, and nothing underflows. The gradients are plain
+cuBLAS GEMMs on P: dlogits = (g / S) P minus g at the label, with g / S moved onto x for grad_w and onto the output rows
+for grad_x. Mode 1 folds the label term into P (1 - S at the label); mode 2 adds it apart in f32 (-g w_label to grad_x,
+g x summed into a [V, H] f32 table subtracted from grad_w after the loop). The dlogits pass goes away, and P carries
+bf16's relative rounding of a probability instead of exp of a bf16-rounded logit. Checks: the gradient algebra on CPU
+with an XLA stand-in for the kernel (V 66000, f64 reference); the kernel at 2.80 ms per block (v3 2.95, cuBLAS GEMM
+2.21), row sums within 1.7e-6, P within bf16 rounding (w426). One H100, 65536 rows at 128K, against an f32 reference
+(w427): the live path 76.7 ms with gradient error 3.2e-3 (grad_x) / 3.6e-3 (grad_w); mode 1 62.9 ms, 2.4e-3 / 3.3e-3;
+mode 2 64.6 ms, 1.7e-3 / 1.7e-3 (the bf16 gradient outputs alone set ~1.1e-3); f32 logits 96 ms, 1.9e-3 / 2.5e-3.
+One GPU, 200 steps of 4 microbatches: 1904 -> 1790 ms per step with mode 1 (-6.0%, w425). Queued: 4 GPUs past full
+evals and checkpoints with the CE items together (w428), mode 2 on one GPU (w429).
+
+**Results and adoption (2026-10-26 17:30-19:45).** One GPU (4 microbatches per step, 200 steps; w421-w433): the SwiGLU
+custom_vjp alone +0.8% (hybrid_norm's post-MLP norm reads the MLP output, so the remat still recomputes the product);
+saving the MLP output too (REMAT=fmlpo) with it -2.0%, with the attention output (fmlpoa) -2.6%; LEVANTER_CE_UNNORM
+mode 1 -6.0%, mode 2 -5.4%; XLA's DUS-accumulator zero-init elimination -3.1% to -3.5% (dynamic-slice fusion, with or
+without legacy cuBLAS: no change); everything together -11.1% to -11.2%, fmlpo and fmlpoa alike, and without the
+zero-init flag the combination ran out of memory on one GPU. 4 GPUs past full evaluations and checkpoints every 20 steps
+(median ms per step, 8 checkpoints and 6 evaluations per arm, losses within noise): 128K 503 -> 457 (-9.1%, w435; a full
+evaluation 24 -> 20 s), 8K 388 -> 336 (-13.4%, w436), 32K at SEQ_LEN 4480 with fgate 477 -> 423 (-11.3%, w437).
+**Adopted (owner popup ~19:15, "全部设为默认，不重跑"; c6886d9b2b, jobs that start after 19:45):** LEVANTER_CE_UNNORM=2,
+LEVANTER_CE_BTILED_MIN_VOCAB=4096 (f32 logits below 65536), LEVANTER_CE_LSE_MGPU=1 with LEVANTER_CE_LSE_KERNEL_EVAL=1,
+LEVANTER_SWIGLU_VJP=1 and the zero-init flag in speed_env.sh, and REMAT code default fmlpo up to SEQ_LEN 4096. The two CE
+items change gradient numerics, both toward f32; the rest is the same math. Not in it: LEVANTER_SCAN_EMPTY (out of memory,
+w402); still queued on 4 GPUs: plain data parallelism and the dynamic-slice fusion (w398), the f32 grad_w GEMM (w403;
++0.7% on pls, w404), the XLA flag set (w408), Triton GEMM fusions (w413), the remat options alone (w420).
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
