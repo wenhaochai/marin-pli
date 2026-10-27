@@ -85,9 +85,16 @@ export LEVANTER_CE_LSE_KERNEL_EVAL=${LEVANTER_CE_LSE_KERNEL_EVAL:-1}
 # LEVANTER_SWIGLU_VJP=1: the MLP product is recomputed in its own backward beside its gradients (with REMAT=fmlpo, the code
 # default, which saves the MLP output that hybrid_norm's post-norm reads). Same math.
 export LEVANTER_SWIGLU_VJP=${LEVANTER_SWIGLU_VJP:-1}
+# LEVANTER_QK_ROPE_FUSED=1 (speed, owner popup 2026-10-27 ~03:55, "设为默认，不重跑"): the per-head RMS norm of q and k and the
+# rotary embedding in one Pallas Triton pass each way (levanter kernels/pallas/qk_norm_rope.py), instead of XLA's norm
+# fusion, then a rotary fusion that read cos and sin broadcast to the activation's full shape. On top of the fused SwiGLU:
+# 128K 438 -> 426 ms per step (w490), 8K 320 -> 305 (w491); loss within noise; more precise against f32 (the q/k norm
+# weights' gradients 1.4-3.8e-2 -> 3e-3), not bitwise. Taken only for weight-only RmsNorms over a 64-wide head, the default
+# rotary and positions 0 .. S - 1; XLA's path otherwise. 0 turns it off.
+export LEVANTER_QK_ROPE_FUSED=${LEVANTER_QK_ROPE_FUSED:-1}
 # REMAT has no knob here: its code default (della_muonh_qwen3_scaling.py) at 300m is fmlpo up to SEQ_LEN 4096 (owner popup
 # ~19:15; fmlp from ~13:07) and fgate above it (fmlp runs out of memory at 5504, w341); other sizes keep flash.
 # LEVANTER_SWIGLU_FUSED has no knob here either: the launcher turns it on wherever REMAT is fmlpo or fmlpoa (owner popup
 # 2026-10-27 ~00:00, "设为默认，不重跑"): the SwiGLU as two Mosaic GPU kernels, 128K 459 -> 440 ms, 8K 336 -> 319 ms per step
 # (w474, w475), more precise against f32, not bitwise. LEVANTER_SWIGLU_FUSED=0 turns it off.
-echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL unnorm=$LEVANTER_CE_UNNORM btiled_min_vocab=$LEVANTER_CE_BTILED_MIN_VOCAB lse_mgpu=$LEVANTER_CE_LSE_MGPU lse_eval=$LEVANTER_CE_LSE_KERNEL_EVAL swiglu_vjp=$LEVANTER_SWIGLU_VJP async_step=$LEVANTER_ASYNC_STEP embed_grad_f32=$LEVANTER_EMBED_GRAD_F32 norm_guard=$LEVANTER_NORM_GUARD ATTN_BACKEND=${ATTN_BACKEND:-code default: fa4thd at 130m/300m, fa4 above} REMAT=${REMAT:-code default: fmlpo at 300m to SEQ_LEN 4096, fgate above, flash at other sizes} swiglu_fused=${LEVANTER_SWIGLU_FUSED:-launcher default: on with fmlpo/fmlpoa}"
+echo "speed_env: CE onehot=$LEVANTER_CE_BTILED_ONEHOT gif=$LEVANTER_CE_GRAD_IN_FWD lse_kernel=$LEVANTER_CE_LSE_KERNEL unnorm=$LEVANTER_CE_UNNORM btiled_min_vocab=$LEVANTER_CE_BTILED_MIN_VOCAB lse_mgpu=$LEVANTER_CE_LSE_MGPU lse_eval=$LEVANTER_CE_LSE_KERNEL_EVAL swiglu_vjp=$LEVANTER_SWIGLU_VJP async_step=$LEVANTER_ASYNC_STEP embed_grad_f32=$LEVANTER_EMBED_GRAD_F32 norm_guard=$LEVANTER_NORM_GUARD ATTN_BACKEND=${ATTN_BACKEND:-code default: fa4thd at 130m/300m, fa4 above} REMAT=${REMAT:-code default: fmlpo at 300m to SEQ_LEN 4096, fgate above, flash at other sizes} swiglu_fused=${LEVANTER_SWIGLU_FUSED:-launcher default: on with fmlpo/fmlpoa} qk_rope_fused=$LEVANTER_QK_ROPE_FUSED"
