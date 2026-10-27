@@ -32,6 +32,11 @@ CONFIGS = {
                                 grid_minor_dim=hm.MatmulDimension.M, grid_tile_width=16, wg_dimension=hm.MatmulDimension.N),
     "m128wgn3": hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=3, epi_tile_n=64, epi_tile_m=64,
                                 grid_minor_dim=hm.MatmulDimension.M, grid_tile_width=16, wg_dimension=hm.MatmulDimension.N),
+    # wgmma's native m64n256 per warpgroup (a 128 x 256 CTA, as cuBLAS's fastest Hopper GEMMs); interleave block 128
+    "m64n256wgm4": hm.TuningConfig(tile_m=64, tile_n=256, tile_k=64, max_concurrent_steps=4, epi_tile_n=64, epi_tile_m=64,
+                                   grid_minor_dim=hm.MatmulDimension.N, grid_tile_width=16, wg_dimension=hm.MatmulDimension.M),
+    "m64n256wgm3": hm.TuningConfig(tile_m=64, tile_n=256, tile_k=64, max_concurrent_steps=3, epi_tile_n=64, epi_tile_m=64,
+                                   grid_minor_dim=hm.MatmulDimension.N, grid_tile_width=16, wg_dimension=hm.MatmulDimension.M),
 }
 # forward: m128wgn4 was fastest (1.942 ms, w469); backward: m128wgm3, the one that fits (4 stages need 262 KB of SMEM, w472)
 CONFIG = CONFIGS[os.environ.get("LEVANTER_SWIGLU_CFG", "m128wgn4")]

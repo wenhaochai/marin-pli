@@ -136,10 +136,73 @@ def layer_bench(fwd_name, bwd_name, iters):
               f"production; x12 layers {12 * (t - t_ref):+.1f} ms per step); max rel grad diff {errs}", flush=True)
 
 
+def fwd_cfg_bench(name, iters):
+    """The forward kernel alone in one config (its own interleave block, tile_n // 2) against cuBLAS + XLA's product."""
+    cfg = sw.CONFIGS[name]
+    block = cfg.tile_n // 2
+    k = jax.random.split(jax.random.PRNGKey(0), 3)
+    x = jax.random.normal(k[0], (M, E), jnp.float32).astype(BF)
+    wg = (jax.random.normal(k[1], (E, F), jnp.float32) * E ** -0.5).astype(BF)
+    wu = (jax.random.normal(k[2], (E, F), jnp.float32) * E ** -0.5).astype(BF)
+    ref = jax.jit(lambda x, wg, wu: (x @ wg, act_mul(x @ wg, x @ wu)))
+    (g0, h0), t_ref = timed(ref, x, wg, wu, iters=iters)
+    w_cat = sw.interleave(wg, wu, block)
+    (gu1, h1), t_fused = timed(jax.jit(functools.partial(sw.swiglu_fwd_mgpu, config=cfg)), x, w_cat, iters=iters)
+    flops = 2 * M * E * 2 * F
+    print(f"SWIGLU_FWD {name}: cuBLAS + XLA product {t_ref:.3f} ms, fused {t_fused:.3f} ms "
+          f"({flops / t_fused / 1e9:.0f} TFLOP/s), saving per layer {t_ref - t_fused:+.3f} ms; max rel err gate "
+          f"{rel(sw.deinterleave(gu1, block)[0], g0):.2e} h {rel(h1, h0):.2e}", flush=True)
+
+
+def precision(fwd_name, bwd_name):
+    """One MLP's gradients by the production path and by both kernels, each against an f32 reference from the same bf16
+    inputs: rms relative error of d_x, d_w_gate, d_w_up, d_w_down and of the forward output."""
+    fcfg, bcfg = sw.CONFIGS[fwd_name], sw.CONFIGS[bwd_name]
+    nb = F // sw.BLOCK
+    k = jax.random.split(jax.random.PRNGKey(1), 5)
+    x = jax.random.normal(k[0], (M, E), jnp.float32).astype(BF)
+    wg = (jax.random.normal(k[1], (E, F), jnp.float32) * E ** -0.5).astype(BF)
+    wu = (jax.random.normal(k[2], (E, F), jnp.float32) * E ** -0.5).astype(BF)
+    wd = (jax.random.normal(k[3], (F, E), jnp.float32) * F ** -0.5).astype(BF)
+    d_out = (jax.random.normal(k[4], (M, E), jnp.float32) * 1e-2).astype(BF)
+
+    def f32_ref(x, wg, wu, wd, d_out):
+        x, wg, wu, wd, d_out = (a.astype(jnp.float32) for a in (x, wg, wu, wd, d_out))
+        out, vjp = jax.vjp(lambda x_, a, b, c: act_mul(x_ @ a, x_ @ b) @ c, x, wg, wu, wd)
+        return (out, *vjp(d_out))
+
+    def production(x, wg, wu, wd, d_out):
+        g, u = x @ wg, x @ wu
+        h, vjp = jax.vjp(act_mul, g, u)
+        d_g, d_u = vjp(d_out @ wd.T)
+        return h @ wd, d_g @ wg.T + d_u @ wu.T, x.T @ d_g, x.T @ d_u, h.T @ d_out
+
+    def fused(x, wg, wu, wd, d_out):
+        w_cat = sw.interleave(wg, wu)
+        gu, h = sw.swiglu_fwd_mgpu(x, w_cat, fcfg)
+        d_gu, h2 = sw.swiglu_bwd_mgpu(d_out, wd.T, gu, bcfg)
+        d_wcat = x.T @ d_gu
+        dwg, dwu = sw.deinterleave(d_wcat)
+        return h @ wd, d_gu @ w_cat.T, dwg, dwu, h2.T @ d_out
+
+    args = (x, wg, wu, wd, d_out)
+    ref = [np.asarray(a, np.float32) for a in jax.jit(f32_ref)(*args)]
+    for label, fn in (("production", production), ("both kernels", fused)):
+        outs = [np.asarray(a, np.float32) for a in jax.jit(fn)(*args)]
+        errs = " ".join(f"{nm} {np.sqrt(np.mean((a - b) ** 2)) / np.sqrt(np.mean(b ** 2)):.3e}"
+                        for nm, a, b in zip(("out", "dx", "dwg", "dwu", "dwd"), outs, ref))
+        print(f"SWIGLU_PREC {label:12s} rms rel error against f32: {errs}", flush=True)
+    del nb
+
+
 if __name__ == "__main__":
     print(f"devices {jax.devices()}", flush=True)
     mode = sys.argv[1]
     if mode == "bwd":
         bwd_bench(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 20)
+    elif mode == "fwd":
+        fwd_cfg_bench(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 20)
+    elif mode == "precision":
+        precision(sys.argv[2], sys.argv[3])
     else:
         layer_bench(sys.argv[2], sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 20)
