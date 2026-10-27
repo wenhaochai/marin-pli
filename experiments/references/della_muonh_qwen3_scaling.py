@@ -142,7 +142,7 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 # ~29 GB. Under the async host loop the next step's buffers are allocated while the running step's are held, and
 # fdots' 37 GiB twice does not fit (w324); fproj's does. It gained nothing (w329, w330): fdots' gain is the MLP recompute.
 # "fgate" / "fmlp" (speed, 2026-10-26): flash plus the MLP's gate output (~8.5 GB at 300m), or its gate and up outputs
-# (~17 GB), named mlp_gate / mlp_up in LlamaMlp, so the backward pass recomputes one or none of the MLP's two input
+# (~17 GB), named mlp_gate / mlp_up in LlamaMlp (one interleaved mlp_gu under LEVANTER_SWIGLU_FUSED), so the backward pass recomputes one or none of the MLP's two input
 # matmuls. With the async host loop and the f32 embedding gradient, 4 H100s, 300m, full evaluations and checkpoints every
 # 20 steps (median ms per step): 128K flash 516, fgate 511, fmlp 505 (w339); 8K 399, 392, 386 (w340); at SEQ_LEN 5504
 # fgate 522 against 530 and fmlp out of memory (w341). Default since the owner popup of 2026-10-26: at 300m fmlp up to
@@ -808,7 +808,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         model_extra = dict(model_extra, gradient_checkpointing=_ProjCheckpointPolicy(
             save_block_internals=["flash_o", "flash_ell"], mlp_dim=s["inter"]))
     elif REMAT in ("fgate", "fmlp", "fmlpo", "fmlpoa"):
-        names = ["flash_o", "flash_ell", "mlp_gate"] + (["mlp_up"] if REMAT != "fgate" else []) + (["mlp_out"] if REMAT in ("fmlpo", "fmlpoa") else []) + (["attn_out"] if REMAT == "fmlpoa" else [])
+        names = ["flash_o", "flash_ell", "mlp_gate"] + (["mlp_up", "mlp_gu"] if REMAT != "fgate" else []) + (["mlp_out"] if REMAT in ("fmlpo", "fmlpoa") else []) + (["attn_out"] if REMAT == "fmlpoa" else [])
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=names))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
