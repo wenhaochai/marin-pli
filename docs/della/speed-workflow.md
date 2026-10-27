@@ -254,6 +254,33 @@ items change gradient numerics, both toward f32; the rest is the same math. Not 
 w402); still queued on 4 GPUs: plain data parallelism and the dynamic-slice fusion (w398), the f32 grad_w GEMM (w403;
 +0.7% on pls, w404), the XLA flag set (w408), Triton GEMM fusions (w413), the remat options alone (w420).
 
+**The 4-GPU tests that were still queued (ended 2026-10-26 evening; 300m, 4 H100s, 200 steps, median ms per step against
+the same job's baseline arm, the pre-bundle live stack).** Plain data parallelism instead of FSDP (MESH=dp) 505 -> 501
+(w398; the baseline arm moves by 2-5 ms between jobs, so this is noise); dynamic-slice fusion 505 -> 505 (w398) and with
+legacy cuBLAS 504 -> 505 (w413); the f32 grad_w GEMM 502 -> 500 (w403); the DUS-accumulator zero-init flag 500 -> 493
+(-1.4%, w408; in the bundle); programmatic dependent launch 501 and NCCL user buffers 502 against 500 (w408); Triton
+GEMM fusions 504 and 505 against 504 (w413); REMAT fmlpo, fmlpos and fmlpoas 491 against 505 (-2.8%, w420; fmlpo is in
+the bundle); the b-tiled CE at 8K 386 -> 357 (-7.5%, w415) and at 32K 475 -> 430 (-9.5%, w416), and mode 2 of the
+unnormalized CE at 128K 503 -> 477 (-5.2%, w428; both in the bundle). Nothing new to adopt.
+
+**One step in flight (idea, 2026-10-26 ~21:00; not built).** The async host loop keeps two steps' temporary buffers
+(PJRT frees a step's temporaries when it ends, and step N+1's are allocated at its dispatch), which is what ruled out
+fdots at 128K (w324). A loop that dispatches N+1 as soon as N's loss is on the host, then runs N's hooks while N+1
+computes, would keep one. A draft passed levanter's test_train_lm on CPU in both loop modes, but the memory it frees has
+no use: the default fmlpo already saves the MLP's gate, up and output, the projection outputs gained nothing on top of
+flash (fproj, w329/w330), fdots' gain over flash was the MLP recompute, and REMAT=none needs 179 GiB. The draft would
+also leave the dispatch on the critical path between steps, so it was dropped.
+
+**Time outside the train step (2026-10-26 ~22:30; w213 log, 300m 128K, 11444 steps, task 6831 s).** Startup to the first
+step 35 s; the first step 11.8 s with its compile (trace 2.3 s, lower 1.0 s; the CuTeDSL kernel cache and the JAX
+persistent cache in cache/jax already hit: 44 GB, 1170 entries written since 10-25); 12 full evaluations of ~25 s (300 s,
+4.4%; 20 s each with the bundle's eval lse kernel); 12 checkpoints of ~2 s; ~40 s after the last step (final evaluation,
+W&B finish). In all ~6% of the task, plus the pack's 91 s smoke. The evaluation is near its floor: it is all 16 Paloma
+validation sets, 59.55M tokens in 14545 sequences, so its 114 batches carry almost no padding; the loop accumulates on the
+device without a host sync per batch; and a batch takes ~175 ms against ~150 ms for the forward share of a train step.
+Making it cheaper means fewer or smaller evaluations between the first and the last (m2d2_s2orc alone is 16.8M tokens;
+c4_100_domains, dolma_100_subreddits and the programming languages 8.5-9.5M each): a protocol choice, not infra.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |

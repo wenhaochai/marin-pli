@@ -1,6 +1,6 @@
 """GPU time per part of the train step, from a JAX profiler xplane and the step's optimized HLO (speed work, 2026-10-25).
 
-Usage: trace_families.py <profile dir> <hlo dump dir> [steps]
+Usage: trace_families.py <profile dir> <hlo dump dir> [steps] [family regex] [top n]
 The run must have had XLA_FLAGS with --xla_gpu_enable_command_buffer= (no CUDA graphs: each kernel then carries its own
 HLO instruction in the trace instead of the command buffer's) and --xla_dump_to=<hlo dump dir> --xla_dump_hlo_as_text.
 Reads the device plane /device:GPU:0 of the newest *.xplane.pb below <profile dir> (FSDP devices are symmetric), maps each
@@ -20,6 +20,8 @@ from jax.profiler import ProfileData
 
 prof, hlo_dir = Path(sys.argv[1]), Path(sys.argv[2])
 steps = int(sys.argv[3]) if len(sys.argv) > 3 else 3
+fam_only = sys.argv[4] if len(sys.argv) > 4 else None   # optional: list only the instructions of families matching this regex
+top_n = int(sys.argv[5]) if len(sys.argv) > 5 else 30
 mods = sorted(hlo_dir.glob("*jit__train_step*after_optimizations.txt"), key=lambda p: p.stat().st_size)   # A40: .after_optimizations.txt; H100: .sm_9.0a_gpu_after_optimizations.txt
 if not mods:
     sys.exit(f"no jit__train_step after_optimizations module in {hlo_dir}")
@@ -109,5 +111,5 @@ print(f"wall {wall / 1e6 / steps:.1f} ms, GPU busy {busy / 1e6 / steps:.1f} ms (
 for k, v in sorted(tot.items(), key=lambda x: -x[1]):
     print(f"  {k:38s} {v / steps:8.1f} ms  {v / summed:6.1%}")
 print("largest instructions (ms per step, family, op_name tail):")
-for hlo, v in sorted(per_op.items(), key=lambda x: -x[1])[:30]:
+for hlo, v in [x for x in sorted(per_op.items(), key=lambda x: -x[1]) if fam_only is None or re.search(fam_only, family(x[0], x[0]))][:top_n]:
     print(f"  {v / steps:8.2f}  {hlo[:34]:34s} {family(hlo, hlo):30s} {OPNAME.get(hlo, '')[-110:]}")
