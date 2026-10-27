@@ -41,7 +41,7 @@ ROWS = [
         ("-bytes-s1", "Bytes, unique tokens", "字节，不重复 token", 1, 54248),
         ("-bytes-rep8-s1", "Bytes, 8 passes over an eighth", "字节，一个八分之一子集读 8 遍", 1, 54248)]]
 OTHER = ["w439", "w447"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed)
-CODE = "https://github.com/wenhaochai/marin-pli/tree/3b4449884c42b650d86969091b92e7687d751489"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-27
+CODE = "https://github.com/wenhaochai/marin-pli/tree/09e8580bd6be1240572b858130a2df0411f68bef"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-27 (Figure 5 second seed)
 
 
 def job(w):

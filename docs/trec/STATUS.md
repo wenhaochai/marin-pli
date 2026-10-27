@@ -6,7 +6,8 @@ below unread text) and have forgotten the first quarter (0.001 +- 0.001 nats bel
 formula 1 - sqrt(c) t^m follows this shape only with a fitted exponent (m 3.4-4.8, Pearson r 0.96-0.99), and then a
 control without any averaging (c = learning rate) fits nearly as well (r 0.963 against 0.971 for the momentum reading
 at 300m, 0.988 for both at 130m); with the paper's m* for AdamW every reading misplaces the low point by 0.04-0.15 of
-training. More steps over the same text (8K, bytes) move the low point later than the averaging predicts.
+training. More steps over the same text (8K, bytes) move the low point later than the averaging predicts, with
+either training seed.
 
 Owner request 2026-10-26: a new Experiments page that applies Bergsma, Dey and Hestness (2025, arXiv 2509.25380) to
 our finished pretraining checkpoints. Page: `exps/trec.html` on the website branch `pretrain-practice`
@@ -48,7 +49,9 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   update adds the initialization back at the end; the layer-0 excess comes from earlier in training (only final
   checkpoints exist for these runs).
 - w438 (vocab session): unique minus 8-pass, low point at 0.783 / 0.830 / 0.856 of training (128K / 8K / bytes);
-  the momentum reading with m = 3.3 fitted at 128K predicts 0.789 / 0.792 / 0.807.
+  the momentum reading with m = 3.3 fitted at 128K predicts 0.789 / 0.792 / 0.807. Second seed (w457, owner approval
+  2026-10-27): 8K seed 0 at 0.814 (-0.0157 bpb), bytes seed 1 at 0.872 (-0.0144); 128K seed 0 has no unique-token run.
+  Figure 5 draws one line per seed; each predicted ring sits on the seeds' mean curve.
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
@@ -67,7 +70,8 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 - Before publishing (2026-10-27): anti-autoresearch, deterministic-only (no codex reviewer in the session), L0 on the
   page text: CLEAN_GIVEN_EVIDENCE (tmp/trec_audit/REPORT.md). A manual check of every hand-written number fixed two
   captions (the unread band is +-2 SE, not 2 SE wide; the low points are four fifths to nine tenths, not about four
-  fifths). Public code: wenhaochai/marin-pli branch trec at 3b44498 (scrubbed; secrets 0, cluster user and group 0).
+  fifths). Public code: wenhaochai/marin-pli branch trec at 3b44498, then 09e8580 with the second seed (scrubbed; secrets 0,
+  cluster user and group 0).
   Website: pretrain-practice e2d3fef; the main merge waits for the owner's weekly approval.
 
 ## Open (not approved)
