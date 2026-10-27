@@ -50,4 +50,6 @@ for f in prod dsf dsflegacy fp8; do
   grep -E "^(BENCH|GRAD|FP8HEAD)" $OUT/$f.log || tail -5 $OUT/$f.log
 done
 echo "BENCH DONE fail=$fail $(date +%H:%M:%S) out=$OUT"
-exit $fail
+# a bench exits 0 when it ran: an arm that fails (a tile config past shared memory, say) is a result, shown in the
+# DONE line; a nonzero exit counts as a quick failure on the host, and three of them stop its fetching (w472)
+exit 0
