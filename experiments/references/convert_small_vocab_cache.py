@@ -4,13 +4,14 @@
 """Converts the Marin-tokenized fineweb-edu-10B training cache and the Paloma validation caches to the K-token truncated
 tokenizer (experiments/references/small_vocab_tokenizer.py), document by document, through the exact id-level expansion.
 
-Writes MARIN_PREFIX/fineweb-edu-10B-v{K}/train and MARIN_PREFIX/tokenized/paloma-v{K}/<subset>/validation (Levanter
+Writes MARIN_PREFIX/fineweb-edu-10B-{NAME}/train and MARIN_PREFIX/tokenized/paloma-{NAME}/<subset>/validation (Levanter
 TreeCaches, field input_ids). Afterwards it checks: same document counts as the source; for CHECK_DOCS sampled documents
 the same decoded text, and for the canonically tokenized ones the same ids as re-encoding with the truncated tokenizer
 (see check()). Prints the token
 ratio (converted / source) that sets the step count of the fixed-text comparison.
 
     K=32000 [LIMIT=n] [SKIP_TRAIN=1] python -m experiments.references.convert_small_vocab_cache
+    VOCAB_SET=f1000 [LIMIT=n] [SKIP_TRAIN=1] python -m experiments.references.convert_small_vocab_cache   (frequency set)
 """
 
 import json
@@ -24,9 +25,11 @@ from levanter.store.cache import CacheMetadata, SerialCacheWriter, TreeCache
 
 from experiments.references.small_vocab_tokenizer import N_ORDINARY, SRC, expansion
 
-K = int(os.environ["K"])
+VOCAB_SET = os.environ.get("VOCAB_SET", "")   # f<T>: a frequency set (small_vocab_tokenizer.py build-freq), not a truncation
+NAME = VOCAB_SET or f"v{os.environ['K']}"
 PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
-TOK_DIR = f"{PREFIX}/tokenizers/marin-small/v{K}"
+TOK_DIR = f"{PREFIX}/tokenizers/marin-small/{NAME}"
+K = len(np.load(f"{TOK_DIR}/keep.npy")) if VOCAB_SET else int(os.environ["K"])   # ordinary tokens; specials at K..K+255
 LIMIT = int(os.environ.get("LIMIT", "0"))   # documents per cache, for a quick test (0 = all)
 CHUNK = 32768
 CHECK_DOCS = int(os.environ.get("CHECK_DOCS", "300"))
@@ -82,27 +85,28 @@ def check(src_dir, dst_dir, n):
         body = [t for t in a if t < N_ORDINARY]
         if full.encode(ta, add_special_tokens=False).ids == body:
             canon += 1
-            assert [t for t in b if t < K] == small.encode(ta, add_special_tokens=False).ids, (src_dir, "canonical document re-encodes differently")
+            # a frequency set is a two-stage tokenization, not BPE with its vocabulary (small_vocab_tokenizer.expansion)
+            assert VOCAB_SET or [t for t in b if t < K] == small.encode(ta, add_special_tokens=False).ids, (src_dir, "canonical document re-encodes differently")
     return len(idx), canon
 
 
 def main():
     flat, offs = expansion(K, TOK_DIR)
-    out = {"K": K}
+    out = {"K": K, "name": NAME}
     jobs = []
     if not os.environ.get("SKIP_TRAIN"):
-        jobs.append(("fineweb-edu-10B", f"{PREFIX}/fineweb-edu-10B/2026.06.28/train", f"{PREFIX}/fineweb-edu-10B-v{K}/train"))
+        jobs.append(("fineweb-edu-10B", f"{PREFIX}/fineweb-edu-10B/2026.06.28/train", f"{PREFIX}/fineweb-edu-10B-{NAME}/train"))
     pal = f"{PREFIX}/tokenized/paloma"
     for d in sorted(os.listdir(pal)):
         if os.path.isdir(os.path.join(pal, d, "validation")):
-            jobs.append((d.rsplit("-", 1)[0], os.path.join(pal, d, "validation"), f"{PREFIX}/tokenized/paloma-v{K}/{d.rsplit('-', 1)[0]}/validation"))
+            jobs.append((d.rsplit("-", 1)[0], os.path.join(pal, d, "validation"), f"{PREFIX}/tokenized/paloma-{NAME}/{d.rsplit('-', 1)[0]}/validation"))
     for name, s, d in jobs:
         n, i, o = convert_cache(s, d, flat, offs)
         c, canon = check(s, d, n)
         out[name] = dict(docs=n, tokens_in=i, tokens_out=o, ratio=o / i, checked=c, canonical=canon)
         print(f"{name}: {n} docs, {i} -> {o} tokens (x{o / i:.4f}); {c} sampled documents decode to the same text, {canon} canonical ones equal re-encoding", flush=True)
     tag = f"_limit{LIMIT}" if LIMIT else ""
-    path = f"{PREFIX}/tokenized/convert_v{K}{tag}.json"
+    path = f"{PREFIX}/tokenized/convert_{NAME}{tag}.json"
     json.dump(out, open(path, "w"), indent=1)
     print("written", path)
 

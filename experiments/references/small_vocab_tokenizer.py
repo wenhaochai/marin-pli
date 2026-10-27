@@ -16,6 +16,7 @@ tokens map to their new ids. validate() checks this against encoding the decoded
     python -m experiments.references.small_vocab_tokenizer build K OUT_DIR
     python -m experiments.references.small_vocab_tokenizer validate K OUT_DIR N_DOCS
     python -m experiments.references.small_vocab_tokenizer expansion-npz K OUT_DIR   (composed_vocab_qwen3.py's map)
+    python -m experiments.references.small_vocab_tokenizer build-freq T OUT_DIR   (frequency set f<T>, freq_keep)
 """
 
 import copy
@@ -28,14 +29,28 @@ from tokenizers import Tokenizer
 
 SRC = os.environ.get("MARIN_TOKENIZER_DIR", "/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/a5ca45f2feb6c959bd87b81689aa7279b5bdcaa2")
 N_ORDINARY = 128000
+COUNTS = "/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_token_losses/subset_counts_128000.npy"
 
 
-def build(k: int, out_dir: str) -> None:
-    """Writes tokenizer.json, tokenizer_config.json and special_tokens_map.json of the K-token tokenizer to out_dir."""
+def freq_keep(t: int) -> np.ndarray:
+    """The frequency set f<T> (owner popup 2026-10-27, "B 按频率选词表"): the 8K truncation plus every ordinary Marin token
+    seen at least T times in the repeated eighth of the training text (COUNTS), as sorted Marin ids."""
+    c = np.load(COUNTS).astype(np.int64)
+    c = np.pad(c, (0, max(0, N_ORDINARY - len(c))))[:N_ORDINARY]
+    return np.flatnonzero((np.arange(N_ORDINARY) < 8000) | (c >= t))
+
+
+def build(k: int, out_dir: str, keep=None) -> None:
+    """Writes tokenizer.json, tokenizer_config.json and special_tokens_map.json of the K-token tokenizer to out_dir. With
+    keep (sorted Marin ids, freq_keep), the tokenizer of those tokens instead, renumbered 0..len(keep)-1 in id order."""
     t = json.load(open(os.path.join(SRC, "tokenizer.json")))
     m = t["model"]
     assert m["type"] == "BPE" and len(m["vocab"]) == N_ORDINARY and sorted(m["vocab"].values()) == list(range(N_ORDINARY))
-    vocab = {tok: i for tok, i in m["vocab"].items() if i < k}
+    if keep is None:
+        vocab = {tok: i for tok, i in m["vocab"].items() if i < k}
+    else:
+        new = {int(o): j for j, o in enumerate(keep)}
+        vocab, k = {tok: new[i] for tok, i in m["vocab"].items() if i in new}, len(keep)
     merges = []
     for mg in m["merges"]:
         a, b = mg if isinstance(mg, list) else mg.split(" ")
@@ -69,14 +84,22 @@ def build(k: int, out_dir: str) -> None:
 
 
 def expansion(k: int, out_dir: str):
-    """expand[t] for every full-tokenizer id t (ordinary and special), as a flat array plus offsets."""
+    """expand[t] for every full-tokenizer id t (ordinary and special), as a flat array plus offsets. For a frequency set
+    (out_dir/keep.npy, build-freq) the kept tokens map to their new ids and every other token to its BPE under the kept
+    vocabulary; that is a two-stage tokenization (full BPE, then the dropped tokens re-encoded on their own), not BPE with
+    the kept vocabulary (a kept merge can rank above a dropped one), so the data comes only from this map."""
     full = json.load(open(os.path.join(SRC, "tokenizer.json")))
     inv = {i: tok for tok, i in full["model"]["vocab"].items()}
     small = Tokenizer.from_file(os.path.join(out_dir, "tokenizer.json"))
+    new = np.where(np.arange(N_ORDINARY) < k, np.arange(N_ORDINARY), -1)
+    if os.path.exists(os.path.join(out_dir, "keep.npy")):
+        keep = np.load(os.path.join(out_dir, "keep.npy"))
+        k, new = len(keep), np.full(N_ORDINARY, -1)
+        new[keep] = np.arange(k)
     parts, offs = [], [0]
     for t in range(N_ORDINARY + 256):
-        if t < k:
-            e = [t]
+        if t < N_ORDINARY and new[t] >= 0:
+            e = [int(new[t])]
         elif t < N_ORDINARY:
             e = [x.id for x in small.model.tokenize(inv[t])]
             assert e and all(i < k for i in e), (t, e)
@@ -128,6 +151,11 @@ if __name__ == "__main__":
     cmd, k, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
     if cmd == "build":
         build(k, out)
+    elif cmd == "build-freq":   # k is the threshold T; out holds keep.npy beside the tokenizer
+        keep = freq_keep(k)
+        os.makedirs(out, exist_ok=True)
+        np.save(os.path.join(out, "keep.npy"), keep)
+        build(len(keep), out, keep)
     elif cmd == "validate":
         validate(k, out, int(sys.argv[4]))
     elif cmd == "expansion-npz":   # the map of composed_vocab_qwen3.py: every full token's pieces under the K-token BPE

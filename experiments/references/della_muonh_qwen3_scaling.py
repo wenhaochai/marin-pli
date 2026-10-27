@@ -347,6 +347,11 @@ if TPP < 20:
     raise ValueError(f"TPP={TPP}: 20 (the recipe) or more")
 if VOCAB_K and VOCAB_K < 1000 and VOCAB_K != 256:
     raise ValueError(f"VOCAB_K={VOCAB_K}: 256 (bytes, run tag -bytes) or a multiple of 1000 (tag -v<K/1000>k)")
+# VOCAB_SET=f<T> (owner popup 2026-10-27, "B 按频率选词表"): the 8K truncation of the Marin tokenizer plus every Marin token
+# seen at least T times in the repeated eighth (small_vocab_tokenizer.py build-freq); every other token is written with
+# its pieces under that vocabulary. Data, step count and evaluations as VOCAB_K; run tag -f<T>; plain runs only.
+VOCAB_SET = os.environ.get("VOCAB_SET", "")
+VOCAB_NAME = VOCAB_SET or (f"v{VOCAB_K}" if VOCAB_K else "")
 # VARIANT=cv: the Marin tokenizer with its input embedding (CV_SIDE=in), output head (out) or both composed from the rows of
 # its CV_K-token truncation (composed_vocab_qwen3.py; vocabulary Q4 and Q5). Run tag -cv<side><CV_K/1000>k.
 # CV_OUT_REDUCE=sum: an output row is the sum of its pieces' rows, not their mean (the mean caps a token's logit at its
@@ -456,7 +461,7 @@ _PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_b
 def _vocab_ratio(k: int) -> float:
     """Converted / original training tokens of fineweb-edu-10B for the K-token tokenizer (written by the conversion)."""
     import json
-    path = f"{_PREFIX}/tokenized/convert_v{k}.json"
+    path = f"{_PREFIX}/tokenized/convert_{VOCAB_SET or 'v' + str(k)}.json"
     if not os.path.exists(path):
         raise FileNotFoundError(f"{path} is missing: run scripts/della/convert_small_vocab.sbatch for K={k} first")
     return json.load(open(path))["fineweb-edu-10B"]["ratio"]
@@ -506,11 +511,11 @@ def _small_vocab_data(k: int, train_names, validation_names):
     components, weights = {}, {}
     for name in train_names:
         assert name == "fineweb-edu-10B", name
-        components[name], weights[name] = comp(f"{_PREFIX}/fineweb-edu-10B-v{k}/train"), 1.0
+        components[name], weights[name] = comp(f"{_PREFIX}/fineweb-edu-10B-{VOCAB_SET or 'v' + str(k)}/train"), 1.0
     for name in validation_names:   # paloma/<subset>-marin-tokenizer
         sub = name.split("/", 1)[1].rsplit("-marin-tokenizer", 1)[0]
-        components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-v{k}/{sub}/validation"), 0.0
-    return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/v{k}",
+        components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-{VOCAB_SET or 'v' + str(k)}/{sub}/validation"), 0.0
+    return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/{VOCAB_SET or 'v' + str(k)}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
 if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr") and VOCAB_K:
     raise ValueError(f"VARIANT={VARIANT} keeps the Marin tokenizer: unset VOCAB_K")
@@ -541,6 +546,8 @@ CVD_RATE_COUNT = int(os.environ.get("CVD_RATE_COUNT", "0"))
 # rare input rows (ids CV_K .. V-257) decay toward the mean of their CV_K-token pieces' rows at rate adam_lr * lambda
 # (DecayToPiecesMuonHConfig). Tag -dtp<lambda>-fp<p>.
 DTP = float(os.environ.get("DTP", "0"))
+if VOCAB_SET and (VOCAB_K or VARIANT != "baseline" or PASS_DATA or DTP or not VOCAB_SET.startswith("f")):
+    raise ValueError(f"VOCAB_SET={VOCAB_SET}: f<T>, plain runs only (no VOCAB_K, VARIANT, PASS_DATA or DTP)")
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", "cvdflood", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
@@ -571,7 +578,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if TPP != 20:   # before the vocabulary ratio: the same text, TPP/20 times as long
         s = dict(s, steps=round(s["steps"] * TPP / 20))
         eval_every = 1000 * max(1, round(TPP / 40))
-    if VOCAB_K:
+    if VOCAB_NAME:
         s = dict(s, steps=round(s["steps"] * _vocab_ratio(VOCAB_K)))   # fixed text: more steps for the same text
         # bytes (4.7x the steps): evaluate every round(ratio) x 1000 steps, about as often per text as the Marin
         # tokenizer's runs; ratios below 1.5 (64K-8K) keep 1000
@@ -651,6 +658,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += "-fh"
     if VOCAB_K:
         variant_tags += "-bytes" if VOCAB_K == 256 else f"-v{VOCAB_K // 1000}k"
+    elif VOCAB_SET:
+        variant_tags += f"-{VOCAB_SET}"
     if TPP != 20:
         variant_tags += f"-tpp{TPP:g}"
     if DATA_EPOCHS > 0:
@@ -935,7 +944,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     )
 
     def build_config(ctx: StepContext) -> TrainLmOnPodConfig:
-        if VOCAB_K:
+        if VOCAB_NAME:
             data = _small_vocab_data(VOCAB_K, [d.name for d in train], [d.name for d in validation])
         else:
             data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
