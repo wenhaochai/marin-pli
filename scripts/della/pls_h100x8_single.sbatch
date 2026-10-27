@@ -80,13 +80,14 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #                eval and checkpoint (w354); stops at 1e-9 (w355). Owner popup 2026-10-26 ~16:40: on for all pls jobs.
 export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1
 export PLS_FOLD_NORM=1 LEVANTER_NORM_GUARD=1e-3
-# HCMB: HC (ARCH=hc) at 4 sequences per microbatch, the CE kept on the xla streaming path by a b-tiled threshold above any
+# HCMB: HC (ARCH=hc) and mHC (ARCH=mhc) at 4 sequences per microbatch, the CE kept on the xla streaming path by a b-tiled threshold above any
 # shard (only the gradient summation order changes; eval also streams). 24.78 -> 19.37 s/step (w442, w444); train-step temp
 # 21.67 GiB against 17.27 at microbatch 1 (w461, w462), under half the ~64 GiB pool. Runs whose SINGLE sets their own CE
 # threshold or microbatch keep theirs. A smoke that fails at microbatch 4 is run again at microbatch 1, which then trains.
 HCMB=
 # HC with 8 streams: temp 24.86 GiB at microbatch 4 (w473).
-if [[ " $SINGLE " == *" ARCH=hc "* && " $SINGLE " != *" LEVANTER_CE_BTILED_MIN_BATCH="* && " $SINGLE " != *" PARAM_MAP_PDP="* ]]; then
+# mHC since 2026-10-27 (owner popup): 25.35 -> 19.67 s/step (w487, w488), temp 21.71 GiB (w489).
+if [[ ( " $SINGLE " == *" ARCH=hc "* || " $SINGLE " == *" ARCH=mhc "* ) && " $SINGLE " != *" LEVANTER_CE_BTILED_MIN_BATCH="* && " $SINGLE " != *" PARAM_MAP_PDP="* ]]; then
   HCMB="PARAM_MAP_PDP=4 LEVANTER_CE_BTILED_MIN_BATCH=1048576"
 fi
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
@@ -165,45 +166,63 @@ FAILDIR=logs/pair_failed; mkdir -p "$FAILDIR"
 # 0. already finished
 if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then echo "run $rid already finished: nothing to do"; exit 0; fi
 
-# 1. smoke copy
-slog=logs/slurm/${JNAME}_${JID}_smoke.log
-r=0
-# shellcheck disable=SC2086
-env $SINGLE $HCMB PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
-if [ $r -ne 0 ] && [ -n "$HCMB" ]; then
-  echo "smoke at microbatch 4 failed rc=$r $(date +%H:%M:%S): smoke and training at microbatch 1"
+# SINGLE_SMOKE_REUSE=1 (the default since 2026-10-27, owner popup; 0 turns it off): a resumed segment skips its smoke
+# when the code and the knobs equal those of this run's last
+# passed smoke: the key hashes the committed trees of lib/ and experiments/ (the training program; a docs or sbatch
+# commit leaves them unchanged), their uncommitted diff, the run's knobs (SINGLE, HCMB, GPU count) and the exported
+# LEVANTER_/PLS_/XLA_/... settings. A run that never passed a smoke here, or any change, smokes as before (each segment's
+# smoke cost 11-19 min of 4 GPUs, 2026-10-27).
+SMOKEDIR=logs/smoke_pass; mkdir -p "$SMOKEDIR"
+smoke_key() {
+  { git rev-parse HEAD:lib HEAD:experiments || true; git diff HEAD -- lib experiments || true; echo "$SINGLE|$HCMB|$NG"
+    env | grep -E '^(LEVANTER_|PLS_|XLA_|LOG_JAXPR=|CKPT_MIN=|EVAL_PDP=|ATTN_BACKEND=|DEPTH_|PARAM_MAP)' | sort || true; } 2>/dev/null | sha256sum | cut -c1-16
+}
+skey=$(smoke_key)
+if [ "${SINGLE_SMOKE_REUSE:-1}" = 1 ] && [ "$(cat "$SMOKEDIR/$rid.key" 2>/dev/null || true)" = "$skey" ]; then
+  echo "smoke skipped: same code and knobs as this run's last passed smoke (key $skey)"
+else
+  # 1. smoke copy
+  slog=logs/slurm/${JNAME}_${JID}_smoke.log
+  r=0
+  # shellcheck disable=SC2086
+  env $SINGLE $HCMB PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+  if [ $r -ne 0 ] && [ -n "$HCMB" ]; then
+    echo "smoke at microbatch 4 failed rc=$r $(date +%H:%M:%S): smoke and training at microbatch 1"
+    if [[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]]; then
+      rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
+    fi
+    HCMB=; r=0
+    # shellcheck disable=SC2086
+    env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+  fi
+  echo "smoke $smoke_id exited rc=$r $(date +%H:%M:%S)"
   if [[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]]; then
     rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
   fi
-  HCMB=; r=0
-  # shellcheck disable=SC2086
-  env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
-fi
-echo "smoke $smoke_id exited rc=$r $(date +%H:%M:%S)"
-if [[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]]; then
-  rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
-fi
-[ $r -eq 0 ] || { echo "job $JID: smoke failed rc=$r" > "$FAILDIR/$rid.fail"; echo "smoke failed: no training"; exit 4; }
-main=$(sed -n 's/.*levanter.eval eval loss: \([0-9.]*\).*/\1/p' "$slog" | tail -1)
-last=$(sed -n 's/.*per_layer_qwen3 eval\/L\([0-9]*\) loss \([0-9.]*\).*/\1 \2/p' "$slog" | sort -n | tail -1 | cut -d' ' -f2)
-gap=$(awk -v a="${main:-nan}" -v b="${last:-nan}" 'BEGIN { d = a - b; if (d < 0) d = -d; print (a == "nan" || b == "nan") ? "nan" : d }')
-echo "smoke: eval loss ${main:-?}, last readout ${last:-?}, gap $gap"
-if ! awk -v g="$gap" 'BEGIN { exit !(g != "nan" && g <= 0.005) }'; then
-  echo "job $JID: smoke gap $gap" > "$FAILDIR/$rid.fail"; echo "last readout differs from the main eval (or is missing): no training"; exit 5
-fi
-# Probe runs: the gap above compares two eval programs. The train step is a third program, and at 520m it read the frozen
-# head at 9.7 nats against eval 3.55 (15738658, 2026-10-21). So the train path's last readout (the frozen own head, on
-# training data, which sits below the eval loss: 1_2b 2.40 vs 3.34) must not exceed the eval loss by 0.5 nats or more.
-# 48-layer runs: the 8-GPU readouts went wrong before (pls_d48_g4_submit.sh), so they take the same check; trained from
-# scratch, the train loss at step 30 may sit a little above the eval, hence a 1.0-nat margin there.
-GATE=; [[ $SINGLE == *PROBE_FROM=* ]] && GATE=0.5; [[ " $SINGLE " == *" LAYERS=48 "* ]] && GATE=${GATE:-1.0}
-if [ -n "$GATE" ]; then
-  wsum=$(ls -td "$PWD"/wandb/*-"$smoke_id" /scratch/gpfs/GROUP/USER/wandb-runs/wandb/*-"$smoke_id" 2>/dev/null | head -1 || true)   # ls exits 1 when one of the two globs matches nothing (w15 died here silently)
-  tr_ev=$(python3 -c 'import json, sys; s = json.load(open(sys.argv[1] + "/files/wandb-summary.json")); k = max((k for k in s if k.startswith("train/pls/L")), key=lambda k: int(k[11:])); print(s[k], s["eval/loss"])' "$wsum" 2>/dev/null || true)
-  echo "smoke: train-path last readout and eval loss: ${tr_ev:-missing} ($wsum)"
-  if ! awk -v t="${tr_ev% *}" -v e="${tr_ev#* }" -v g="$GATE" 'BEGIN { exit !(t != "" && e != "" && t - e < g) }'; then
-    echo "job $JID: smoke train-path readout ${tr_ev:-missing}" > "$FAILDIR/$rid.fail"; echo "train-path last readout is off (or missing): no training"; exit 5
+  [ $r -eq 0 ] || { echo "job $JID: smoke failed rc=$r" > "$FAILDIR/$rid.fail"; echo "smoke failed: no training"; exit 4; }
+  main=$(sed -n 's/.*levanter.eval eval loss: \([0-9.]*\).*/\1/p' "$slog" | tail -1)
+  last=$(sed -n 's/.*per_layer_qwen3 eval\/L\([0-9]*\) loss \([0-9.]*\).*/\1 \2/p' "$slog" | sort -n | tail -1 | cut -d' ' -f2)
+  gap=$(awk -v a="${main:-nan}" -v b="${last:-nan}" 'BEGIN { d = a - b; if (d < 0) d = -d; print (a == "nan" || b == "nan") ? "nan" : d }')
+  echo "smoke: eval loss ${main:-?}, last readout ${last:-?}, gap $gap"
+  if ! awk -v g="$gap" 'BEGIN { exit !(g != "nan" && g <= 0.005) }'; then
+    echo "job $JID: smoke gap $gap" > "$FAILDIR/$rid.fail"; echo "last readout differs from the main eval (or is missing): no training"; exit 5
   fi
+  # Probe runs: the gap above compares two eval programs. The train step is a third program, and at 520m it read the frozen
+  # head at 9.7 nats against eval 3.55 (15738658, 2026-10-21). So the train path's last readout (the frozen own head, on
+  # training data, which sits below the eval loss: 1_2b 2.40 vs 3.34) must not exceed the eval loss by 0.5 nats or more.
+  # 48-layer runs: the 8-GPU readouts went wrong before (pls_d48_g4_submit.sh), so they take the same check; trained from
+  # scratch, the train loss at step 30 may sit a little above the eval, hence a 1.0-nat margin there.
+  GATE=; [[ $SINGLE == *PROBE_FROM=* ]] && GATE=0.5; [[ " $SINGLE " == *" LAYERS=48 "* ]] && GATE=${GATE:-1.0}
+  if [ -n "$GATE" ]; then
+    wsum=$(ls -td "$PWD"/wandb/*-"$smoke_id" /scratch/gpfs/GROUP/USER/wandb-runs/wandb/*-"$smoke_id" 2>/dev/null | head -1 || true)   # ls exits 1 when one of the two globs matches nothing (w15 died here silently)
+    tr_ev=$(python3 -c 'import json, sys; s = json.load(open(sys.argv[1] + "/files/wandb-summary.json")); k = max((k for k in s if k.startswith("train/pls/L")), key=lambda k: int(k[11:])); print(s[k], s["eval/loss"])' "$wsum" 2>/dev/null || true)
+    echo "smoke: train-path last readout and eval loss: ${tr_ev:-missing} ($wsum)"
+    if ! awk -v t="${tr_ev% *}" -v e="${tr_ev#* }" -v g="$GATE" 'BEGIN { exit !(t != "" && e != "" && t - e < g) }'; then
+      echo "job $JID: smoke train-path readout ${tr_ev:-missing}" > "$FAILDIR/$rid.fail"; echo "train-path last readout is off (or missing): no training"; exit 5
+    fi
+  fi
+  skey=$(smoke_key)   # HCMB may have fallen back to microbatch 1
+  echo "$skey" > "$SMOKEDIR/$rid.key"
 fi
 
 # 2. training

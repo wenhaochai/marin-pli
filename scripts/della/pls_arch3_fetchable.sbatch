@@ -52,6 +52,13 @@
 #                                2026-10-26 ~06:40: replaces the fa4 pair w261/w262 before it started)
 #   arch3-preln-fa4-{sep,probes} Pre-LN 48 layers with FA4 attention (owner popup 2026-10-26: validate FA4 before new pairs
 #                                use it: the cost must match the JAX-flash 0.089 / 0.092 (seeds 0 / 1) within seed noise)
+#   arch3-preln-{jax,fa4}rerun-probes  reruns of the Pre-LN ordinary model with probes, seed 0 (its init and data order),
+#                                on today's stack (CE side on, PLS_FOLD_NORM=0), with JAX flash or fa4thd attention
+#                                (2026-10-27): w334 (fa4thd) ends 0.005 above the JAX-flash seeds (2.9883 against 2.9832 /
+#                                2.9826) while its separate-heads twin does not move, and early traces cannot split it (two
+#                                runs of identical code already differ by +-0.02 at steps 20-300, wq w495). The CE side
+#                                moves gradients by 1e-6 to 1e-5 (w306), inside the GEMM-autotune spread of identical runs
+#                                (w205 vs w229), so the JAX rerun is a third control sample; RUN_TAG -rerun keeps run ids apart
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -83,6 +90,8 @@ case $DESIGN in
   arch3-hc8) S="$base LAYERS=48 PDP=4 ARCH=hc HC_STREAMS=8";;
   arch3-arblock24) S="$base LAYERS=48 PDP=2 ARCH=attnres_block AR_BLOCKS=24";;
   arch3-preln-fa4) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4";;
+  arch3-preln-jaxrerun) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_FOLD_NORM=0 RUN_TAG=-rerun";;
+  arch3-preln-fa4rerun) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4thd PLS_FOLD_NORM=0 RUN_TAG=-rerun";;
   arch3-preln-fa4thd) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4thd";;
   arch3-hc-newstack) S="$base LAYERS=48 PDP=4 ARCH=hc ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1";;
   arch3-hcrwsig) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RW=sigmoid";;
