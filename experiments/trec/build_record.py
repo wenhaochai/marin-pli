@@ -27,14 +27,19 @@ ROWS = [
          size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=["w465"], figs="1, 2, 3, 4"),
     dict(model="300m", run="muonh-qwen3-300m-della4xh100-s1-rerun", setup={"en": "Cosine to zero, lr 0.01", "zh": "cosine 降到零，lr 0.01"},
          size="300m", layers=12, steps=11444, batches=11444 + 512, jobs=["w465"], figs="1, 2, 3, 4, 5"),
-] + [   # scored by the vocab session's wq w438 for its page (192 training blocks and 16 unread ones); its cost is on that page
-    dict(model=None, run=f"muonh-qwen3-300m-della4xh100{tag}", setup=setup, size="300m", layers=12, steps=steps, batches=208, jobs=[], figs="5", external=True)
-    for tag, setup, steps in [
-        ("-rep8-s1", {"en": "Marin tokenizer, 8 passes over an eighth", "zh": "Marin tokenizer，一个八分之一子集读 8 遍"}, 11444),
-        ("-v8k-s1", {"en": "8K truncation, unique tokens", "zh": "8K 截短版，不重复 token"}, 15464),
-        ("-v8k-rep8-s1", {"en": "8K truncation, 8 passes over an eighth", "zh": "8K 截短版，一个八分之一子集读 8 遍"}, 15464),
-        ("-bytes", {"en": "Bytes, unique tokens", "zh": "字节，不重复 token"}, 54248),
-        ("-bytes-rep8", {"en": "Bytes, 8 passes over an eighth", "zh": "字节，一个八分之一子集读 8 遍"}, 54248)]]
+] + [   # scored by the vocab session's wq w438 and w457 for its page (192 training blocks and 16 unread ones); their cost is on that page
+    dict(model=None, run=f"muonh-qwen3-300m-della4xh100{tag}", setup={"en": f"{en}, seed {seed}", "zh": f"{zh}，种子 {seed}"}, size="300m", layers=12,
+         steps=steps, batches=208, jobs=[], figs="5", external=True)
+    for tag, en, zh, seed, steps in [
+        ("-rep8-s1", "Marin tokenizer, 8 passes over an eighth", "Marin tokenizer，一个八分之一子集读 8 遍", 1, 11444),
+        ("-v8k-s1", "8K truncation, unique tokens", "8K 截短版，不重复 token", 1, 15464),
+        ("-v8k-rep8-s1", "8K truncation, 8 passes over an eighth", "8K 截短版，一个八分之一子集读 8 遍", 1, 15464),
+        ("-v8k", "8K truncation, unique tokens", "8K 截短版，不重复 token", 0, 15464),
+        ("-v8k-rep8", "8K truncation, 8 passes over an eighth", "8K 截短版，一个八分之一子集读 8 遍", 0, 15464),
+        ("-bytes", "Bytes, unique tokens", "字节，不重复 token", 0, 54248),
+        ("-bytes-rep8", "Bytes, 8 passes over an eighth", "字节，一个八分之一子集读 8 遍", 0, 54248),
+        ("-bytes-s1", "Bytes, unique tokens", "字节，不重复 token", 1, 54248),
+        ("-bytes-rep8-s1", "Bytes, 8 passes over an eighth", "字节，一个八分之一子集读 8 遍", 1, 54248)]]
 OTHER = ["w439", "w447"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed)
 CODE = "https://github.com/wenhaochai/marin-pli/tree/3b4449884c42b650d86969091b92e7687d751489"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-27
 

@@ -186,62 +186,71 @@ def fig_init():
             "panels": panels, "pred": fits}
 
 
-W438 = "/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_trec"   # the vocab session's wq w438, read-only
+W438 = "/scratch/gpfs/GROUP/USER/project/marin/logs/vocab_trec"   # the vocab session's wq w438 and w457, read-only
 BYTES = "/scratch/gpfs/GROUP/USER/tmp_plots/vocab/trec/trec_bytes_{}.npz"   # exact UTF-8 bytes of each target token
-TOKENIZERS = [("300m", "128K", "-s1-rerun", "-rep8-s1", 128000, "#5F6368"), ("300m-8k", "8K", "-v8k-s1", "-v8k-rep8-s1", 8000, "#681DA8"),
-              ("300m-bytes", {"en": "Bytes", "zh": "字节"}, "-bytes", "-bytes-rep8", 256, "#B80672")]   # the vocab page's colours
+TOKENIZERS = [("300m", "128K", [("-s1-rerun", "-rep8-s1")], 128000, "#5F6368"),   # 128K seed 0 has no unique-token run
+              ("300m-8k", "8K", [("-v8k-s1", "-v8k-rep8-s1"), ("-v8k", "-v8k-rep8")], 8000, "#681DA8"),
+              ("300m-bytes", {"en": "Bytes", "zh": "字节"}, [("-bytes", "-bytes-rep8"), ("-bytes-s1", "-bytes-rep8-s1")], 256, "#B80672")]
+# the vocab page's colours; (unique, 8-pass) checkpoint pairs per training seed, the second seed scored by wq w457 (owner, 2026-10-27)
+
+
+def tokenizer_curve(model, u, r, k):
+    """d(t) of one (unique, 8-pass) pair: (block-centre training fraction, smoothed difference minus the unread level)."""
+    P = "muonh-qwen3-300m-della4xh100"
+    a, b = np.load(f"{W438}/{P}{u}.npz"), np.load(f"{W438}/{P}{r}.npz")
+    byf = np.load(BYTES.format(k))
+    by = byf["seq_bytes"]
+    steps, T = a["steps"], int(a["total_steps"])
+    assert np.array_equal(steps, b["steps"]) and np.array_equal(steps, byf["steps"]) and T == predict.TOTAL[model], (model, T)
+    bpb = lambda z: z["seq_loss"].sum(1) / np.log(2) / by.sum(1)
+    d = bpb(a) - bpb(b)
+    tr = steps < T
+    unread = (steps >= T) & (steps != steps[steps >= T].min())   # the first tail block shares mixture block with step T-1
+    x = steps[tr] / T
+    sm = np.convolve(d[tr], np.ones(16) / 16, mode="valid") - d[unread].mean()
+    xm = np.convolve(x, np.ones(16) / 16, mode="valid")
+    fresh = xm > 0.125 + 8 / len(x)
+    return xm[fresh], sm[fresh]
 
 
 def fig_tokenizers():
     """The vocab session's recipe (tmp_plots/vocab/trec/trec_check_pred.py): on 192 blocks spread over each unique run,
     d(t) = bits per byte of the unique model minus that of its 8-pass partner, which never read the blocks after the
     first eighth, so batch difficulty cancels there; a valid moving mean over 16 sampled blocks, kept after the subset;
-    minus d on the unread tail, the level of a batch the unique model has forgotten. The low points come from the
-    momentum reading, 1 - sqrt(c) t^m, with m fitted to the 128K curve and kept for 8K and bytes."""
-    P = "muonh-qwen3-300m-della4xh100"
+    minus d on the unread tail, the level of a batch the unique model has forgotten. One line per training seed (data
+    seed 42 for all, so every seed scores the same blocks). The low points come from the momentum reading,
+    1 - sqrt(c) t^m, with m fitted to the 128K curve and kept for 8K and bytes; each ring sits on the seeds' mean curve."""
     curves, lows = [], []
-    for model, label, u, r, k, col in TOKENIZERS:
-        a, b = np.load(f"{W438}/{P}{u}.npz"), np.load(f"{W438}/{P}{r}.npz")
-        by = np.load(BYTES.format(k))["seq_bytes"]
-        steps, T = a["steps"], int(a["total_steps"])
-        assert np.array_equal(steps, b["steps"]) and T == predict.TOTAL[model], (model, T)
-        bpb = lambda z: z["seq_loss"].sum(1) / np.log(2) / by.sum(1)
-        d = bpb(a) - bpb(b)
-        tr = steps < T
-        unread = (steps >= T) & (steps != steps[steps >= T].min())   # the first tail block shares mixture block with step T-1
-        x = steps[tr] / T
-        sm = np.convolve(d[tr], np.ones(16) / 16, mode="valid") - d[unread].mean()
-        xm = np.convolve(x, np.ones(16) / 16, mode="valid")
-        fresh = xm > 0.125 + 8 / len(x)
-        curves.append((model, label, col, xm[fresh], sm[fresh]))
+    for model, label, pairs, k, col in TOKENIZERS:
+        curves.append((model, col, [(u, *tokenizer_curve(model, u, r, k)) for u, r in pairs]))
     # m from the 128K curve: the prediction's shape against the measured one on the same t
     m128 = None
-    for model, label, col, xm, sm in curves:
+    for model, col, seeds in curves:
         c = predict.coefficients(predict.lr_schedule(model), "momentum", model)
         T = len(c)
+        xm = seeds[0][1]
+        mean = np.mean([sm for _, _, sm in seeds], axis=0)
         if m128 is None:
             idx = np.clip((xm * T).round().astype(int) - 1, 0, T - 1)
             ms = np.arange(0.0, 20.01, 0.1)
-            rs = [predict.pearson(predict.predicted(c, m)[idx], sm) for m in ms]
+            rs = [predict.pearson(predict.predicted(c, m)[idx], mean) for m in ms]
             m128 = float(ms[int(np.argmax(rs))])
         v = predict.valley(c, m128)
-        y = float(np.interp(v, xm, sm))
-        lows.append((model, col, v, y))
+        lows.append((model, col, v, float(np.interp(v, xm, mean))))
     marks = [{"type": "line", "pts": [[round(float(p), 4), round(float(q), 5)] for p, q in zip(xm, sm)], "color": col, "width": 1.8, "alpha": 0.85}
-             for _, _, col, xm, sm in curves]
+             for _, col, seeds in curves for _, xm, sm in seeds]
     marks += [{"type": "rings", "pts": [[round(v, 4), round(y, 5)]], "color": col} for _, col, v, y in lows]
-    lo = min(float(sm.min()) for *_, sm in curves)
+    lo = min(float(sm.min()) for _, _, seeds in curves for _, _, sm in seeds)
     step = 0.01
     ylo = np.floor(lo * 1.15 / step) * step
     yhi = 0.01
     panel = {"xlim": [0, 1], "ylim": [round(ylo, 4), yhi], "xticks": XTICKS, "yticks": ticks(ylo, yhi, step, 2), "marks": marks}
-    meas = {model: (float(xm[np.argmin(sm)]), float(sm.min())) for model, _, _, xm, sm in curves}
+    meas = {u: [round(float(xm[np.argmin(sm)]), 3), round(float(sm.min()), 4)] for _, _, seeds in curves for u, xm, sm in seeds}
     return {"title": {"en": "TRECs of three tokenizers at 300m", "zh": "300m 上三种 tokenizer 的 TREC"},
             "quantity": {"en": "Loss minus unread level (bits per byte)", "zh": "损失减去未读水平（每字节比特数）"}, "xlabel": XLABEL,
             "cols": 1, "height": 240,
-            "legend": [[lab, col, "line"] for _, lab, _, _, _, col in TOKENIZERS] + [[{"en": "Predicted low point", "zh": "预测的最低点"}, "#5F6368", "ring"]],
-            "panels": [panel], "fit": {"m_from_128k": m128, "predicted_low": {m: round(v, 3) for m, _, v, _ in lows},
-                                       "measured_low": {m: [round(x, 3), round(y, 4)] for m, (x, y) in meas.items()}}}
+            "legend": [[lab, col, "line"] for _, lab, _, _, col in TOKENIZERS] + [[{"en": "Predicted low point", "zh": "预测的最低点"}, "#5F6368", "ring"]],
+            "panels": [panel], "fit": {"m_from_128k": m128, "predicted_low": {m: round(v, 3) for m, _, v, _ in lows}, "measured_low": meas}}
 
 
 def main():
