@@ -800,6 +800,9 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 | lse kernel v3（`LEVANTER_CE_LSE_MGPU=1`，Pallas Mosaic GPU，3 级流水，w385/w386/w440） | Pre-LN 10.06 → 9.83 s/步（−2.3%），HC b-tiled 10.12 → 9.86（−2.6%）；梯度与 Triton kernel 相对差 1.2e-6 到 1.5e-5，两者相对 f32 都是 2e-3 到 1.3e-2；重跑逐位相同 | 候选，等下一次弹窗 |
 
 - profile（w239，Pre-LN d48，开 A1，关 command buffer）：每步 GPU 时间里读出头和 CE 占 68%（矩阵乘 4.09 s，lse 两次规约 1.70 s，A1 的 dlogits 一遍 1.02 s），attention 占 20%（2.05 s）。
+- profile（w417，HC 新路径，每步 10.41 s）：读出头和 CE 52%（矩阵乘 2.16 s，Triton lse 2.02 s，logits 转换 1.17 s），collectives 16%（每个 microbatch 里每层权重梯度各做一次 bf16 all-reduce：HC 每步 32 个 microbatch，约 1,500 次），HC 的流混合 14%。
+- profile（w418，AttnRes 新路径，每步 19.26 s）：读出头和 CE 29%；remat 重算 23%（深度注意力对全部 97 个来源槽算分数，反向又算两遍）；XLA 每层把整个来源缓冲区 bf16[97,1,4096,512]（407 MB）拷贝 4 次，一步 1.64 s；反向的 DUS scatter-add 1.10 s；collectives 10%。根本修法：反向用最终缓冲区加掩码代替每层保存的缓冲区（被掩码的槽权重正好是 0，前向逐位不变），需要改 AttnRes 的反向结构，记为待办。
+- microbatch（HC，生产配置，流式 CE 不变，只改求和顺序）：每个 microbatch 1 条序列 24.78 s/步（w442），2 条 21.09（−14.9%，w443），4 条 19.37（−21.8%，w444）。4 条以前因临时缓冲区 32.9 GiB 在第 257 步碎片 OOM；内存测试 w459–w462 在排队。
 - det 轮的教训：两次完全相同的 run 也不逐位一致（GEMM 自动调优按计时选算法，run 分成“调优类”）；判断一个开关要和两个基线比，看是否在两次基线的差别以内（速度计划的 G4），或固定调优（`--xla_gpu_autotune_level=0`）。
 
 ## 速度：新组合上线（2026-10-26）
