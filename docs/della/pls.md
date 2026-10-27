@@ -803,6 +803,7 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 - profile（w417，HC 新路径，每步 10.41 s）：读出头和 CE 52%（矩阵乘 2.16 s，Triton lse 2.02 s，logits 转换 1.17 s），collectives 16%（每个 microbatch 里每层权重梯度各做一次 bf16 all-reduce：HC 每步 32 个 microbatch，约 1,500 次），HC 的流混合 14%。
 - profile（w418，AttnRes 新路径，每步 19.26 s）：读出头和 CE 29%；remat 重算 23%（深度注意力对全部 97 个来源槽算分数，反向又算两遍）；XLA 每层把整个来源缓冲区 bf16[97,1,4096,512]（407 MB）拷贝 4 次，一步 1.64 s；反向的 DUS scatter-add 1.10 s；collectives 10%。根本修法：反向用最终缓冲区加掩码代替每层保存的缓冲区（被掩码的槽权重正好是 0，前向逐位不变），需要改 AttnRes 的反向结构，记为待办。
 - microbatch（HC，生产配置，流式 CE 不变，只改求和顺序）：每个 microbatch 1 条序列 24.78 s/步（w442），2 条 21.09（−14.9%，w443），4 条 19.37（−21.8%，w444）。4 条以前因临时缓冲区 32.9 GiB 在第 257 步碎片 OOM；内存测试 w459–w462 在排队。
+- AttnRes 相反：1 条 33.99 s/步（w445），2 条 37.97（+11.7%，w446）。AttnRes 的开销是来源缓冲区的读写和整块拷贝，随 token 数增长，不是每个 microbatch 的固定开销；AttnRes 保持 1 条。
 - det 轮的教训：两次完全相同的 run 也不逐位一致（GEMM 自动调优按计时选算法，run 分成“调优类”）；判断一个开关要和两个基线比，看是否在两次基线的差别以内（速度计划的 G4），或固定调优（`--xla_gpu_autotune_level=0`）。
 
 ## 速度：新组合上线（2026-10-26）
