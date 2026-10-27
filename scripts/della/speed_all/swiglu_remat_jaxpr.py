@@ -1,5 +1,7 @@
 """Where the [N, 2F] forward GEMM of LlamaMlp's fused path sits in the remat'd gradient's jaxpr (CPU): the jaxpr goes
 to tmp/speed_wt/profiles/swiglu_remat_fused.jaxpr.txt and the enclosing primitives of each GEMM are printed."""
+import os
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +16,7 @@ mlp = jax.tree.map(lambda a: a.astype(jnp.bfloat16) if eqx.is_inexact_array(a) e
 x = hax.random.normal(jax.random.PRNGKey(1), (Batch, Pos, Embed)).astype(jnp.bfloat16)
 POLICY = jax.checkpoint_policies.save_only_these_names("mlp_gu", "mlp_gate", "mlp_up", "mlp_out")
 params, static = eqx.partition(mlp, eqx.is_inexact_array)
-L._SWIGLU_FUSED, L._SWIGLU_VJP = True, False
+os.environ["LEVANTER_SWIGLU_FUSED"], L._SWIGLU_VJP = "1", False
 
 
 def loss(p, xa):

@@ -293,7 +293,7 @@ class LlamaMlp(eqx.Module):
     @named_call
     def __call__(self, x: NamedArray, *, key=None) -> NamedArray:
         k_gate, k_up, k_down = maybe_rng_split(key, 3)
-        if (_SWIGLU_FUSED and self.act in (hnn.silu, hnn.swish)
+        if (_swiglu_fused() and self.act in (hnn.silu, hnn.swish)
                 and self.gate_proj.bias is None and self.up_proj.bias is None and self.down_proj.bias is None):
             Embed, Mlp = self.gate_proj.In, self.gate_proj.Out
             wg = (self.gate_proj.weight * self.gate_proj.reparam.active_scale).rearrange((Embed, Mlp)).array
@@ -341,7 +341,8 @@ def _act_mul_down_bwd(act, In, dot_general, residuals, d_out):
     return d_gate, d_up, d_w
 
 
-# LEVANTER_SWIGLU_FUSED=1 (speed test, 2026-10-27): the gate and up projections and silu(gate) * up as one Mosaic GPU GEMM
+# LEVANTER_SWIGLU_FUSED=1 (speed, owner popup 2026-10-27 ~00:00 "设为默认，不重跑"; the 300m launcher sets it wherever its
+# remat policy saves mlp_gu and mlp_out): the gate and up projections and silu(gate) * up as one Mosaic GPU GEMM
 # per device (kernels/pallas/swiglu_mgpu.py: gate and up weights concatenated with their columns interleaved in blocks of
 # _SWIGLU_BLOCK, the product formed in the GEMM's epilogue), so the forward pass no longer reads gate and up back for the
 # product (8.2 ms per 128K step, profile w458). The backward pass runs d_h = d_out @ w_down.T as a second Mosaic GPU GEMM
@@ -349,7 +350,9 @@ def _act_mul_down_bwd(act, In, dot_general, residuals, d_out):
 # and h, so d_h never reaches memory (XLA: 3.16 ms per layer, kernel 2.09, w472), then one GEMM each for d_x, the
 # concatenated weights' gradient and down_proj's. Silu, no biases; off the GPU (tests) the same custom_vjp on XLA's ops.
 # Needs REMAT fmlpo or fmlpoa (mlp_gu and mlp_out saved), or the backward pass runs the forward kernel again.
-_SWIGLU_FUSED = os.environ.get("LEVANTER_SWIGLU_FUSED", "0") == "1"
+def _swiglu_fused() -> bool:
+    """LEVANTER_SWIGLU_FUSED, read when the MLP is traced (not at import), so a launcher may set it after importing levanter."""
+    return os.environ.get("LEVANTER_SWIGLU_FUSED", "0") == "1"
 _SWIGLU_BLOCK = 64
 
 
