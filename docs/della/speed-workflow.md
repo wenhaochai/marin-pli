@@ -314,6 +314,23 @@ block, bf16 outputs): forward 2.12 -> 1.26 ms and d_x 2.07 -> 1.14 ms at 128K (1
 plus 0.82 ms to transpose P, since Hopper fp8 GEMMs take both operands K-major); 64K and 32K the same ratios. An fp8 head
 would save ~25 ms per 128K step (~5%) and changes numerics; not pursued without the owner.
 
+**Fused SwiGLU, both passes (LEVANTER_SWIGLU_FUSED=1, 2026-10-27 00:00; async-hooks da76a57445).** LlamaMlp runs gate and
+up as one Mosaic GPU GEMM with the product in its epilogue (interleaved weights; the saved value is one array, mlp_gu)
+and the backward pass's d_h = d_out @ w_down.T as a second Mosaic GPU GEMM whose epilogue reads gate and up by TMA and
+writes the interleaved d_gate / d_up and h, so d_h never reaches memory (kernels/pallas/swiglu_mgpu.py; forward config
+m128wgn4, backward m128wgm3; 64 x 256 tiles were no faster, w477). One MLP forward + backward at the 300m shape: 9.28 ->
+8.42 ms (w472). 4 H100s, 120 steps with full Paloma evals and checkpoints every 20 (prodnow = the production state,
+prodswf2 = the same plus the flag), median ms per step: 128K 459 -> 440 (-4.1%, w474), 8K 336 -> 319 (-5.1%, w475); train
+loss per step within noise of the same job's baseline (mean +0.0015 / +0.0002 nats, last 10 steps +0.0013 / +0.0034;
+two prodnow runs of the same code end 0.005 apart and differ by 0.035 in eval loss at step 120, w471 / w475); peak memory
+unchanged. The forward kernel alone gave -1.1% / -0.9% (w470 / w471). Kernel time per step (profile w476): 128K 448.7 ->
+433.3 ms, 8K 330.3 -> 311.8: MLP -4.5 / -4.9 ms, and the layer-scan copies 17.2 -> 5.8 / 6.0 ms, because the saved gu is
+now an output with no other user, so the kernel writes it into the scan's stack in place (the two [12, 32, 4096, 2688]
+dynamic-update-slice fusions of gate and up are gone from the HLO). Not bitwise, and more precise: rms error against f32
+of one MLP's output and gradients 4.5-4.9e-3 on the production path, 3.4-3.5e-3 with both kernels (w477). It needs a
+remat policy that saves mlp_gu and mlp_out (fmlpo, fmlpoa); under flash or fgate the backward pass would run the forward
+kernel again.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
