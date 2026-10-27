@@ -331,6 +331,12 @@ of one MLP's output and gradients 4.5-4.9e-3 on the production path, 3.4-3.5e-3 
 remat policy that saves mlp_gu and mlp_out (fmlpo, fmlpoa); under flash or fgate the backward pass would run the forward
 kernel again.
 
+**Adopted (owner popup 2026-10-27 ~00:15, "设为默认，不重跑").** The launcher (della_muonh_qwen3_scaling.py) sets
+LEVANTER_SWIGLU_FUSED=1 wherever REMAT is fmlpo or fmlpoa (300m up to SEQ_LEN 4096), so smokes and runs take the same
+path; LlamaMlp reads the flag when it is traced. LEVANTER_SWIGLU_FUSED=0 turns it off; charwin runs (SEQ_LEN 4480 / 5504,
+fgate) are not affected. Runs that start after the merge into vocab-overfitting are not bitwise comparable to earlier
+ones; the owner chose no baseline reruns. A/B arm prodold keeps the state before.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |

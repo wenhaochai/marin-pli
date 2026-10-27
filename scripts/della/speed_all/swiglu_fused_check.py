@@ -3,6 +3,8 @@ paths (2026-10-27): loss and gradients directly and under a checkpoint policy th
 mlp_out, the gradients against an f32 reference, and how many forward GEMM equations ([N, 2F] or [B, S, F] outputs) the
 gradient's jaxpr holds (the policy keeps the saved values when the remat'd gradient holds as many as the plain one).
 Every mode traces fresh closures: JAX caches traces by function, and the mode is a module global it does not see."""
+import os
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +25,7 @@ params, static = eqx.partition(mlp, eqx.is_inexact_array)
 
 def run(mode: str, remat: bool, model_params):
     L._SWIGLU_VJP = mode == "vjp"
-    L._SWIGLU_FUSED = mode == "fused"
+    os.environ["LEVANTER_SWIGLU_FUSED"] = "1" if mode == "fused" else "0"
     dtype = jax.tree.leaves(model_params)[0].dtype
 
     def loss(p, xa):  # a fresh closure per call, so no trace of another mode is reused

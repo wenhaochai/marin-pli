@@ -157,6 +157,15 @@ if SEQ_LEN % 1024 and FLASH_BLOCK is None:
 REMAT = os.environ.get("REMAT", ("fmlpo" if SEQ_LEN <= 4096 else "fgate") if os.environ.get("SIZE", "130m") == "300m" else "flash")
 if REMAT not in ("full", "flash", "none", "dots", "fdots", "fproj", "fgate", "fmlp", "fmlpo", "fmlpoa"):
     raise ValueError(f"REMAT={REMAT}: full | flash | none | dots | fdots | fproj | fgate | fmlp | fmlpo | fmlpoa")
+# LEVANTER_SWIGLU_FUSED (speed, owner popup 2026-10-27 ~00:00 "设为默认，不重跑"): LlamaMlp's SwiGLU as two Mosaic GPU kernels
+# (levanter kernels/pallas/swiglu_mgpu.py: gate, up and their product in one GEMM; the backward d_h GEMM with the SwiGLU
+# backward in its epilogue), on by default exactly where the remat policy saves its mlp_gu and mlp_out (fmlpo, fmlpoa:
+# 300m up to SEQ_LEN 4096); under any other policy the backward pass would run the forward kernel again. 4 H100s, 120 steps
+# with full evals and checkpoints: 128K 459 -> 440 ms per step (w474), 8K 336 -> 319 (w475); loss within noise; more
+# precise against f32 (rms error 4.5-4.9e-3 -> 3.4-3.5e-3, w477), not bitwise: runs that start after 2026-10-27 ~00:20 are
+# not bitwise comparable to earlier ones. LEVANTER_SWIGLU_FUSED=0 turns it off.
+if REMAT in ("fmlpo", "fmlpoa"):
+    os.environ.setdefault("LEVANTER_SWIGLU_FUSED", "1")
 
 
 class _DotsCheckpointPolicy(ScanCheckpointPolicy):
