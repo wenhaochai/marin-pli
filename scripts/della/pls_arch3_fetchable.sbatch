@@ -59,6 +59,11 @@
 #                                runs of identical code already differ by +-0.02 at steps 20-300, wq w495). The CE side
 #                                moves gradients by 1e-6 to 1e-5 (w306), inside the GEMM-autotune spread of identical runs
 #                                (w205 vs w229), so the JAX rerun is a third control sample; RUN_TAG -rerun keeps run ids apart
+#   arch3-preln-off{50,80}-sep, arch3-hc-off80-sep  separate heads whose intermediate losses stop at 50% / 80% of training
+#                                (PLS_OFF=2480 / 3967, a switch; the readouts are skipped after it; owner popup 2026-10-27):
+#                                does the separate-heads cost at the last layer stay once the intermediate losses stop?
+#                                Controls: the seed-0 separate-heads and probes runs of each design. Pre-flight: wq
+#                                pls-off-test (PLS_OFF=15 over 40 steps with a mid eval and checkpoint)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -92,6 +97,9 @@ case $DESIGN in
   arch3-preln-fa4) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4";;
   arch3-preln-jaxrerun) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_FOLD_NORM=0 RUN_TAG=-rerun";;
   arch3-preln-fa4rerun) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4thd PLS_FOLD_NORM=0 RUN_TAG=-rerun";;
+  arch3-preln-off50) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_OFF=2480";;
+  arch3-preln-off80) S="$base LAYERS=48 PDP=4 ARCH=preln PLS_OFF=3967";;
+  arch3-hc-off80) S="$base LAYERS=48 PDP=4 ARCH=hc PLS_OFF=3967";;
   arch3-preln-fa4thd) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4thd";;
   arch3-hc-newstack) S="$base LAYERS=48 PDP=4 ARCH=hc ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1";;
   arch3-hcrwsig) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RW=sigmoid";;
