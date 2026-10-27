@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from jax.ad_checkpoint import checkpoint_name
+from jax.sharding import PartitionSpec
 from jaxtyping import PRNGKeyArray
 
 import haliax as hax
@@ -19,13 +20,14 @@ import haliax.nn as hnn
 from haliax import Axis, AxisSpec, NamedArray
 from haliax.jax_utils import maybe_rng_split, named_call, shaped_rng_split
 from haliax.nn.scan import BlockFoldable, BlockSeq, ScanCheckpointPolicy, Stacked
+from haliax.partitioning import shard_map
 from haliax.state_dict import ModuleWithStateDictSerialization
 
 from levanter.compat.hf_checkpoints import HFCheckpointConverter, HFCompatConfig
 from levanter.compat.hf_config import hf_config_from_kwargs, hf_rope_config
 from levanter.inference.page_table import PageBatchInfo, PageTableSpec
 from levanter.layers import LayerNormConfigBase, RmsNormConfig
-from levanter.layers.attention import Attention, AttentionBackend, AttentionConfig, AttentionMask
+from levanter.layers.attention import Attention, AttentionBackend, AttentionConfig, AttentionMask, _fa4_flat_physical_axes
 from levanter.layers.kv_cache import KvPageCache, ListCache
 from levanter.layers.rotary import DefaultRotaryEmbeddingsConfig, RotaryEmbeddingsConfig
 from levanter.models.lm_model import LmConfig, LmHeadModel, resize_embeddings_and_lm_head
@@ -291,6 +293,16 @@ class LlamaMlp(eqx.Module):
     @named_call
     def __call__(self, x: NamedArray, *, key=None) -> NamedArray:
         k_gate, k_up, k_down = maybe_rng_split(key, 3)
+        if (_SWIGLU_FUSED and self.act in (hnn.silu, hnn.swish)
+                and self.gate_proj.bias is None and self.up_proj.bias is None and self.down_proj.bias is None):
+            Embed, Mlp = self.gate_proj.In, self.gate_proj.Out
+            wg = (self.gate_proj.weight * self.gate_proj.reparam.active_scale).rearrange((Embed, Mlp)).array
+            wu = (self.up_proj.weight * self.up_proj.reparam.active_scale).rearrange((Embed, Mlp)).array
+            wd = (self.down_proj.weight * self.down_proj.reparam.active_scale).rearrange((Mlp, Embed)).array
+            rows = tuple(ax for ax in x.axes if ax.name != Embed.name)
+            x2 = x.rearrange((*rows, Embed)).array.reshape(-1, Embed.size)
+            out = _fused_swiglu_mlp(x2, _swiglu_interleave(wg, wu), wd, _fa4_flat_physical_axes(rows))
+            return hax.auto_sharded(hax.named(out.reshape(*(ax.size for ax in rows), Embed.size), (*rows, Embed)))
         if _SWIGLU_VJP and self.down_proj.bias is None:
             gate = _checkpoint_name(self.gate_proj(x, key=k_gate), "mlp_gate")
             up = _checkpoint_name(self.up_proj(x, key=k_up), "mlp_up")
@@ -327,6 +339,73 @@ def _act_mul_down_bwd(act, In, dot_general, residuals, d_out):
     d_hidden, d_w = down_vjp(d_out)
     d_gate, d_up = act_mul_vjp(d_hidden)
     return d_gate, d_up, d_w
+
+
+# LEVANTER_SWIGLU_FUSED=1 (speed test, 2026-10-27): the gate and up projections and silu(gate) * up as one Mosaic GPU GEMM
+# per device (kernels/pallas/swiglu_mgpu.py: gate and up weights concatenated with their columns interleaved in blocks of
+# _SWIGLU_BLOCK, the product formed in the GEMM's epilogue), so the forward pass no longer reads gate and up back for the
+# product (8.2 ms per 128K step, profile w458). The backward pass is XLA's: one elementwise pass from the saved gate and
+# up (one interleaved array named mlp_gu) and d_h to the interleaved d_gate/d_up and h, then one GEMM each for d_x, the
+# concatenated weights' gradient and down_proj's. Silu, no biases; off the GPU (tests) the same custom_vjp on XLA's GEMM.
+_SWIGLU_FUSED = os.environ.get("LEVANTER_SWIGLU_FUSED", "0") == "1"
+_SWIGLU_BLOCK = 64
+
+
+def _swiglu_interleave(wg: jax.Array, wu: jax.Array) -> jax.Array:
+    """[E, F] gate and up weights -> [E, 2F], columns [g_0 | u_0 | g_1 | u_1 ...] in blocks of _SWIGLU_BLOCK."""
+    e, f = wg.shape
+    b = _SWIGLU_BLOCK
+    return jnp.stack([wg.reshape(e, f // b, b), wu.reshape(e, f // b, b)], axis=2).reshape(e, 2 * f)
+
+
+def _swiglu_gu_h(x2: jax.Array, w_cat: jax.Array, row_spec) -> tuple[jax.Array, jax.Array]:
+    """gu = x2 @ w_cat [N, 2F] (interleaved) and h = silu(gate) * up [N, F]: the Mosaic GPU kernel per device on the GPU
+    when the local shapes fit it, XLA otherwise."""
+
+    def local(x_loc, w):
+        if jax.default_backend() == "gpu" and x_loc.dtype == jnp.bfloat16 and w.dtype == jnp.bfloat16:
+            from levanter.kernels.pallas import swiglu_mgpu  # noqa: PLC0415  # Mosaic GPU, imported on the GPU only
+
+            assert swiglu_mgpu.BLOCK == _SWIGLU_BLOCK, (swiglu_mgpu.BLOCK, _SWIGLU_BLOCK)
+            if swiglu_mgpu.supported(x_loc.shape[0], x_loc.shape[1], w.shape[1]):
+                return swiglu_mgpu.swiglu_fwd_mgpu(x_loc, w)
+        gu = x_loc @ w
+        n, two_f = gu.shape
+        gu4 = gu.reshape(n, two_f // (2 * _SWIGLU_BLOCK), 2, _SWIGLU_BLOCK)
+        return gu, (jax.nn.silu(gu4[:, :, 0]) * gu4[:, :, 1]).reshape(n, two_f // 2)
+
+    mesh = hax.partitioning._get_mesh()
+    if mesh is None or mesh.empty:
+        return local(x2, w_cat)
+    spec = PartitionSpec(row_spec, None)
+    return shard_map(local, mesh=mesh, in_specs=(spec, PartitionSpec(None, None)), out_specs=(spec, spec),
+                     check_rep=False)(x2, w_cat)
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(3,))
+def _fused_swiglu_mlp(x2: jax.Array, w_cat: jax.Array, w_down: jax.Array, row_spec) -> jax.Array:
+    _, h = _swiglu_gu_h(x2, w_cat, row_spec)
+    return h @ w_down
+
+
+def _fused_swiglu_mlp_fwd(x2, w_cat, w_down, row_spec):
+    gu, h = _swiglu_gu_h(x2, w_cat, row_spec)
+    gu = checkpoint_name(gu, "mlp_gu")
+    return h @ w_down, (x2, gu, w_cat, w_down)
+
+
+def _fused_swiglu_mlp_bwd(row_spec, residuals, d_out):
+    x2, gu, w_cat, w_down = residuals
+    n, two_f = gu.shape
+    d_h = (d_out @ w_down.T).reshape(n, two_f // (2 * _SWIGLU_BLOCK), _SWIGLU_BLOCK)
+    gu4 = gu.reshape(n, two_f // (2 * _SWIGLU_BLOCK), 2, _SWIGLU_BLOCK)
+    h, act_mul_vjp = jax.vjp(lambda g, u: jax.nn.silu(g) * u, gu4[:, :, 0], gu4[:, :, 1])
+    d_g, d_u = act_mul_vjp(d_h)
+    d_gu = jnp.stack([d_g, d_u], axis=2).reshape(n, two_f)
+    return d_gu @ w_cat.T, x2.T @ d_gu, h.reshape(n, two_f // 2).T @ d_out
+
+
+_fused_swiglu_mlp.defvjp(_fused_swiglu_mlp_fwd, _fused_swiglu_mlp_bwd)
 
 
 _act_mul_down.defvjp(_act_mul_down_fwd, _act_mul_down_bwd)
