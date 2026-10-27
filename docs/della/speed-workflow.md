@@ -299,6 +299,21 @@ explicit buffers in a custom_vjp over the layer stack let the GEMMs write in pla
 GiB temporary at 128K and 61 GiB at 8K, out of memory in w357/w358); (2) the two SwiGLU passes (25 ms) into GEMM
 epilogues, ~11 ms; (3) the head's forward at cuBLAS speed, ~12 ms at 128K. Not exact: an fp8 head (fp8_head_bench.py, w468).
 
+**Saved-activation copies, fused SwiGLU forward, fp8 head (one H100 each, 2026-10-26 23:33).** scan_save_bench (w468; 12
+SwiGLU layers at the per-device 300m shape, forward + backward, gate and up saved): autodiff scan 136.3 ms, explicit
+buffers in a custom_vjp 133.0 ms (-2.4%), the same with dynamic-slice fusion (136.4 / 133.2) and with it on the legacy
+cuBLAS call (134.6 / 131.7); gradients agree to bf16 rounding. The explicit version's HLO still copies every GEMM output
+into its stack (loop_dynamic_update_slice_fusion for gate, up and the carry), so XLA does not write a GEMM into a saved
+stack in place even when the slice is the GEMM's only user: removing the copies needs a kernel that writes into the
+stack itself (an aliased buffer) inside such a custom_vjp. swiglu_mgpu (w469; gate and up as one Mosaic GPU GEMM with
+the product in its epilogue, M 131072, K 768, F 2688): cuBLAS gate + up 1.54 ms (700 TFLOP/s) plus XLA's product 2.22 ms
+against 1.94-2.05 ms fused (tile 128 x 128, 4 stages best: m128wgn4 1.942, m128wgm4 1.964; 3 stages 2.016-2.046), so
+0.18-0.28 ms per layer, 2.1-3.3 ms per step: the Mosaic GPU GEMM runs at ~80% of cuBLAS and gives back most of the 0.68
+ms product pass; gate and up equal cuBLAS's bitwise, h within 7e-3 (approximate exp). fp8_head_bench (w468; per 8192-row
+block, bf16 outputs): forward 2.12 -> 1.26 ms and d_x 2.07 -> 1.14 ms at 128K (1.7-1.8x), d_w no faster (2.04 -> 2.08 ms,
+plus 0.82 ms to transpose P, since Hopper fp8 GEMMs take both operands K-major); 64K and 32K the same ratios. An fp8 head
+would save ~25 ms per 128K step (~5%) and changes numerics; not pursued without the owner.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
