@@ -337,6 +337,20 @@ path; LlamaMlp reads the flag when it is traced. LEVANTER_SWIGLU_FUSED=0 turns i
 fgate) are not affected. Runs that start after the merge into vocab-overfitting are not bitwise comparable to earlier
 ones; the owner chose no baseline reruns. A/B arm prodold keeps the state before.
 
+**Fused q/k norm and rotary (LEVANTER_QK_ROPE_FUSED=1; adopted, owner popup 2026-10-27 ~03:55, "设为默认，不重跑").** The XLA
+path normed q and k in one fusion and rotated them in another (rotate_half is a concatenate, which the norm's reduction
+fusion does not take), and the rotary fusion read cos and sin broadcast to the activation's full shape (bf16[32, 4096, 12,
+64], 201 MB each, built outside the layer loop), so each rotary pass moved twice the bytes it needs: ~15 ms per 128K step
+forward and in the remat recompute, ~11 ms backward (profile w476). kernels/pallas/qk_norm_rope.py does the norm, the
+weight and the rotary in one Pallas Triton pass each way, x as [rows, heads, 2, 32] with cos and sin as [positions, 32]
+tables; Attention._compute_qkv takes it for weight-only RmsNorms over a 64-wide head with the default rotary and
+positions 0 .. S - 1. CPU checks: kernel = reference forward; backward within bf16 of the f32 math; against an f32
+module the q/k norm weights' gradients are 1.4e-2 / 3.8e-2 off on the XLA path (bf16 sums over rows) and 2.9e-3 / 3.1e-3
+on the fused one. 4 H100s, 120 steps with full evals and checkpoints, on top of the fused SwiGLU: 128K 438 -> 426 ms per
+step (-2.7%, w490), 8K 320 -> 305 (-4.7%, w491); loss within noise (mean -0.00004 / -0.0007 nats). Tonight's two kernels
+together: 128K 459 -> 426 ms (-7.2%), 8K 336 -> 305 (-9.2%). Default in speed_env.sh (all runs and smokes; 0 turns it
+off). Figure: tmp_plots/vocab/flip/speed_swiglu.png.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
