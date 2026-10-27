@@ -3,8 +3,10 @@
 
 """Builds the 8 passes of a repeated run's training subset as one Levanter cache (vocabulary Q10, owner 2026-10-11).
 
-The baseline's 8-pass run reads the first N = steps/8 x batch sequences of its shuffled training set and repeats them in
-the same order every pass (MixtureDataset RESTART). This script takes exactly those N sequences (the run's own data
+The baseline's 8-pass run reads the first N = steps/8 x batch sequences of its shuffled training set and repeats them
+(MixtureDataset RESTART; the mixture also permutes the order inside every block of 2048 sequences with its own key, so
+the "order" below holds per 2048-sequence block, and a training run reading this cache gets the same in-block shuffle;
+found by the TREC session, 2026-10-26). This script takes exactly those N sequences (the run's own data
 config: same caches, linear permutation, data seed, max_train_batches) and writes
   pass 1: the N sequences in the run's order;
   passes 2-8 (MODE=rs): the same sequences, each pass in a new random order (seed 10000 + pass);
