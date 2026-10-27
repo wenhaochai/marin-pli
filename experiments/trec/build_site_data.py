@@ -11,7 +11,8 @@ axes, legend and a status word.
   fig-coef      c_i, the weight of update i in the final weights, for three readings of the optimizer (predict.py), each
                 divided by its maximum
   fig-predict   measured TREC and the prediction 1 - c^0.5 t^m of each reading with its own best m (highest Pearson r),
-                each min-max scaled over the run
+                each scaled to 0 at its low point and 1 for a forgotten batch: the unread mean for the measured curve,
+                c = 0 for a prediction (min-max over the run)
 
     python experiments/trec/build_site_data.py <site checkout>     # vis node
 """
@@ -134,7 +135,8 @@ def fig_predict(data):
         s = smooth(data[model][0])
         t = (np.arange(len(s)) + 1) / len(s)
         eta = predict.lr_schedule(model)
-        marks = [{"type": "line", "pts": thin(t, minmax(s)), "color": INK, "width": 1.8, "alpha": 0.85}]
+        unread = data[model][1].mean()   # 1 = a forgotten batch, as c = 0 is for a prediction; the noisy maximum is not
+        marks = [{"type": "line", "pts": thin(t, (s - s.min()) / (unread - s.min())), "color": INK, "width": 1.8, "alpha": 0.85}]
         for r, _, col in READINGS:
             c = predict.coefficients(eta, r, model)
             m, rp = predict.fit_m(c, s)
