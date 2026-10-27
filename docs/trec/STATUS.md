@@ -64,6 +64,11 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 
 ## Page (exps/trec.html)
 - Q1 answered (Fig 1), Q2 answered (Figs 2-4), Q3 answered (Fig 5, w438). Standfirst = Takeaways = meta description.
+- Before publishing (2026-10-27): anti-autoresearch, deterministic-only (no codex reviewer in the session), L0 on the
+  page text: CLEAN_GIVEN_EVIDENCE (tmp/trec_audit/REPORT.md). A manual check of every hand-written number fixed two
+  captions (the unread band is +-2 SE, not 2 SE wide; the low points are four fifths to nine tenths, not about four
+  fifths). Public code: wenhaochai/marin-pli branch trec at 3b44498 (scrubbed; secrets 0, cluster user and group 0).
+  Website: pretrain-practice e2d3fef; the main merge waits for the owner's weekly approval.
 
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
