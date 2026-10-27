@@ -31,9 +31,12 @@ module load proxy/default  # wandb only: without it the pair fetch below sat in 
 source scripts/della/wandb_guard.sh
 nvidia-smi -L
 echo "PAR START $(date +%H:%M:%S) $(git -C $WT log --oneline -1)"
+# arm i runs on the i-th of this job's own GPUs as the host set them: a guest on GPUs 4-7 must not touch 0-3
+# (CUDA_VISIBLE_DEVICES=$i did until 2026-10-26 night)
+IFS=, read -r -a GPUS <<<"${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 pids=()
 for i in "${!ARMS[@]}"; do
-  CUDA_VISIBLE_DEVICES=$i FETCHED_JOB_ID=${JID}g$i bash scripts/della/speed_all/ab_arms1.sbatch "$CFG" "${ARMS[$i]}" \
+  CUDA_VISIBLE_DEVICES=${GPUS[$i]} FETCHED_JOB_ID=${JID}g$i bash scripts/della/speed_all/ab_arms1.sbatch "$CFG" "${ARMS[$i]}" \
     > $LOGDIR/speedall-par1_${JID}_g$i.out 2>&1 &
   pids+=($!)
 done
