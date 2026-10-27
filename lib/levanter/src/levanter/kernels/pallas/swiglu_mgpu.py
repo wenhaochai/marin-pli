@@ -22,7 +22,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu as hm
 
-# Tile configs by name (wq w469 benches them at M 131072, K 768, F 2688); LEVANTER_SWIGLU_CFG picks one.
+# Tile configs by name (wq w469 benches them at M 131072, K 768, F 2688); LEVANTER_SWIGLU_CFG / _BWD_CFG pick them.
 CONFIGS = {
     "m128wgm4": hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=4, epi_tile_n=64, epi_tile_m=64,
                                 grid_minor_dim=hm.MatmulDimension.N, grid_tile_width=16, wg_dimension=hm.MatmulDimension.M),
@@ -33,8 +33,11 @@ CONFIGS = {
     "m128wgn3": hm.TuningConfig(tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=3, epi_tile_n=64, epi_tile_m=64,
                                 grid_minor_dim=hm.MatmulDimension.M, grid_tile_width=16, wg_dimension=hm.MatmulDimension.N),
 }
-CONFIG = CONFIGS[os.environ.get("LEVANTER_SWIGLU_CFG", "m128wgm3")]
+# forward: m128wgn4 was fastest (1.942 ms, w469); backward: m128wgm3, the one that fits (4 stages need 262 KB of SMEM, w472)
+CONFIG = CONFIGS[os.environ.get("LEVANTER_SWIGLU_CFG", "m128wgn4")]
+BWD_CONFIG = CONFIGS[os.environ.get("LEVANTER_SWIGLU_BWD_CFG", "m128wgm3")]
 BLOCK = CONFIG.tile_n // 2
+assert BWD_CONFIG.tile_n % BLOCK == 0, (CONFIG, BWD_CONFIG)
 
 
 def interleave(wg: jax.Array, wu: jax.Array, block: int = BLOCK) -> jax.Array:

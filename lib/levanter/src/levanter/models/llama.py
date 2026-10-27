@@ -344,9 +344,11 @@ def _act_mul_down_bwd(act, In, dot_general, residuals, d_out):
 # LEVANTER_SWIGLU_FUSED=1 (speed test, 2026-10-27): the gate and up projections and silu(gate) * up as one Mosaic GPU GEMM
 # per device (kernels/pallas/swiglu_mgpu.py: gate and up weights concatenated with their columns interleaved in blocks of
 # _SWIGLU_BLOCK, the product formed in the GEMM's epilogue), so the forward pass no longer reads gate and up back for the
-# product (8.2 ms per 128K step, profile w458). The backward pass is XLA's: one elementwise pass from the saved gate and
-# up (one interleaved array named mlp_gu) and d_h to the interleaved d_gate/d_up and h, then one GEMM each for d_x, the
-# concatenated weights' gradient and down_proj's. Silu, no biases; off the GPU (tests) the same custom_vjp on XLA's GEMM.
+# product (8.2 ms per 128K step, profile w458). The backward pass runs d_h = d_out @ w_down.T as a second Mosaic GPU GEMM
+# whose epilogue reads the saved gate and up (one interleaved array named mlp_gu) and writes the interleaved d_gate/d_up
+# and h, so d_h never reaches memory (XLA: 3.16 ms per layer, kernel 2.09, w472), then one GEMM each for d_x, the
+# concatenated weights' gradient and down_proj's. Silu, no biases; off the GPU (tests) the same custom_vjp on XLA's ops.
+# Needs REMAT fmlpo or fmlpoa (mlp_gu and mlp_out saved), or the backward pass runs the forward kernel again.
 _SWIGLU_FUSED = os.environ.get("LEVANTER_SWIGLU_FUSED", "0") == "1"
 _SWIGLU_BLOCK = 64
 
@@ -394,15 +396,35 @@ def _fused_swiglu_mlp_fwd(x2, w_cat, w_down, row_spec):
     return h @ w_down, (x2, gu, w_cat, w_down)
 
 
+def _swiglu_dgu_h(d_out: jax.Array, w_down: jax.Array, gu: jax.Array, row_spec) -> tuple[jax.Array, jax.Array]:
+    """The interleaved d_gu [N, 2F] and h [N, F] from d_out [N, E], w_down [F, E] and the saved gu: the Mosaic GPU kernel
+    per device on the GPU when the local shapes fit it (d_h stays in its epilogue), XLA otherwise."""
+
+    def local(d_loc, wd, gu_loc):
+        if jax.default_backend() == "gpu" and d_loc.dtype == wd.dtype == gu_loc.dtype == jnp.bfloat16:
+            from levanter.kernels.pallas import swiglu_mgpu  # noqa: PLC0415  # Mosaic GPU, imported on the GPU only
+
+            if swiglu_mgpu.bwd_supported(d_loc.shape[0], d_loc.shape[1], wd.shape[0], swiglu_mgpu.BWD_CONFIG):
+                return swiglu_mgpu.swiglu_bwd_mgpu(d_loc, wd.T, gu_loc, swiglu_mgpu.BWD_CONFIG)
+        n, two_f = gu_loc.shape
+        d_h = (d_loc @ wd.T).reshape(n, two_f // (2 * _SWIGLU_BLOCK), _SWIGLU_BLOCK)
+        gu4 = gu_loc.reshape(n, two_f // (2 * _SWIGLU_BLOCK), 2, _SWIGLU_BLOCK)
+        h, act_mul_vjp = jax.vjp(lambda g, u: jax.nn.silu(g) * u, gu4[:, :, 0], gu4[:, :, 1])
+        d_g, d_u = act_mul_vjp(d_h)
+        return jnp.stack([d_g, d_u], axis=2).reshape(n, two_f), h.reshape(n, two_f // 2)
+
+    mesh = hax.partitioning._get_mesh()
+    if mesh is None or mesh.empty:
+        return local(d_out, w_down, gu)
+    spec = PartitionSpec(row_spec, None)
+    return shard_map(local, mesh=mesh, in_specs=(spec, PartitionSpec(None, None), spec), out_specs=(spec, spec),
+                     check_rep=False)(d_out, w_down, gu)
+
+
 def _fused_swiglu_mlp_bwd(row_spec, residuals, d_out):
     x2, gu, w_cat, w_down = residuals
-    n, two_f = gu.shape
-    d_h = (d_out @ w_down.T).reshape(n, two_f // (2 * _SWIGLU_BLOCK), _SWIGLU_BLOCK)
-    gu4 = gu.reshape(n, two_f // (2 * _SWIGLU_BLOCK), 2, _SWIGLU_BLOCK)
-    h, act_mul_vjp = jax.vjp(lambda g, u: jax.nn.silu(g) * u, gu4[:, :, 0], gu4[:, :, 1])
-    d_g, d_u = act_mul_vjp(d_h)
-    d_gu = jnp.stack([d_g, d_u], axis=2).reshape(n, two_f)
-    return d_gu @ w_cat.T, x2.T @ d_gu, h.reshape(n, two_f // 2).T @ d_out
+    d_gu, h = _swiglu_dgu_h(d_out, w_down, gu, row_spec)
+    return d_gu @ w_cat.T, x2.T @ d_gu, h.T @ d_out
 
 
 _fused_swiglu_mlp.defvjp(_fused_swiglu_mlp_fwd, _fused_swiglu_mlp_bwd)
