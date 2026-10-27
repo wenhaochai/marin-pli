@@ -88,6 +88,7 @@ warmup at 130m), where DepthBench trains every design with AdamW (weight decay 0
 
 import dataclasses
 import math
+import os
 from dataclasses import dataclass
 from typing import Any, Optional, cast
 
@@ -573,12 +574,17 @@ class DepthArchTransformer(eqx.Module):
         gxs = jax.tree.map(split, xs, is_leaf=is_named)
         keys = split(maybe_rng_split(key, L)) if key is not None else None
         policy = ScanCheckpointPolicy(simple=True)
+        # DEPTH_INNER_REMAT=save (speed, 2026-10-27; read at trace time): the inner scan saves every layer's internals while
+        # the backward pass recomputes its group, instead of checkpointing each layer again, so a layer's forward runs twice
+        # (the forward pass, the group's recompute), not three times. Same values; one group's internals more memory
+        # (the AttnRes profile w418: remat recompute 4.28 of 19.26 s per step).
+        inner = ScanCheckpointPolicy(disable=True) if os.environ.get("DEPTH_INNER_REMAT", "") == "save" else policy
 
         def group(carry, layers, gx, gkeys):
             def one(c, layer, *x, key):
                 return fn(layer, c, *x, key=key)
 
-            return hax.scan(one, Inner, remat=policy)(carry, layers, *gx, key=gkeys)
+            return hax.scan(one, Inner, remat=inner)(carry, layers, *gx, key=gkeys)
 
         carry, ys = hax.scan(group, Outer, remat=policy)(init, stacked, gxs, keys)
         return carry, jax.tree.map(lambda a: hax.flatten_axes(a, (Outer, Inner), cfg.Layers.name), ys, is_leaf=is_named)
