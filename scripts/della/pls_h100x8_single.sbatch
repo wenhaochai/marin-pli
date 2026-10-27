@@ -80,6 +80,15 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
 #                eval and checkpoint (w354); stops at 1e-9 (w355). Owner popup 2026-10-26 ~16:40: on for all pls jobs.
 export LOG_JAXPR=0 CKPT_MIN=30 LEVANTER_CE_BTILED_ONEHOT=1 EVAL_PDP=4 LEVANTER_CE_GRAD_IN_FWD=1 LEVANTER_CE_LSE_KERNEL=1
 export PLS_FOLD_NORM=1 LEVANTER_NORM_GUARD=1e-3
+# HCMB: HC (ARCH=hc) at 4 sequences per microbatch, the CE kept on the xla streaming path by a b-tiled threshold above any
+# shard (only the gradient summation order changes; eval also streams). 24.78 -> 19.37 s/step (w442, w444); train-step temp
+# 21.67 GiB against 17.27 at microbatch 1 (w461, w462), under half the ~64 GiB pool. Runs whose SINGLE sets their own CE
+# threshold or microbatch keep theirs. A smoke that fails at microbatch 4 is run again at microbatch 1, which then trains.
+HCMB=
+# HC with 8 streams waits for its own memory check (wq w473).
+if [[ " $SINGLE " == *" ARCH=hc "* && " $SINGLE " != *" LEVANTER_CE_BTILED_MIN_BATCH="* && " $SINGLE " != *" PARAM_MAP_PDP="* && " $SINGLE " != *" HC_STREAMS=8 "* ]]; then
+  HCMB="PARAM_MAP_PDP=4 LEVANTER_CE_BTILED_MIN_BATCH=1048576"
+fi
 SMOKE=${SINGLE_SMOKE_STEPS:-30}
 SMOKE_LIMIT=${SINGLE_SMOKE_MIN:-25}m
 # Run by a host job through tools/fetch_pending.sh, FETCHED_JOB_ID is this job's id and SLURM_JOB_ID the host's: names
@@ -160,7 +169,16 @@ if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" = SUCCESS ]; then echo
 slog=logs/slurm/${JNAME}_${JID}_smoke.log
 r=0
 # shellcheck disable=SC2086
-env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+env $SINGLE $HCMB PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+if [ $r -ne 0 ] && [ -n "$HCMB" ]; then
+  echo "smoke at microbatch 4 failed rc=$r $(date +%H:%M:%S): smoke and training at microbatch 1"
+  if [[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]]; then
+    rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
+  fi
+  HCMB=; r=0
+  # shellcheck disable=SC2086
+  env $SINGLE PLS_EVAL=1 SMOKE_STEPS=$SMOKE RUN_TAG=-j${JID}s${SEG} bash $PT smoke - other $NG $SMOKE_LIMIT -- "$PY" -m $LAUNCH > "$slog" 2>&1 || r=$?
+fi
 echo "smoke $smoke_id exited rc=$r $(date +%H:%M:%S)"
 if [[ $smoke_id == *-j${JID}s${SEG}-smoke$SMOKE ]]; then
   rm -rf -- "$MARIN_PREFIX/speedrun/$smoke_id" "$MARIN_PREFIX/tmp/checkpoints-temp$MARIN_PREFIX/speedrun/$smoke_id"
@@ -194,10 +212,10 @@ DEADLINE=$(( $(date +%s) + ${TRAIN_LIMIT%s} - 150 ))
 echo "training limit $TRAIN_LIMIT, checkpoint deadline $(date -d @$DEADLINE +%F_%T)"
 log=logs/slurm/${JNAME}_${JID}_train.log
 # shellcheck disable=SC2086
-setsid env $SINGLE LEVANTER_CKPT_DEADLINE=$DEADLINE bash $PT train "${rid#muonh-qwen3-}" main $NG "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
+setsid env $SINGLE $HCMB LEVANTER_CKPT_DEADLINE=$DEADLINE bash $PT train "${rid#muonh-qwen3-}" main $NG "$TRAIN_LIMIT" -- "$PY" -m $LAUNCH > "$log" 2>&1 &
 pid=$!
 watchdog "$pid" "$log" & dog=$!
-echo "run $rid [$SINGLE]: pid $pid $(date +%H:%M:%S)"
+echo "run $rid [$SINGLE${HCMB:+ $HCMB}]: pid $pid $(date +%H:%M:%S)"
 rc=0; wait "$pid" || rc=$?
 pid=
 echo "run $rid exited rc=$rc $(date +%H:%M:%S)"
