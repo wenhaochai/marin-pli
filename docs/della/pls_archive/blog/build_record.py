@@ -41,7 +41,7 @@ RUNS = [
     (PROBE, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100-pls1-sep-bbfrozen"), "5"),
     # 48 layers (-vs-d48-g4): each design's pair-job chain; the earlier 8-GPU FSDP runs (-d48) are superseded, so other
     *[(n if tag == "" else S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 4,
-       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6, 9, 10, 11, 16" if tag == "" else ("7, 8, 17, 44" if tag == "attnres" else ("7, 9, 10, 17, 44" if tag == "attnres_block" else ("7, 9, 10, 17" if tag == "moda" else ("7, 9, 10, 11, 17, 43" if tag == "hc" else "7, 9, 10, 11, 17")))))
+       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6, 9, 10, 11, 16" if tag == "" else ("7, 8, 17, 44" if tag == "attnres" else ("7, 9, 10, 17, 44" if tag == "attnres_block" else ("7, 9, 10, 17" if tag == "moda" else ("7, 9, 10, 11, 17, 43, 48" if tag == "hc" else ("7, 9, 10, 11, 17, 48" if tag in ("preln", "mhc") else "7, 9, 10, 11, 17"))))))
       for a, tag, jobs in [("Sandwich-LN", "", [15266143, 15266144, 15273924]), ("Pre-LN", "preln", [15266145, 15266146, 15273925]),
                            ("LayerNorm Scaling", "lns", [15266147, 15266148]), ("DeepNorm", "deepnorm", [15266149, 15266150]), ("KEEL", "keel", [15266151, 15266152]),
                            ("Hyper-Connections", "hc", [15266153, 15266154, 15341053, 15341054]), ("mHC", "mhc", [15266155, 15266156, 15341055, 15341056]),
@@ -50,7 +50,7 @@ RUNS = [
       for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # AttnRes (Full), second init seed (Figure 8; owner popup 2026-10-13)
     *[(S(f"AttnRes (Full), seed 1: {n['en'].lower()}", f"AttnRes (Full)，种子 1：{n['zh']}"), "130m", 48, 2.6, 4,
-       ("chain", [15520124, 15520125, 15520126, 15538869], f"130m-della4xh100-pls1-sep{bb}-aattnres-vs-d48-s1-g4"), "8, 44") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
+       ("chain", [15520124, 15520125, 15520126, 15538869], f"130m-della4xh100-pls1-sep{bb}-aattnres-vs-d48-s1-g4"), "8, 44, 48") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],
     # HC with positive writes (Figure 11; owner popup 2026-10-14): the causal test of HC's half last-layer cost
     *[(S(f"HC with positive writes: {n['en'].lower()}", f"写入为正的 HC：{n['zh']}"), "130m", 48, 2.6, 4,
        ("chain", [15536266, 15536267], f"130m-della4xh100-pls1-sep{bb}-ahc_pos-vs-d48-g4"), "11") for n, bb in ((SEP, ""), (PROBE, "-bbfrozen"))],

@@ -906,6 +906,8 @@ def sep_cost(tag, layers=48):
 
 VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
          ("amhc-mhcid-vs-d48", {"en": "mHC, residual mixing = I", "zh": "mHC，残差混合 = I"}, BLUE7),
+         # owner popup 2026-10-27 (wq w510/w511): mHC with HC's signed read / write maps, the mirror of HC's sigmoid variant
+         ("amhc-mhcrwlin-vs-d48", {"en": "mHC, read/write = linear", "zh": "mHC，读写 = 线性"}, BLUE7),
          # owner popup 2026-10-26 (~16:40; wq w389/w390): HC with mHC's read / write maps, beside HC itself
          ("ahc-vs-d48-g4", {"en": "HC", "zh": "HC"}, GREY),
          ("ahc-hcrwsig-vs-d48", {"en": "HC, read/write = sigmoid", "zh": "HC，读写 = sigmoid"}, BLUE7),
@@ -1117,6 +1119,26 @@ figs["fig-mhc-paths"] = dict(title={"en": "Paths into each sublayer's input by s
                              legend=[[{"en": "Probes model", "zh": "普通模型"}, RED, "line"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"]],
                              quantity={"en": "Layers skipped", "zh": "跳过的层数"}, xlabel=LAYER_X, height=150, cols=2, panels=pan47)
 print("Fig 47 mHC paths", {k: [len(p["marks"]) for p in pan47[i::2]] for i, k in enumerate(("probes", "sep"))})
+# Figure 48 (owner popup 2026-10-27): how much each layer changes what the readouts see, separate heads against the
+# ordinary model with probes, on the seed-0 48-layer pairs (AttnRes: seed 1, whose ordinary model spiked less). s_l = the
+# state readout l reads (Pre-LN's stream, HC / mHC's stream sum, AttnRes's mix), s_0 the embedding as readouts see it;
+# per token |s_l - s_{l-1}| / |s_{l-1}|, averaged over 4 x 1024 Paloma c4_en tokens (scripts/della/pls_write_size.py,
+# vis1 CPU -> ws/ws-sep[-bbfrozen]-<tag>.json). The approved placeholder divided by |s_0|; HC's ordinary model grows its
+# stream sum 5 x 10^4-fold, so each write is divided by the state it changes instead (what a normalised readout sees).
+WS48 = [("apreln-vs-d48-g4", "Pre-LN"), ("ahc-vs-d48-g4", "Hyper-Connections"), ("amhc-vs-d48-g4", "mHC"), ("aattnres-vs-d48-s1-g4", "AttnRes (Full)")]
+def _ws(tag):
+    f = HERE / "ws" / f"ws{tag}.json"
+    return json.loads(f.read_text())["rel_write"] if f.exists() else None
+pan48 = []
+for tag, nm in WS48:
+    a, b = _ws(f"-sep-{tag}"), _ws(f"-sep-bbfrozen-{tag}")
+    marks = [dict(type="line", color=c, width=1.6, alpha=1.0, pts=[[k + 1, round(max(v, 1e-3), 4)] for k, v in enumerate(w)]) for w, c in ((b, RED), (a, BLUE7)) if w]
+    pan48.append(dict(xlim=[0.5, 48.5], ylim=[0.008, 200.0], ylog=True, yoff=0.0, xticks=[[x, str(x)] for x in (1, 12, 24, 36, 48)],
+                      yticks=[[t, f"{t:g}"] for t in (0.01, 0.1, 1, 10, 100)], label={"en": nm, "zh": nm}, marks=marks))
+figs["fig-write-size"] = dict(title={"en": "How much each layer changes what the readouts see, 48 layers", "zh": "每层改变读出所见状态的大小，48 层"},
+                              legend=[[{"en": "Probes model", "zh": "普通模型"}, RED, "line"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"]],
+                              quantity={"en": "Change over the state before it (log scale)", "zh": "改变量与改变前状态之比（对数坐标）"}, xlabel=LAYER_X, height=170, cols=2, panels=pan48)
+print("Fig 48 late/early relative write", {nm: [None if _ws(f"{m}-{t}") is None else round(sum(_ws(f"{m}-{t}")[40:]) / 8, 3) for m in ("-sep", "-sep-bbfrozen")] for t, nm in WS48})
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,
