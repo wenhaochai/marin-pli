@@ -51,6 +51,7 @@ case $design in
   preln) A="LAYERS=48 PDP=4 ARCH=preln"; ROUNDS="det time";;
   hc) A="LAYERS=48 PDP=4 ARCH=hc"; ROUNDS="time";;
   attnres) A="LAYERS=48 PDP=2 ARCH=attnres"; ROUNDS="time";;
+  mhc) A="LAYERS=48 PDP=4 ARCH=mhc"; ROUNDS="time";;
   *) echo "unknown design in '$NAME'"; exit 2;;
 esac
 case $knobs in
