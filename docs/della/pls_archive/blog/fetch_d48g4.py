@@ -42,7 +42,7 @@ def history(r, last, keys):
     return by
 
 # The A3 / E1 arms (pls_arch3_fetchable.sbatch, wq w76-w90) are 4-GPU runs named -vs-d{L} with no -g4:
-# "arch3:<middle>:<L>[@seed]", e.g. arch3:ahc:24 -> -sep-ahc-vs-d24, arch3:apreln@s1:48 -> -sep-apreln-vs-d48-s1.
+# "arch3:<middle>:<L>[@seed]", e.g. arch3:ahc:24 -> -sep-ahc-vs-d24, arch3:apreln:48@s1 -> -sep-apreln-vs-d48-s1.
 for arch in archs:
     arch2 = arch.removeprefix("arch2:") if arch.startswith("arch2:") else None
     arch3 = arch.removeprefix("arch3:") if arch.startswith("arch3:") else None

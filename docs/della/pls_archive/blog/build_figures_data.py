@@ -1087,6 +1087,36 @@ figs["fig-switchoff"] = dict(title={"en": "Separate heads stopped during trainin
                                           marks=[dict(type="dots", color=RED, pts=[p for p in S46["preln"] if p[1] is not None]),
                                                  dict(type="dots", color=BLUE7, pts=[p for p in S46["hc"] if p[1] is not None])])])
 print("Fig 46 switch-off", S46)
+# Figure 47 (owner popup 2026-10-27, after the Qwen3.8-Next report's Gated Residual analysis, sec. 2.2): mHC with the
+# residual mixing fixed to I (w76 separate heads, w77 probes model, step 4958) has no mixing, so each stream is a plain sum
+# of the embedding and the sublayers' writes, and sublayer v's input splits exactly into one part per earlier writer u and
+# stream c: a = r_c(v) w_c(u) |f(u)| (scripts/della/pls_branch_paths.py, vis1 CPU, 8 x 1024 Paloma c4_en tokens; rebuild
+# error 6e-8). pi = a / sum over writers and streams, averaged over tokens (paths_mhcid_{sep,probes}.npz). One panel per
+# stream and model; each path with pi >= 0.05 is an arc from the writer's layer to the reader's, its height the layers
+# skipped, its width and opacity its share. The embedding is writer layer 0; sublayer s = 2l + j (0-based l) sits at s / 2 + 1 / 2, as writer and reader.
+P47 = {k: np.load(HERE / f"paths_mhcid_{k}.npz")["pi_sub"] for k in ("probes", "sep")}
+def _arcs(P, c, col, th=0.05):
+    out = []
+    V, U, _ = P.shape
+    for v in range(V):
+        for u in range(min(v + 1, U)):
+            w = float(P[v, u, c])
+            if w < th:
+                continue
+            xu, xv = (0.0 if u == 0 else (u - 1) / 2 + 0.5), v / 2 + 0.5
+            sk = xv - xu
+            out.append(dict(type="line", color=col, width=round(0.4 + 6 * w, 2), alpha=round(min(1.0, 0.25 + 2 * w), 2),
+                            pts=[[round(xu + sk * t, 2), round(sk * np.sin(np.pi * t), 2)] for t in np.linspace(0, 1, 9)]))
+    return out
+pan47 = []
+for c in range(4):
+    for k, col, nm in (("probes", RED, {"en": "probes model", "zh": "普通模型"}), ("sep", BLUE7, {"en": "separate heads", "zh": "独立头"})):
+        pan47.append(dict(xlim=[0, 48.5], ylim=[0, 48], xticks=[[x, str(x)] for x in (0, 12, 24, 36, 48)], yticks=lin_ticks(0, 48, 12, "{:.0f}"),
+                          label={"en": f"Stream {c + 1}, " + nm["en"], "zh": f"第 {c + 1} 条流，" + nm["zh"]}, marks=_arcs(P47[k], c, col)))
+figs["fig-mhc-paths"] = dict(title={"en": "Paths into each sublayer's input by stream, mHC with fixed mixing, 48 layers", "zh": "每个子层输入的来源路径（按流），混合固定的 mHC，48 层"},
+                             legend=[[{"en": "Probes model", "zh": "普通模型"}, RED, "line"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"]],
+                             quantity={"en": "Layers skipped", "zh": "跳过的层数"}, xlabel=LAYER_X, height=150, cols=2, panels=pan47)
+print("Fig 47 mHC paths", {k: [len(p["marks"]) for p in pan47[i::2]] for i, k in enumerate(("probes", "sep"))})
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

@@ -92,7 +92,7 @@ RUNS = [
     # owner popups 2026-10-22: design variants (Figure 38) and the HC depth sweep (Figure 39), pls_arch3_fetchable.sbatch
     *[(S(en + (": separate heads" if bb == "" else ": probes only"), zh + ("：独立头" if bb == "" else "：只加探针")), "130m", L, 2.6, 4,
        ("wq", jid, f"130m-della4xh100-pls1-sep{bb}-{tag}-vs-d{L}"), fig) for en, zh, L, tag, fig, pair in [
-        ("mHC, residual mixing fixed to I", "mHC，残差混合固定为 I", 48, "amhc-mhcid", "38", ("w76", "w77")),
+        ("mHC, residual mixing fixed to I", "mHC，残差混合固定为 I", 48, "amhc-mhcid", "38, 47", ("w76", "w77")),
         ("AttnRes (Full), pseudo-query scale clipped to 10", "AttnRes (Full)，伪查询尺度裁剪到 10", 48, "aattnres-qclip10", "38", ("w78", "w79")),
         ("Hyper-Connections, 24 layers", "Hyper-Connections，24 层", 24, "ahc", "39", ("w80", "w81")),
         ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83")),
