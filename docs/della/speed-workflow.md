@@ -281,6 +281,62 @@ device without a host sync per batch; and a batch takes ~175 ms against ~150 ms 
 Making it cheaper means fewer or smaller evaluations between the first and the last (m2d2_s2orc alone is 16.8M tokens;
 c4_100_domains, dolma_100_subreddits and the programming languages 8.5-9.5M each): a protocol choice, not infra.
 
+**Profile of the production state after the bundle (w458, 2026-10-26 23:00; 4 H100s, 300m, 32 x 4096 per device, steps
+20-22 of a 30-step smoke; profile_now.sbatch).** Summed GPU-0 kernel time per step (arm attr: command buffers off, HLO
+dumped): 128K 445 ms = output head and CE 123.3 (the mgpu lse forward 46.1, the two cuBLAS gradient GEMMs 34.3 and 33.3),
+MLP 103.2 (nine GEMMs of ~8.7; the SwiGLU backward pass 16.8, its product 8.2), attention projections 53.0, attention
+kernel 51.1 (FA4 THD backward 35.1, forward 15.9), norms and residual adds 35.2, recompute 23.8 (the q/k/v/o GEMMs 10.2,
+norms and rotary 13.6), collectives 21.6, layer-scan copies 17.2 (gate and up 5.62 each, two 201 MB saves 1.66 and 1.64,
+a backward slice copy 1.64), optimizer 10.5; 8K 329 ms = MLP 103.1, attention kernel 56.5 (more tokens per document),
+projections 53.1, norms 35.2, recompute 23.9, copies 17.2, head and CE 13.1, collectives 12.9, optimizer 9.1. With the
+production flags (arm prod: command buffers, async loop) the GPU idles 2.0% (128K) and 2.6% (8K) of the trace: ~8.5 ms in
+~4650 launch gaps under 50 us and one ~10 ms gap at the trace's start, none between steps. The step is kernel-bound:
+only kernel time is left to cut. Figure: tmp_plots/vocab/flip/step_families.png. Exact-numerics candidates: (1) the
+copies of saved activations plus the recompute, 41 ms together (9% at 128K, 12.5% at 8K): the scan copies each saved
+value out of its producer's buffer, because XLA lets a cuBLAS call write into a dynamic-update-slice in place only when
+the slice is the call's only user, and here the forward pass reads the value too; scan_save_bench.py (w468) tests whether
+explicit buffers in a custom_vjp over the layer stack let the GEMMs write in place (unrolled layers are no way out: a 59
+GiB temporary at 128K and 61 GiB at 8K, out of memory in w357/w358); (2) the two SwiGLU passes (25 ms) into GEMM
+epilogues, ~11 ms; (3) the head's forward at cuBLAS speed, ~12 ms at 128K. Not exact: an fp8 head (fp8_head_bench.py, w468).
+
+**Saved-activation copies, fused SwiGLU forward, fp8 head (one H100 each, 2026-10-26 23:33).** scan_save_bench (w468; 12
+SwiGLU layers at the per-device 300m shape, forward + backward, gate and up saved): autodiff scan 136.3 ms, explicit
+buffers in a custom_vjp 133.0 ms (-2.4%), the same with dynamic-slice fusion (136.4 / 133.2) and with it on the legacy
+cuBLAS call (134.6 / 131.7); gradients agree to bf16 rounding. The explicit version's HLO still copies every GEMM output
+into its stack (loop_dynamic_update_slice_fusion for gate, up and the carry), so XLA does not write a GEMM into a saved
+stack in place even when the slice is the GEMM's only user: removing the copies needs a kernel that writes into the
+stack itself (an aliased buffer) inside such a custom_vjp. swiglu_mgpu (w469; gate and up as one Mosaic GPU GEMM with
+the product in its epilogue, M 131072, K 768, F 2688): cuBLAS gate + up 1.54 ms (700 TFLOP/s) plus XLA's product 2.22 ms
+against 1.94-2.05 ms fused (tile 128 x 128, 4 stages best: m128wgn4 1.942, m128wgm4 1.964; 3 stages 2.016-2.046), so
+0.18-0.28 ms per layer, 2.1-3.3 ms per step: the Mosaic GPU GEMM runs at ~80% of cuBLAS and gives back most of the 0.68
+ms product pass; gate and up equal cuBLAS's bitwise, h within 7e-3 (approximate exp). fp8_head_bench (w468; per 8192-row
+block, bf16 outputs): forward 2.12 -> 1.26 ms and d_x 2.07 -> 1.14 ms at 128K (1.7-1.8x), d_w no faster (2.04 -> 2.08 ms,
+plus 0.82 ms to transpose P, since Hopper fp8 GEMMs take both operands K-major); 64K and 32K the same ratios. An fp8 head
+would save ~25 ms per 128K step (~5%) and changes numerics; not pursued without the owner.
+
+**Fused SwiGLU, both passes (LEVANTER_SWIGLU_FUSED=1, 2026-10-27 00:00; async-hooks da76a57445).** LlamaMlp runs gate and
+up as one Mosaic GPU GEMM with the product in its epilogue (interleaved weights; the saved value is one array, mlp_gu)
+and the backward pass's d_h = d_out @ w_down.T as a second Mosaic GPU GEMM whose epilogue reads gate and up by TMA and
+writes the interleaved d_gate / d_up and h, so d_h never reaches memory (kernels/pallas/swiglu_mgpu.py; forward config
+m128wgn4, backward m128wgm3; 64 x 256 tiles were no faster, w477). One MLP forward + backward at the 300m shape: 9.28 ->
+8.42 ms (w472). 4 H100s, 120 steps with full Paloma evals and checkpoints every 20 (prodnow = the production state,
+prodswf2 = the same plus the flag), median ms per step: 128K 459 -> 440 (-4.1%, w474), 8K 336 -> 319 (-5.1%, w475); train
+loss per step within noise of the same job's baseline (mean +0.0015 / +0.0002 nats, last 10 steps +0.0013 / +0.0034;
+two prodnow runs of the same code end 0.005 apart and differ by 0.035 in eval loss at step 120, w471 / w475); peak memory
+unchanged. The forward kernel alone gave -1.1% / -0.9% (w470 / w471). Kernel time per step (profile w476): 128K 448.7 ->
+433.3 ms, 8K 330.3 -> 311.8: MLP -4.5 / -4.9 ms, and the layer-scan copies 17.2 -> 5.8 / 6.0 ms, because the saved gu is
+now an output with no other user, so the kernel writes it into the scan's stack in place (the two [12, 32, 4096, 2688]
+dynamic-update-slice fusions of gate and up are gone from the HLO). Not bitwise, and more precise: rms error against f32
+of one MLP's output and gradients 4.5-4.9e-3 on the production path, 3.4-3.5e-3 with both kernels (w477). It needs a
+remat policy that saves mlp_gu and mlp_out (fmlpo, fmlpoa); under flash or fgate the backward pass would run the forward
+kernel again.
+
+**Adopted (owner popup 2026-10-27 ~00:15, "设为默认，不重跑").** The launcher (della_muonh_qwen3_scaling.py) sets
+LEVANTER_SWIGLU_FUSED=1 wherever REMAT is fmlpo or fmlpoa (300m up to SEQ_LEN 4096), so smokes and runs take the same
+path; LlamaMlp reads the flag when it is traced. LEVANTER_SWIGLU_FUSED=0 turns it off; charwin runs (SEQ_LEN 4480 / 5504,
+fgate) are not affected. Runs that start after the merge into vocab-overfitting are not bitwise comparable to earlier
+ones; the owner chose no baseline reruns. A/B arm prodold keeps the state before.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
