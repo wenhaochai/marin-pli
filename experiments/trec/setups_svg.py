@@ -2,8 +2,10 @@
 the <!-- setups:trec-q1 --> and <!-- setups:trec-q2 --> markers of the page.
 
 q1: the two runs, each a learning-rate schedule above its batches read in order, and the final model that scores them.
-q2: the three readings of one optimizer step on a weight vector: fixed norm (MuonH as it runs: add the update, rescale
-    to the old norm), weight decay (shrink by 1 - eta*lambda, then add the update), schedule only (add the update).
+q2: the readings of one optimizer step on a weight vector (owner popup 2026-10-27: four, two by two): fixed norm with
+    momentum (MuonH as it runs: the update tilts outward, the rescaling to the old norm shrinks more), fixed norm with
+    independent steps (an update at right angles, then the rescaling), weight decay (shrink by 1 - eta*lambda, then add
+    the update), and the control, learning rate only (add the update).
 
     python experiments/trec/setups_svg.py <page>
 """
@@ -53,8 +55,10 @@ def step_panel(kind):
     tx, ty = math.sin(a), math.cos(a)        # tangent pointing clockwise (to the right at the top)
     U = 86                                    # the update's length
     body = [f'<circle cx="{cx}" cy="{cy}" r="{R}" fill="none" stroke="{RULE}" stroke-width="{SW}"/>', pt(cx, cy, INK, 7)]
-    if kind == "fixed":
-        bx, by = ax + U * tx, ay + U * ty
+    if kind in ("fixed", "momentum"):
+        tilt = math.radians(32 if kind == "momentum" else 0)   # momentum: part of the update points outward
+        rx, ry = (ax - cx) / R, (ay - cy) / R
+        bx, by = ax + U * (tx * math.cos(tilt) + rx * math.sin(tilt)), ay + U * (ty * math.cos(tilt) + ry * math.sin(tilt))
         n = math.hypot(bx - cx, by - cy)
         nx, ny = cx + (bx - cx) * R / n, cy + (by - cy) * R / n
         body += [vec(cx, cy, ax, ay, LINE), vec(ax, ay, bx, by, BLUE2), vec(bx, by, nx, ny, WIRE, 3),
@@ -88,15 +92,18 @@ Q1 = [setup(run_panel(WSD), L("130m, 12 layers, WSD", "130m，12 层，WSD"),
       setup(run_panel(COS), L("300m, cosine", "300m，cosine"),
             L("The learning rate warms up to 0.01 over 1000 steps and follows a cosine to zero at step 11444; the final model scores every batch.",
               "学习率用 1000 步预热到 0.01，之后按 cosine 在第 11444 步降到零；最终模型给每一批打分。"))]
-Q2 = [setup(step_panel("fixed"), L("Fixed norm", "固定范数"),
-            L("MuonH as it runs: the update is added and the matrix rescaled to its old norm, which shrinks the old weights by 1/√(1 + η²).",
-              "MuonH 的实际做法：加上更新，再把矩阵缩放回原来的范数，旧权重因此乘以 1/√(1 + η²)。"), tag="main"),
+Q2 = [setup(step_panel("momentum"), L("Fixed norm, momentum", "固定范数，带动量"),
+            L("MuonH as it runs: momentum tilts each update outward, so rescaling to the old norm shrinks the old weights by about 1 − Aη²/2, with A = 23 at 130m and 73 at 300m.",
+              "MuonH 的实际做法：动量让每次更新带一点向外的分量，缩放回原来的范数时，旧权重约乘以 1 − Aη²/2；130m 上 A = 23，300m 上 A = 73。"), tag="main"),
+      setup(step_panel("fixed"), L("Fixed norm, independent steps", "固定范数，各步不相关"),
+            L("The same rescaling if every update were at right angles to the weights: the old weights shrink by 1/√(1 + η²).",
+              "同样的缩放，但假设每次更新都与权重垂直：旧权重乘以 1/√(1 + η²)。")),
       setup(step_panel("decay"), L("Weight decay 0.1", "权重衰减 0.1"),
             L("The config's unused weight decay read as AdamW: the old weights shrink by 1 − 0.1η, then the update is added.",
               "把配置里没被使用的权重衰减当作 AdamW：旧权重先乘以 1 − 0.1η，再加上更新。")),
-      setup(step_panel("plain"), L("Schedule only", "只看学习率调度"),
-            L("Nothing shrinks: each update keeps the weight its learning rate gave it.",
-              "什么都不缩小：每次更新保留学习率给它的权重。"))]
+      setup(step_panel("plain"), L("Learning rate only", "只看学习率"),
+            L("The control: nothing shrinks, so each update keeps the weight its learning rate gave it.",
+              "对照：什么都不缩小，每次更新保留学习率给它的权重。"))]
 
 
 Q3 = [setup(run_panel(COS, 6), L("Marin tokenizer, 128K", "Marin tokenizer，128K"),
@@ -110,7 +117,7 @@ Q3 = [setup(run_panel(COS, 6), L("Marin tokenizer, 128K", "Marin tokenizer，128
 def main():
     page = sys.argv[1]
     s = open(page).read()
-    for key, items, cls in (("trec-q1", Q1, "setups two"), ("trec-q2", Q2, "setups"), ("trec-q3", Q3, "setups")):
+    for key, items, cls in (("trec-q1", Q1, "setups two"), ("trec-q2", Q2, "setups two"), ("trec-q3", Q3, "setups")):
         a, b = f"<!-- setups:{key} -->", f"<!-- /setups:{key} -->"
         assert s.count(a) == 1 and s.count(b) == 1, key
         s = re.sub(re.escape(a) + ".*?" + re.escape(b), lambda m: a + f'<figure class="{cls}">' + "".join(items) + "</figure>" + b, s, flags=re.S)

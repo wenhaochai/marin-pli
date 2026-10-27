@@ -1,5 +1,5 @@
-"""How much of its random initialization each weight matrix of a final checkpoint still holds (not yet run; owner
-approval first).
+"""How much of its random initialization each weight matrix of a final checkpoint still holds (run with the owner's
+approval, 2026-10-26).
 
 MuonH (matrices) and AdamH (lm_head) rescale every matrix to its starting norm after each step. If update t, of
 relative size eta_t, is orthogonal to the weights, the old weights shrink by 1/sqrt(1 + eta_t^2), so the final matrix is
@@ -39,7 +39,8 @@ def leaves(model):
             yield jax.tree_util.keystr(path), np.asarray(arr, dtype=np.float64)
 
 
-def main():
+def models():
+    """(the model at initialization, rebuilt from SEED; the model of CKPT)."""
     cfg = ts.model_config()
     vtk = ts.vtk
     trainer = vtk.TrainerConfig(mp=vtk.jmp.get_policy("p=f32,c=bfloat16"), mesh=vtk.MeshConfig(axes={"data": -1, "replica": 1, "model": 1}))
@@ -48,6 +49,11 @@ def main():
         model_key = jax.random.split(jax.random.PRNGKey(SEED), 4)[2]   # train_lm: data, loader, model, training
         init = cfg.build(Vocab, key=model_key)
         final = load_levanter_checkpoint(cfg, vtk.CKPT, Vocab=Vocab, axis_mapping=trainer.parameter_axis_mapping, key=jax.random.PRNGKey(0))
+    return init, final
+
+
+def main():
+    init, final = models()
     eta = predict.lr_schedule(ts.MODEL)
     a = float(np.exp(-np.log1p(eta ** 2).sum() / 2))
     rows = []

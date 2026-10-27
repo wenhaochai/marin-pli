@@ -1,6 +1,6 @@
 """TREC prediction of Bergsma, Dey and Hestness (2025, arXiv 2509.25380, eq. 3): L(t) = 1 - c(t)^p * t^m, t = i/T, p = 0.5,
 with c_i the weight of update i in the final weights, normalized to a maximum of 1 (shape only; c_0, the
-initialization, is dropped), for three readings of our optimizer:
+initialization, is dropped), for three readings of our optimizer and a control:
 
   momentum     MuonH and AdamH as they run (the vocab session's derivation, tmp/trec/muonh_prediction.md): every step
                W <- a_t (W - eta_t R O_t), a_t = (1 + 2 eta_t r_t + eta_t^2)^(-1/2), with r_t the outward radial part of
@@ -10,6 +10,7 @@ initialization, is dropped), for three readings of our optimizer:
                0.95; r0 = 0.004 (the final checkpoints). c_i = eta_i prod_{j>=i} a_j.
   independent  the same rescaling with steps at right angles to the weights (A = 1, r = 0): a_t = (1 + eta_t^2)^(-1/2)
   adamw-0.1    the config's weight_decay=0.1 taken at face value (AdamW): c_i = eta_i prod_{j>i} (1 - 0.1 * eta_j)
+  lr-only      the control: nothing shrinks, c_i = eta_i (the paper's F.3 limit of no weight decay)
 
 eta is the matrix learning rate logged in W&B (optim/learning_rate), one value per step.
 
@@ -43,6 +44,8 @@ def keep(eta, reading, model):
         return 1 / np.sqrt(1 + 2 * eta * r + eta ** 2)
     if reading == "independent":
         return 1 / np.sqrt(1 + eta ** 2)
+    if reading == "lr-only":
+        return np.ones_like(eta)
     assert reading == "adamw-0.1", reading
     return 1 - 0.1 * eta
 
@@ -82,7 +85,7 @@ if __name__ == "__main__":
         eta = lr_schedule(model)
         T = len(eta)
         print(model, "T", T, "peak lr", round(eta.max(), 4), "A", A[model])
-        for reading in ("momentum", "independent", "adamw-0.1"):
+        for reading in ("momentum", "independent", "adamw-0.1", "lr-only"):
             c = coefficients(eta, reading, model)
             row = ", ".join(f"m={m}: {valley(c, m):.3f}" for m in (0, 0.5, 1, 2, 4, 8))
             print(f"  {reading:11s} c peak {np.argmax(c) / T:.3f}  valley at {row}")

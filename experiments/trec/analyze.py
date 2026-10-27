@@ -23,10 +23,6 @@ import predict  # noqa: E402
 N_PARAMS = {"130m-d12": 45.6e6 + 65.7e6 + 65.7e6, "300m": 299.6e6}
 
 
-def schedule_only(eta):
-    return eta / eta.max()
-
-
 def main():
     for model, _ in bsd.PANELS:
         train, unread = bsd.scored(model)
@@ -47,11 +43,11 @@ def main():
         s = bsd.smooth(train)
         tpp = T * 128 * 4096 / N_PARAMS[model]
         print(f"  TPP {tpp:.1f}; readings (m fitted on the 100-step mean, then the paper's m*):")
-        for r in ("momentum", "independent", "adamw-0.1", "schedule-only"):
-            c = schedule_only(eta) if r == "schedule-only" else predict.coefficients(eta, r, model)
+        for r in ("momentum", "independent", "adamw-0.1", "lr-only"):
+            c = predict.coefficients(eta, r, model)
             m, rp = predict.fit_m(c, s)
             line = f"    {r:13s} c peak {(np.argmax(c) + 1) / T:.3f}; low at m=0 {predict.valley(c, 0):.3f}; fit m {m:.1f}, r {rp:.4f}, low {predict.valley(c, m):.3f}"
-            if r != "schedule-only":
+            if r != "lr-only":
                 alpha = 1 - predict.keep(np.array([eta.max()]), r, model)[0]
                 tau = 1 / (alpha * T)
                 ms = 1.4 * tpp ** 0.164 * tau ** -0.45

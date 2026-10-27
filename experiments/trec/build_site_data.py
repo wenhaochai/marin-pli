@@ -8,8 +8,8 @@ axes, legend and a status word.
   fig-trec      the final model's loss on each training batch (sum of per-sequence loss over the summed loss weights of
                 the batch, 100-step centred moving average) against the training fraction t/T, and the mean loss of the
                 unread batches, mean +- 2 standard errors over batches
-  fig-coef      c_i, the weight of update i in the final weights, for three readings of the optimizer (predict.py), each
-                divided by its maximum
+  fig-coef      c_i, the weight of update i in the final weights, for three readings of the optimizer and the control
+                without averaging (predict.py), each divided by its maximum
   fig-predict   measured TREC and the prediction 1 - c^0.5 t^m of each reading with its own best m (highest Pearson r),
                 each scaled to 0 at its low point and 1 for a forgotten batch: the unread mean for the measured curve,
                 c = 0 for a prediction (min-max over the run)
@@ -30,11 +30,12 @@ import predict  # noqa: E402
 OUT = "/scratch/gpfs/GROUP/USER/project/trec/out"
 SMOOTH = 100
 N_PLOT = 400   # points per drawn curve
-INK, BLUE, RED, GREY, BAND = "#202124", "#1A73E8", "#D93025", "#9AA0A6", "#DADCE0"
+INK, BLUE, RED, GREY, CYAN, BAND = "#202124", "#1A73E8", "#D93025", "#9AA0A6", "#007B83", "#DADCE0"
 PANELS = [("130m-d12", {"en": "130m, WSD", "zh": "130m，WSD"}), ("300m", {"en": "300m, cosine", "zh": "300m，cosine"})]
 READINGS = [("momentum", {"en": "Fixed norm, momentum", "zh": "固定范数，带动量"}, BLUE),
             ("independent", {"en": "Fixed norm, independent steps", "zh": "固定范数，各步不相关"}, GREY),
-            ("adamw-0.1", {"en": "Weight decay 0.1", "zh": "权重衰减 0.1"}, RED)]
+            ("adamw-0.1", {"en": "Weight decay 0.1", "zh": "权重衰减 0.1"}, RED),
+            ("lr-only", {"en": "Learning rate only", "zh": "只看学习率"}, CYAN)]   # the control (owner popup 2026-10-27)
 QUEUED, PLANNED = {"en": "Queued", "zh": "排队中"}, {"en": "Planned", "zh": "计划中"}
 XLABEL = {"en": "Training fraction", "zh": "训练进度"}
 XTICKS = [[v, f"{v:g}"] for v in (0, 0.25, 0.5, 0.75, 1)]
