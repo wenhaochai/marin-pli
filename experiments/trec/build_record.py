@@ -24,9 +24,9 @@ OUT = "/scratch/gpfs/GROUP/USER/project/trec/out"
 NY = zoneinfo.ZoneInfo("America/New_York")
 ROWS = [
     dict(model="130m-d12", run="muonh-qwen3-130m-della4xh100-d12", setup={"en": "WSD to zero, lr 0.02", "zh": "WSD 降到零，lr 0.02"},
-         size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=[], figs="1, 2, 3, 4"),
+         size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=["w465"], figs="1, 2, 3, 4"),
     dict(model="300m", run="muonh-qwen3-300m-della4xh100-s1-rerun", setup={"en": "Cosine to zero, lr 0.01", "zh": "cosine 降到零，lr 0.01"},
-         size="300m", layers=12, steps=11444, batches=11444 + 512, jobs=[], figs="1, 2, 3, 4, 5"),
+         size="300m", layers=12, steps=11444, batches=11444 + 512, jobs=["w465"], figs="1, 2, 3, 4, 5"),
 ] + [   # scored by the vocab session's wq w438 for its page (192 training blocks and 16 unread ones); its cost is on that page
     dict(model=None, run=f"muonh-qwen3-300m-della4xh100{tag}", setup=setup, size="300m", layers=12, steps=steps, batches=208, jobs=[], figs="5", external=True)
     for tag, setup, steps in [
@@ -35,7 +35,7 @@ ROWS = [
         ("-v8k-rep8-s1", {"en": "8K truncation, 8 passes over an eighth", "zh": "8K 截短版，一个八分之一子集读 8 遍"}, 15464),
         ("-bytes", {"en": "Bytes, unique tokens", "zh": "字节，不重复 token"}, 54248),
         ("-bytes-rep8", {"en": "Bytes, 8 passes over an eighth", "zh": "字节，一个八分之一子集读 8 遍"}, 54248)]]
-OTHER = ["w439", "w447"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check)
+OTHER = ["w439", "w447"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed)
 CODE = ""   # the public commit of trec_score.py (wenhaochai/marin-pli, branch trec) once pushed
 
 
