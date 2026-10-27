@@ -61,6 +61,10 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            read and write stay positive and bounded, as in mHC. Residual mixing stays hc's.
     depth_mhc_res="identity"  mhc with the residual mixing fixed to the identity, H <- H + w (x) F(RN(x)): only read and
                            write are learned (the m^2 residual columns of phi, their gain and biases get no gradient).
+    depth_mhc_rw="linear"  mhc with hc's signed, unbounded read and write maps (owner popup 2026-10-27, the mirror of
+                           depth_hc_rw="sigmoid"): r = e_k + (pre - read constants), w = 1 + post, where pre and post are mhc's
+                           logits (gain * projection + bias) and the constants are mhc's +8 / -8 read biases. At init r = e_k
+                           and w = 1, mhc's function up to its read leak sigmoid(-8); the residual mixing stays mhc's.
     DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
                            after each step, so that its logit scale s = ||q * g|| sqrt(d) stays <= tau: q <- q min(1, tau / s)
                            (the key gain g is not clipped). A source's logit is s cos(v, q * g), so tau bounds every logit.
@@ -343,8 +347,13 @@ class DepthArchLayer(eqx.Module):
             pre = mix["mhc", 0:m] * g["hp_scale", 0] + c["mhc", 0:m]
             post = mix["mhc", m : 2 * m] * g["hp_scale", 1] + c["mhc", m : 2 * m]
             res = mix["mhc", 2 * m :] * g["hp_scale", 2] + c["mhc", 2 * m :]
-            read = hax.nn.sigmoid(pre.rename({"mhc": "stream"}))
-            write = 2.0 * hax.nn.sigmoid(post.rename({"mhc": "stream_out"}))
+            if _mhc_rw_linear(self.config):  # hc's maps on mhc's logits: e_k plus the learned part, 1 plus the write logit
+                k_read = _mhc_constants(m, 2 * li + j)["mhc", 0:m]
+                read = ((k_read > 0).astype(jnp.float32) + pre - k_read).rename({"mhc": "stream"})
+                write = (1.0 + post).rename({"mhc": "stream_out"})
+            else:
+                read = hax.nn.sigmoid(pre.rename({"mhc": "stream"}))
+                write = 2.0 * hax.nn.sigmoid(post.rename({"mhc": "stream_out"}))
             x = hax.dot(read, Hf, axis=S)
             f = self.branch(j, x.astype(H.dtype), mask, key=keys[j], pos_ids=pos_ids)
             if _mhc_identity(self.config):  # the residual mixing fixed to the identity
@@ -392,6 +401,13 @@ def _mhc_identity(config) -> bool:
     if res not in ("sinkhorn", "identity"):
         raise ValueError(f"depth_mhc_res must be 'sinkhorn' or 'identity', got {res!r}")
     return res == "identity"
+
+
+def _mhc_rw_linear(config) -> bool:
+    rw = getattr(config, "depth_mhc_rw", "sigmoid")
+    if rw not in ("sigmoid", "linear"):
+        raise ValueError(f"depth_mhc_rw must be 'sigmoid' or 'linear', got {rw!r}")
+    return rw == "linear"
 
 
 def _hc_rw_sigmoid(config) -> bool:
@@ -515,6 +531,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_mhc_res='identity' needs mhc, got {arch!r}")
         if _hc_rw_sigmoid(config) and arch != "hc":
             raise ValueError(f"depth_hc_rw='sigmoid' needs hc, got {arch!r}")
+        if _mhc_rw_linear(config) and arch != "mhc":
+            raise ValueError(f"depth_mhc_rw='linear' needs mhc, got {arch!r}")
         if static and arch != "attnres":
             raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
         if _static(config) and arch not in ("hc", "attnres"):

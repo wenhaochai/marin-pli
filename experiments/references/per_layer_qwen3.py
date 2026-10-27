@@ -251,6 +251,7 @@ class PerLayerQwen3Config(Qwen3Config):
     depth_gain_init: str = "one"  # "lns": preln's pre-norm scales start at lns's 1/sqrt(l) (depth_arch_qwen3 docstring)
     depth_mhc_res: str = "sinkhorn"  # "identity": mhc's residual mixing fixed to I (depth_arch_qwen3 docstring)
     depth_hc_rw: str = "linear"  # "sigmoid": hc's read and write through mHC's maps r = sigmoid, w = 2 sigmoid (docstring)
+    depth_mhc_rw: str = "sigmoid"  # "linear": mhc's read and write through hc's signed maps r = e_k + ..., w = 1 + ... (docstring)
     depth_attnres_vnorm: bool = False  # attnres: every source enters the mix at unit RMS (depth_arch_qwen3 docstring)
 
     def __post_init__(self):
@@ -275,6 +276,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError(f"depth_gain_init={self.depth_gain_init!r} needs depth_arch preln, got {self.depth_arch!r}")
         if self.depth_mhc_res not in ("sinkhorn", "identity") or (self.depth_mhc_res != "sinkhorn" and self.depth_arch != "mhc"):
             raise ValueError(f"depth_mhc_res={self.depth_mhc_res!r} needs 'sinkhorn', or 'identity' with depth_arch mhc (got {self.depth_arch!r})")
+        if self.depth_mhc_rw not in ("sigmoid", "linear") or (self.depth_mhc_rw != "sigmoid" and self.depth_arch != "mhc"):
+            raise ValueError(f"depth_mhc_rw={self.depth_mhc_rw!r} needs 'sigmoid', or 'linear' with depth_arch mhc (got {self.depth_arch!r})")
         if self.depth_attnres_vnorm and (self.depth_arch != "attnres" or self.depth_route != "dynamic"):
             raise ValueError(f"depth_attnres_vnorm needs depth_arch attnres with dynamic routing, got {self.depth_arch!r} {self.depth_route!r}")
         if self.pls_separate_heads and self.pls_weight <= 0:

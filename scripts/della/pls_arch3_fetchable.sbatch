@@ -48,6 +48,8 @@
 #                                streaming CE) hold, and may new HC / AttnRes pairs run twice as fast?
 #   arch3-hcrwsig-{sep,probes}   HC with mHC's positive, bounded read / write maps (owner popup 2026-10-26 ~16:40): does
 #                                that constraint explain mHC's full cost (0.10) against HC's half (0.048)?
+#   arch3-mhcrwlin-{sep,probes}  mHC with HC's signed, unbounded read / write maps (owner popup 2026-10-27, the mirror of
+#                                hcrwsig): does a signed read/write lower mHC's cost (0.10) toward HC's (0.048)?
 #   arch3-preln-fa4thd-{sep,probes} the same check on the new stack: FA4 THD attention plus the live lse kernel (owner popup
 #                                2026-10-26 ~06:40: replaces the fa4 pair w261/w262 before it started)
 #   arch3-preln-fa4-{sep,probes} Pre-LN 48 layers with FA4 attention (owner popup 2026-10-26: validate FA4 before new pairs
@@ -103,6 +105,7 @@ case $DESIGN in
   arch3-preln-fa4thd) S="$base LAYERS=48 PDP=4 ARCH=preln ATTN_BACKEND=fa4thd";;
   arch3-hc-newstack) S="$base LAYERS=48 PDP=4 ARCH=hc ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1";;
   arch3-hcrwsig) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RW=sigmoid";;
+  arch3-mhcrwlin) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RW=linear";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
