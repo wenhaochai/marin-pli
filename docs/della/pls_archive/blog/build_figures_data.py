@@ -906,6 +906,9 @@ def sep_cost(tag, layers=48):
 
 VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
          ("amhc-mhcid-vs-d48", {"en": "mHC, residual mixing = I", "zh": "mHC，残差混合 = I"}, BLUE7),
+         # owner popup 2026-10-26 (~16:40; wq w389/w390): HC with mHC's read / write maps, beside HC itself
+         ("ahc-vs-d48-g4", {"en": "HC", "zh": "HC"}, GREY),
+         ("ahc-hcrwsig-vs-d48", {"en": "HC, read/write = sigmoid", "zh": "HC，读写 = sigmoid"}, BLUE7),
          ("aattnres-vs-d48-g4", {"en": "AttnRes (Full), seed 0", "zh": "AttnRes (Full)，种子 0"}, GREY),
          ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
          ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
@@ -926,9 +929,12 @@ OTH48 = [sep_cost("vs-d48-g4")] + [sep_cost(f"a{k}-vs-d48-g4") for k, _ in ARCH 
 w39 = [str(d) for d, v in HCD.items() if v is None]
 # owner popup 2026-10-25 (wq w147-w150): Pre-LN at 12 and 24 layers, beside its 48-layer cost; is the fall with depth HC's alone?
 HC48_S1 = sep_cost("ahc-vs-d48-s1")   # owner popup 2026-10-25, wq w178/w179
+HC48_NEW = sep_cost("ahc-fa4thd-vs-d48")   # owner popup 2026-10-26 (~16:40), wq w387/w388: HC on the new CE path
+HCNEW = "#174EA6"   # GM2 blue 900: one colour per meaning (the HC line is BLUE7, its seed 1 light blue)
 PRD = {12: sep_cost("apreln-vs-d12", 12), 24: sep_cost("apreln-vs-d24", 24), 48: sep_cost("apreln-vs-d48-g4")}
 w39p = [str(d) for d, v in PRD.items() if v is None]
 w39s = HC48_S1 is None
+w39n = HC48_NEW is None
 # the line joins only neighbouring measured depths: a depth still training leaves a gap, not an interpolated value
 HCD_SEGS, _seg = [], []
 for d, v in HCD.items():
@@ -946,19 +952,20 @@ def _segs(D):
             seg = seg + [[d, v]]
     return out + ([seg] if len(seg) > 1 else [])
 figs["fig-hc-depth"] = dict(title={"en": "Separate-heads cost of Hyper-Connections by depth", "zh": "Hyper-Connections 的独立头代价与深度"},
-                            legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "line"], [{"en": "Hyper-Connections, seed 1", "zh": "Hyper-Connections，种子 1"}, "#8AB4F8", "dot"], [{"en": "Pre-LN", "zh": "Pre-LN"}, RED, "line"], [{"en": "Other designs, 48 layers", "zh": "其他结构，48 层"}, GREY, "dot"]],
+                            legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "line"], [{"en": "Hyper-Connections, seed 1", "zh": "Hyper-Connections，种子 1"}, "#8AB4F8", "dot"], [{"en": "Hyper-Connections, new CE path", "zh": "Hyper-Connections，新 CE 路径"}, HCNEW, "ring"], [{"en": "Pre-LN", "zh": "Pre-LN"}, RED, "line"], [{"en": "Other designs, 48 layers", "zh": "其他结构，48 层"}, GREY, "dot"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
                             xlabel={"en": "Layers", "zh": "层数"}, height=200, cols=1,
                             panels=[dict(xlim=[0, 52], ylim=[-0.05, 0.15], xticks=[[d, str(d)] for d in (6, 12, 24, 48)], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
-                                         label={"en": "Last layer" + (" · HC " + ", ".join(w39) + " layers queued" if w39 else "") + (" · Pre-LN " + ", ".join(w39p) + " layers queued" if w39p else "") + (" · HC seed 1 queued" if w39s else ""),
-                                                "zh": "最后一层" + (" · HC " + "、".join(w39) + " 层排队中" if w39 else "") + (" · Pre-LN " + "、".join(w39p) + " 层排队中" if w39p else "") + (" · HC 种子 1 排队中" if w39s else "")},
+                                         label={"en": "Last layer" + (" · HC " + ", ".join(w39) + " layers queued" if w39 else "") + (" · Pre-LN " + ", ".join(w39p) + " layers queued" if w39p else "") + (" · HC seed 1 queued" if w39s else "") + (" · HC new CE path queued" if w39n else ""),
+                                                "zh": "最后一层" + (" · HC " + "、".join(w39) + " 层排队中" if w39 else "") + (" · Pre-LN " + "、".join(w39p) + " 层排队中" if w39p else "") + (" · HC 种子 1 排队中" if w39s else "") + (" · HC 新 CE 路径排队中" if w39n else "")},
                                          marks=[dict(type="line", color=BLUE7, width=1.6, alpha=1.0, pts=seg) for seg in HCD_SEGS] + [
                                                 dict(type="dots", color=BLUE7, pts=[[d, v] for d, v in HCD.items() if v is not None]),
                                                 dict(type="dots", color=GREY, pts=[[48, v] for v in OTH48 if v is not None])]
                                                + [dict(type="line", color=RED, width=1.6, alpha=1.0, pts=seg) for seg in _segs(PRD)]
                                                + [dict(type="dots", color=RED, pts=[[d, v] for d, v in PRD.items() if v is not None])]
-                                               + ([dict(type="dots", color="#8AB4F8", pts=[[49.5, HC48_S1]])] if HC48_S1 is not None else []))])
-print("Fig 39 HC cost by depth", HCD, "HC seed 1 at 48", HC48_S1, "Pre-LN", PRD, "others at 48", OTH48)
+                                               + ([dict(type="dots", color="#8AB4F8", pts=[[49.5, HC48_S1]])] if HC48_S1 is not None else [])
+                                               + ([dict(type="rings", color=HCNEW, pts=[[46.5, HC48_NEW]])] if HC48_NEW is not None else []))])
+print("Fig 39 HC cost by depth", HCD, "HC seed 1 at 48", HC48_S1, "HC new CE path at 48", HC48_NEW, "Pre-LN", PRD, "others at 48", OTH48)
 # Figure 40 (owner popups 2026-10-23): is the separate-heads cost the readouts seeing the whole state the later layers
 # read? Pre-LN separate heads whose intermediate readouts see only the first f of the hidden coordinates (PLS_VIS, wq
 # w87/w88), against the Pre-LN probes run; seed 1 of both (w89/w90) shows the seed noise of the cost at f = 1. HC (its
@@ -1045,6 +1052,41 @@ figs["fig-ar-sources"] = dict(title={"en": "Separate-heads cost by the sources e
                                            label={"en": "Layer 48" + (" · 24 blocks queued" if "Block 24" in w44 else ""), "zh": "第 48 层" + (" · 24 个块排队中" if "Block 24" in w44 else "")},
                                            marks=[dict(type="dots", color=BLUE7, pts=[[X44[k], v] for k, _, v in S44 if v is not None])])])
 print("Fig 44 cost by AttnRes sources", {k: v for k, _, v in S44})
+# Figure 45 (owner popup 2026-10-27, wq w500/w501): the Pre-LN ordinary model with probes (layer 48, final training loss)
+# on JAX-flash and fa4thd attention: the seed-0 / seed-1 JAX-flash runs and w334 (fa4thd, the new stack), and two reruns of
+# seed 0 on today's stack (-rerun), one per kernel. w334 ended 0.005 above the JAX-flash seeds.
+def fin48(tag):
+    a = G4.get(f"{tag}/final")
+    return None if a is None else round(float(a[47]), 4)
+R45_OLD = [[0, fin48("-sep-bbfrozen-apreln-vs-d48-g4")], [0, fin48("-sep-bbfrozen-apreln-vs-d48-s1")], [1, fin48("-sep-bbfrozen-apreln-fa4thd-vs-d48")]]
+R45_NEW = [[0, fin48("-sep-bbfrozen-apreln-vs-d48-rerun")], [1, fin48("-sep-bbfrozen-apreln-fa4thd-vs-d48-rerun")]]
+w45 = [k for (x, v), k in zip(R45_NEW, ("JAX flash", "fa4thd")) if v is None]
+w45z = {"JAX flash": "JAX flash", "fa4thd": "fa4thd"}
+figs["fig-stack-rerun"] = dict(title={"en": "Pre-LN ordinary model on two attention kernels, 48 layers", "zh": "两种注意力 kernel 上的 Pre-LN 普通模型，48 层"},
+                               legend=[[{"en": "Earlier runs", "zh": "已有的运行"}, GREY, "dot"], [{"en": "Reruns of seed 0", "zh": "种子 0 的重跑"}, BLUE7, "dot"]],
+                               quantity={"en": "Last-layer training loss (nats)", "zh": "最后一层训练损失（nats）"},
+                               xlabel={"en": "Attention kernel", "zh": "注意力 kernel"}, height=200, cols=1,
+                               panels=[dict(xlim=[-0.6, 1.6], ylim=[2.97, 3.0], xticks=[[0, "JAX flash"], [1, "fa4thd"]], yticks=lin_ticks(2.97, 3.0, 0.01, "{:.2f}"),
+                                            label={"en": "Layer 48, probes model" + (" · reruns queued: " + ", ".join(w45) if w45 else ""),
+                                                   "zh": "第 48 层，普通模型加探针" + (" · 重跑排队中：" + "、".join(w45z[k] for k in w45) if w45 else "")},
+                                            marks=[dict(type="dots", color=GREY, pts=[p for p in R45_OLD if p[1] is not None]),
+                                                   dict(type="dots", color=BLUE7, pts=[p for p in R45_NEW if p[1] is not None])])])
+print("Fig 45 Pre-LN probes model by kernel", R45_OLD, R45_NEW)
+# Figure 46 (owner popup 2026-10-27, wq w503-w505): separate heads whose intermediate losses stop at 50% / 80% of training
+# (PLS_OFF=2480 / 3967), last-layer final training loss against the share of training that had them: 0 = the ordinary
+# model with probes, 1 = separate heads all run (the seed-0 pairs). Pre-LN at 50% and 80%, HC at 80%.
+S46 = {"preln": [[0, fin48("-sep-bbfrozen-apreln-vs-d48-g4")], [0.5, fin48("-sep-off2480-apreln-vs-d48")], [0.8, fin48("-sep-off3967-apreln-vs-d48")], [1, fin48("-sep-apreln-vs-d48-g4")]],
+       "hc": [[0, fin48("-sep-bbfrozen-ahc-vs-d48-g4")], [0.8, fin48("-sep-off3967-ahc-vs-d48")], [1, fin48("-sep-ahc-vs-d48-g4")]]}
+w46 = (["Pre-LN 50%"] if S46["preln"][1][1] is None else []) + (["Pre-LN 80%"] if S46["preln"][2][1] is None else []) + (["HC 80%"] if S46["hc"][1][1] is None else [])
+figs["fig-switchoff"] = dict(title={"en": "Separate heads stopped during training, 48 layers", "zh": "训练中途停掉独立头损失，48 层"},
+                             legend=[[{"en": "Pre-LN", "zh": "Pre-LN"}, RED, "dot"], [{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "dot"]],
+                             quantity={"en": "Last-layer training loss (nats)", "zh": "最后一层训练损失（nats）"},
+                             xlabel={"en": "Share of training with intermediate losses", "zh": "带中间层损失训练的比例"}, height=200, cols=1,
+                             panels=[dict(xlim=[-0.08, 1.08], ylim=[2.92, 3.08], xticks=[[0, "0%"], [0.5, "50%"], [0.8, "80%"], [1, "100%"]], yticks=lin_ticks(2.92, 3.08, 0.04, "{:.2f}"),
+                                          label={"en": "Layer 48" + (" · queued: " + ", ".join(w46) if w46 else ""), "zh": "第 48 层" + (" · 排队中：" + "、".join(w46) if w46 else "")},
+                                          marks=[dict(type="dots", color=RED, pts=[p for p in S46["preln"] if p[1] is not None]),
+                                                 dict(type="dots", color=BLUE7, pts=[p for p in S46["hc"] if p[1] is not None])])])
+print("Fig 46 switch-off", S46)
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

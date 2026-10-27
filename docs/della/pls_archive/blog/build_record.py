@@ -122,6 +122,22 @@ RUNS = [
     (S("Hyper-Connections, 8 residual streams: probes only", "Hyper-Connections，8 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w222", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs8-vs-d48"), "43"),
     (S("AttnRes (Block), 24 blocks: separate heads", "AttnRes (Block)，24 个块：独立头"), "130m", 48, 2.6, 4, ("wq", "w223", "130m-della4xh100-pls1-sep-aattnres_block-arb24-vs-d48"), "44"),
     (S("AttnRes (Block), 24 blocks: probes only", "AttnRes (Block)，24 个块：只加探针"), "130m", 48, 2.6, 4, ("wq", "w224", "130m-della4xh100-pls1-sep-bbfrozen-aattnres_block-arb24-vs-d48"), "44"),
+    # owner popup 2026-10-26 (~06:40): the speed stack (FA4 THD attention, lse kernel) checked on Pre-LN 48 layers before new
+    # pairs use it; its cost must match the JAX-flash 0.089 / 0.092 within seed noise (replaces the fa4 pair w261/w262)
+    (S("Pre-LN, new speed stack (FA4 attention, fused CE kernel): separate heads", "Pre-LN，新加速组合（FA4 attention、融合 CE kernel）：独立头"), "130m", 48, 2.6, 4, ("wq", "w333", "130m-della4xh100-pls1-sep-apreln-fa4thd-vs-d48"), ""),
+    (S("Pre-LN, new speed stack (FA4 attention, fused CE kernel): probes only", "Pre-LN，新加速组合（FA4 attention、融合 CE kernel）：只加探针"), "130m", 48, 2.6, 4, ("wq", "w334", "130m-della4xh100-pls1-sep-bbfrozen-apreln-fa4thd-vs-d48"), ""),
+    # owner popup 2026-10-26 (~16:40): HC on the new CE path (Figure 39) and HC with mHC's read / write maps (Figure 38)
+    (S("Hyper-Connections, new CE path: separate heads", "Hyper-Connections，新 CE 路径：独立头"), "130m", 48, 2.6, 4, ("wq", "w387", "130m-della4xh100-pls1-sep-ahc-fa4thd-vs-d48"), "39"),
+    (S("Hyper-Connections, new CE path: probes only", "Hyper-Connections，新 CE 路径：只加探针"), "130m", 48, 2.6, 4, ("wq", "w388", "130m-della4xh100-pls1-sep-bbfrozen-ahc-fa4thd-vs-d48"), "39"),
+    (S("Hyper-Connections, read/write = sigmoid: separate heads", "Hyper-Connections，读写 = sigmoid：独立头"), "130m", 48, 2.6, 4, ("wq", "w389", "130m-della4xh100-pls1-sep-ahc-hcrwsig-vs-d48"), "38"),
+    (S("Hyper-Connections, read/write = sigmoid: probes only", "Hyper-Connections，读写 = sigmoid：只加探针"), "130m", 48, 2.6, 4, ("wq", "w390", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcrwsig-vs-d48"), "38"),
+    # owner popups 2026-10-27: reruns of the Pre-LN probes model on both attention kernels (Figure 45); separate heads whose
+    # intermediate losses stop at 50% / 80% of training (Figure 46)
+    (S("Pre-LN, rerun of seed 0 on JAX-flash attention: probes only", "Pre-LN，种子 0 在 JAX flash 注意力上重跑：只加探针"), "130m", 48, 2.6, 4, ("wq", "w500", "130m-della4xh100-pls1-sep-bbfrozen-apreln-vs-d48-rerun"), "45"),
+    (S("Pre-LN, rerun of seed 0 on fa4thd attention: probes only", "Pre-LN，种子 0 在 fa4thd 注意力上重跑：只加探针"), "130m", 48, 2.6, 4, ("wq", "w501", "130m-della4xh100-pls1-sep-bbfrozen-apreln-fa4thd-vs-d48-rerun"), "45"),
+    (S("Pre-LN, separate heads stopped at 50% of training", "Pre-LN，独立头损失在训练 50% 处停掉"), "130m", 48, 2.6, 4, ("wq", "w503", "130m-della4xh100-pls1-sep-off2480-apreln-vs-d48"), "46"),
+    (S("Pre-LN, separate heads stopped at 80% of training", "Pre-LN，独立头损失在训练 80% 处停掉"), "130m", 48, 2.6, 4, ("wq", "w504", "130m-della4xh100-pls1-sep-off3967-apreln-vs-d48"), "46"),
+    (S("Hyper-Connections, separate heads stopped at 80% of training", "Hyper-Connections，独立头损失在训练 80% 处停掉"), "130m", 48, 2.6, 4, ("wq", "w505", "130m-della4xh100-pls1-sep-off3967-ahc-vs-d48"), "46"),
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
     *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),
