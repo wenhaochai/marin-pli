@@ -271,6 +271,16 @@ no use: the default fmlpo already saves the MLP's gate, up and output, the proje
 flash (fproj, w329/w330), fdots' gain over flash was the MLP recompute, and REMAT=none needs 179 GiB. The draft would
 also leave the dispatch on the critical path between steps, so it was dropped.
 
+**Time outside the train step (2026-10-26 ~22:30; w213 log, 300m 128K, 11444 steps, task 6831 s).** Startup to the first
+step 35 s; the first step 11.8 s with its compile (trace 2.3 s, lower 1.0 s; the CuTeDSL kernel cache and the JAX
+persistent cache in cache/jax already hit: 44 GB, 1170 entries written since 10-25); 12 full evaluations of ~25 s (300 s,
+4.4%; 20 s each with the bundle's eval lse kernel); 12 checkpoints of ~2 s; ~40 s after the last step (final evaluation,
+W&B finish). In all ~6% of the task, plus the pack's 91 s smoke. The evaluation is near its floor: it is all 16 Paloma
+validation sets, 59.55M tokens in 14545 sequences, so its 114 batches carry almost no padding; the loop accumulates on the
+device without a host sync per batch; and a batch takes ~175 ms against ~150 ms for the forward share of a train step.
+Making it cheaper means fewer or smaller evaluations between the first and the last (m2d2_s2orc alone is 16.8M tokens;
+c4_100_domains, dolma_100_subreddits and the programming languages 8.5-9.5M each): a protocol choice, not infra.
+
 ## Measured baseline (logs, 4x H100)
 
 | Run | SEQ_LEN | flash block | s/step |
