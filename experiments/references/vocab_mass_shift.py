@@ -15,7 +15,9 @@ every scored position, sums per Paloma subset:
   tcount [V]  the number of such positions
 and the number of scored positions. vocab_mass_shift_groups.py groups them by each token's count in the repeated eighth.
 
-    CKPT_U=<...> CKPT_R=<...> SIZE=300m [VOCAB_K=8000] OUT=<file.npz> [MAX_WINDOWS=N] python -m experiments.references.vocab_mass_shift
+    CKPT_U=<...> CKPT_R=<...> SIZE=300m [VOCAB_K=8000] OUT=<file.npz> [MAX_WINDOWS=N] [SUBSETS=a,b] python -m experiments.references.vocab_mass_shift
+
+SUBSETS limits the run to those Paloma subsets, so a long vocabulary can be split over several GPUs (one shard file each).
 """
 
 import os
@@ -41,6 +43,7 @@ from levanter.utils.tree_utils import inference_mode  # noqa: E402
 import experiments.references.vocab_token_losses as vtk  # noqa: E402
 
 CKPT_U, CKPT_R, OUT = os.environ["CKPT_U"], os.environ["CKPT_R"], os.environ["OUT"]
+SUBSETS = [x for x in os.environ.get("SUBSETS", "").split(",") if x]
 
 
 def main():
@@ -78,6 +81,8 @@ def main():
                     jnp.zeros(n_real, jnp.float32).at[tgt].add(dt), jnp.zeros(n_real, jnp.float32).at[tgt].add(w), jnp.sum(w))
 
         for name, ds in data.validation_sets(Pos).items():
+            if SUBSETS and name not in SUBSETS:
+                continue
             t0 = time.time()
             n = len(ds.as_sync_dataset())
             if vtk.MAX_WINDOWS:
