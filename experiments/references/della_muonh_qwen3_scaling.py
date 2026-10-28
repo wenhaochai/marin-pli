@@ -227,6 +227,9 @@ SMOKE_CKPT_SECONDS = int(os.environ.get("SMOKE_CKPT_SECONDS", "0"))
 # SMOKE_FULL_EVAL=1: the smoke's evaluations run every Paloma batch, as a real run's do (by default a smoke evaluates one
 # batch), so a memory check sees the real eval's allocations.
 SMOKE_FULL_EVAL = os.environ.get("SMOKE_FULL_EVAL", "0") == "1"
+# EVAL_EVERY: steps between Paloma evaluations at the base schedule (TPP 20, Marin tokenizer); longer schedules scale it
+# as below. 2000 since 2026-10-27 (owner popup, infra goal: 12 evaluations were 4.4% of a 128K run; 1000 before).
+EVAL_EVERY = int(os.environ.get("EVAL_EVERY", "2000"))
 VARIANT = os.environ.get("VARIANT", "baseline")  # baseline | fbt | ss | twin | sr | twinsr
 DEVICE_TAG = os.environ.get("DEVICE_TAG", "h100")  # run ids carry the GPU type so an A100 copy is a separate run
 # PRECISION=fp8 quantizes every Linear to FP8 (delayed scaling, E4M3 forward / E5M2 gradients); H100 only.
@@ -574,15 +577,15 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
-    eval_every = 1000
+    eval_every = EVAL_EVERY
     if TPP != 20:   # before the vocabulary ratio: the same text, TPP/20 times as long
         s = dict(s, steps=round(s["steps"] * TPP / 20))
-        eval_every = 1000 * max(1, round(TPP / 40))
+        eval_every = EVAL_EVERY * max(1, round(TPP / 40))
     if VOCAB_NAME:
         s = dict(s, steps=round(s["steps"] * _vocab_ratio(VOCAB_K)))   # fixed text: more steps for the same text
-        # bytes (4.7x the steps): evaluate every round(ratio) x 1000 steps, about as often per text as the Marin
-        # tokenizer's runs; ratios below 1.5 (64K-8K) keep 1000
-        eval_every = max(eval_every, 1000 * max(1, round(_vocab_ratio(VOCAB_K))))
+        # bytes (4.7x the steps): evaluate every round(ratio) x EVAL_EVERY steps, about as often per text as the Marin
+        # tokenizer's runs; ratios below 1.5 (64K-8K) keep EVAL_EVERY
+        eval_every = max(eval_every, EVAL_EVERY * max(1, round(_vocab_ratio(VOCAB_K))))
     if BATCH or SEQ_LEN != 4096:   # the same tokens in steps of BATCH x SEQ_LEN
         b = BATCH or s["batch"]
         s = dict(s, batch=b, steps=round(s["steps"] * s["batch"] * 4096 / (b * SEQ_LEN)))
