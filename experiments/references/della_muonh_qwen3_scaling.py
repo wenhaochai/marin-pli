@@ -51,6 +51,7 @@ from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
 from levanter.models.qwen import Qwen3Config
 from levanter.optim.muonh import MuonHConfig
+from levanter.optim.muon import MuonConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
 from levanter.callbacks.profiler import ProfilerConfig, XprofUploadConfig
@@ -550,6 +551,18 @@ LR_DECAY = float(os.environ.get("LR_DECAY", "0.2"))
 MIN_LR_RATIO = float(os.environ.get("MIN_LR_RATIO", "0"))
 if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO < 1:
     raise ValueError(f"LR_SCHED={LR_SCHED!r} LR_DECAY={LR_DECAY} MIN_LR_RATIO={MIN_LR_RATIO}: LR_SCHED is empty or wsd, 0 < LR_DECAY < 1, 0 <= MIN_LR_RATIO < 1")
+# OPT=muon (owner 2026-10-28: "换一个标准muon用很高的weight decay，大于1"; popup "128K+8K x wd 0.1/1.6/3.2"): standard Muon
+# (Levanter MuonConfig, decoupled decay p -= lr * wd * p on the Muon matrices and the AdamW group) instead of MuonH, with the
+# 300m 1x-Chinchilla optimum of Wen et al. 2025 (arXiv 2509.02046, Table 86): lr 0.008, adam lr 0.0024, beta1 0.8, beta2
+# 0.98, eps 1e-15, momentum 0.98, muon eps 1e-5, linear schedule decaying over the last 80% of the steps, no warmup, max grad
+# norm 1, and weight decay MUON_WD (their optimum 0.1; Kim et al. 2025, arXiv 2509.14786, find 1.6 at 300M on repeated
+# data). Levanter's default mask decays every Linear (the Muon matrices and lm_head), not the embedding or the norms.
+# 300m, VARIANT=baseline only. The norm guard (LEVANTER_NORM_GUARD) assumes MuonH's constant norms, so it must be 0.
+# Tag -muonwd<MUON_WD>.
+OPT = os.environ.get("OPT", "muonh")
+MUON_WD = float(os.environ.get("MUON_WD", "0.1"))
+if OPT not in ("muonh", "muon"):
+    raise ValueError(f"OPT={OPT!r}: muonh or muon")
 # CVD_RATE_COUNT=C (survey idea 4, owner popup 2026-10-21): with VARIANT=cvd on the Marin tokenizer at 300m, a rare token
 # with c occurrences in the 1/8 subset is replaced with probability CVD_P * min(1, C / c) (subset_counts_300m_v128k.npy,
 # pass 1 of the rs cache). Tag -rc<C> after -p<CVD_P>.
@@ -648,6 +661,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-wsd{LR_DECAY:g}"
     if MIN_LR_RATIO:
         variant_tags += f"-minlr{MIN_LR_RATIO:g}"
+    if OPT == "muon":
+        variant_tags += f"-muonwd{MUON_WD:g}"
     if DTP:
         variant_tags += f"-dtp{DTP:g}-fp{DTP_FROM_PASS}"
     if VARIANT == "inoise":
@@ -958,6 +973,29 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         coefficient_type="simple",
         **opt_extra,
     )
+    if OPT == "muon":
+        if not (size == "300m" and VARIANT == "baseline" and opt_cls is MuonHConfig and not LR_SCHED and not MIN_LR_RATIO and MUON_WD >= 0):
+            raise ValueError("OPT=muon: the 300m Table 86 recipe, VARIANT=baseline, no other optimizer or schedule knob")
+        if float(os.environ.get("LEVANTER_NORM_GUARD", "0") or 0) > 0:
+            raise ValueError("OPT=muon: set LEVANTER_NORM_GUARD=0 (the guard assumes MuonH's constant norms)")
+        optimizer = MuonConfig(
+            learning_rate=0.008,
+            adam_lr=0.0024,
+            beta1=0.8,
+            beta2=0.98,
+            epsilon=1e-15,
+            momentum=0.98,
+            nesterov=True,
+            backend_steps=5,
+            muon_epsilon=1e-5,
+            max_grad_norm=1.0,
+            weight_decay=MUON_WD,
+            lr_schedule="linear",
+            decay=0.8,
+            warmup=0,
+            min_lr_ratio=0.0,
+            coefficient_type="simple",   # as the MuonH runs here (the originals' fixed iteration)
+        )
 
     def build_config(ctx: StepContext) -> TrainLmOnPodConfig:
         if VOCAB_NAME:
