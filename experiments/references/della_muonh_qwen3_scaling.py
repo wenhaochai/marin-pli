@@ -38,6 +38,7 @@ from levanter.checkpoint import CheckpointerConfig
 from levanter.layers.attention import AttentionBackend
 from levanter.main import train_lm
 from levanter.models.qwen import Qwen3Config
+from levanter.optim.config import InvSqrtDecayLrSchedule, LrSchedule, LrScheduleContext
 from levanter.optim.muonh import MuonHConfig
 from levanter.tracker.wandb import WandbConfig
 from levanter.trainer import TrainerConfig
@@ -156,6 +157,37 @@ LAYERS = int(os.environ.get("LAYERS", "0"))
 # Run tags -lrm{LR_MUL}, -wu{WARMUP}.
 LR_MUL = float(os.environ.get("LR_MUL", "1"))
 WARMUP = int(os.environ["WARMUP"]) if os.environ.get("WARMUP") else None
+# LR_SCHEDULE (default: the size's own) = rsqrt: the equal-weight schedule of kexue.fm/archives/11459 (TREC branch
+# trec-rsqrt, owner popup 2026-10-28). MuonH's fixed norm shrinks the weights by about 1 - A eta^2 / 2 every step (A the
+# two-sided sum of the step autocorrelation: 23 at momentum 0.95, 73 at 0.98), a weight decay lambda = A eta / 2 that
+# follows eta, and then every step keeps the same weight in the final model when eta_s = eta_max / sqrt(1 + A eta_max^2 s).
+# rsqrtcd: the same for the first 80% of the steps, then linear to 0. Both groups (MuonH and its Adam group) follow it,
+# as they follow the size's own schedule; no warmup. Run tags -rsqrt, -rsqrtcd.
+LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "")
+if LR_SCHEDULE not in ("", "rsqrt", "rsqrtcd"):
+    raise ValueError(f"LR_SCHEDULE must be rsqrt or rsqrtcd, got {LR_SCHEDULE}")
+STEP_AUTOCORR = {0.95: 23.0, 0.98: 73.0}
+
+
+@LrSchedule.register_subclass("inv_sqrt_cooldown")
+@dataclasses.dataclass(frozen=True)
+class InvSqrtCooldownLrSchedule(LrSchedule):
+    """lr / sqrt(1 + c t / T) up to step (1 - cooldown) T, then linear from there to 0 at step T."""
+
+    decay_constant: float = 45.6
+    cooldown: float = 0.2
+
+    def build(self, ctx: LrScheduleContext):
+        import jax.numpy as jnp
+
+        T, c, lr = ctx.decay_steps, self.decay_constant, ctx.learning_rate
+        t0 = round((1 - self.cooldown) * T)
+        at_t0 = lr / (1.0 + c * t0 / T) ** 0.5
+
+        def schedule(count):
+            return jnp.where(count < t0, lr / jnp.sqrt(1.0 + c * count / T), at_t0 * jnp.clip((T - count) / (T - t0), 0.0, 1.0))
+
+        return schedule
 if LR_MUL <= 0 or (WARMUP is not None and WARMUP < 0):
     raise ValueError(f"LR_MUL must be > 0 and WARMUP >= 0, got {LR_MUL}, {WARMUP}")
 # EMA_BETA > 0 keeps an exponential moving average of the weights (levanter ModelAveraging) and evaluates it alongside the
@@ -266,6 +298,16 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
     remote(run_levanter_train_lm, resources=config.resources, env_vars=env)(dataclasses.replace(config, env_vars=env))
 
 
+def _lr_schedule(s):
+    if not LR_SCHEDULE:
+        return s["schedule"]
+    if s["warmup"] if WARMUP is None else WARMUP:
+        raise ValueError("LR_SCHEDULE starts at the peak learning rate: it takes no warmup")
+    T = SMOKE_STEPS or TOTAL_STEPS or s["steps"]   # the schedule spans the run: lr / sqrt(1 + c t / T), c = A eta_max^2 T
+    c = STEP_AUTOCORR[s["momentum"]] * (s["lr"] * LR_MUL) ** 2 * T
+    return InvSqrtDecayLrSchedule(decay_constant=c) if LR_SCHEDULE == "rsqrt" else InvSqrtCooldownLrSchedule(decay_constant=c)
+
+
 def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     s = SIZES[size]
     pdp = int(os.environ.get("PDP", PER_DEVICE_PARALLELISM.get(size, -1)))
@@ -314,6 +356,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += {"rep": "-dp", "vocab": "-vs"}[PARAM_MAP]
     if LAYERS:
         variant_tags += f"-d{LAYERS}"
+    if LR_SCHEDULE:
+        variant_tags += f"-{LR_SCHEDULE}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
     if LR_MUL != 1:
@@ -430,8 +474,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         muon_epsilon=1e-5,
         max_grad_norm=s["max_grad_norm"],
         weight_decay=0.1,
-        lr_schedule=s["schedule"],
-        decay=s["decay"],
+        lr_schedule=_lr_schedule(s),
+        decay=None if LR_SCHEDULE else s["decay"],
         warmup=HEADS_WARMUP if HEADS_FROM else (s["warmup"] if WARMUP is None else WARMUP),
         min_lr_ratio=0.0,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
