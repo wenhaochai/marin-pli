@@ -40,7 +40,52 @@ ROWS = [
         ("-bytes-rep8", "Bytes, 8 passes over an eighth", "字节，一个八分之一子集读 8 遍", 0, 54248),
         ("-bytes-s1", "Bytes, unique tokens", "字节，不重复 token", 1, 54248),
         ("-bytes-rep8-s1", "Bytes, 8 passes over an eighth", "字节，一个八分之一子集读 8 遍", 1, 54248)]]
-OTHER = ["w439", "w447"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed)
+P = "muonh-qwen3-"
+# Figures 6 and 7 (owner popups 2026-10-27): the other MuonH checkpoints, 1 in 8 training batches (blocks of 8 steps every
+# 64, plus the last 8) and 512 unread ones, none for the runs that read their data more than once; wq w513 and w514
+# (scripts/della/trec-runs-*.sbatch). Layers and steps come from the W&B config (experiments/trec/fetch_wandb.py).
+NEW = [(f"{P}130m-della4xh100-d{n}", "", f"{n} layers, WSD to zero, lr 0.02", f"{n} 层，WSD 降到零，lr 0.02", "130m", "w513", "6")
+       for n in (1, 2, 3, 4, 5, 24, 36)] + [
+    (f"{P}300m-della8xh100-pls0-noev", "", "Cosine to zero, lr 0.01, seed 0", "cosine 降到零，lr 0.01，种子 0", "300m", "w513", "6"),
+    (f"{P}520m-della8xh100-pls0-noev", "", "1.04 passes over the data", "数据读 1.04 遍", "520m", "w513", "7"),
+    (f"{P}1_2b-della8xh100-pls0-noev", "", "2.40 passes over the data", "数据读 2.40 遍", "1.2b", "w513", "7"),
+    (f"{P}300m-della4xh100-v8k", "", "8K truncation, seed 0", "8K 截短版，种子 0", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-v8k-s1", "", "8K truncation, seed 1", "8K 截短版，种子 1", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-lrx2-fp2-v8k", "", "8K, learning rate x2 from step T/8", "8K，从第 T/8 步起学习率 ×2", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-lrx3-fp2-v8k", "", "8K, learning rate x3 from step T/8", "8K，从第 T/8 步起学习率 ×3", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-lrx4-fp2-v8k", "", "8K, learning rate x4 from step T/8", "8K，从第 T/8 步起学习率 ×4", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-ema0.999", "", "EMA 0.999, raw weights", "EMA 0.999，原始权重", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-ema0.999", "-ema", "EMA 0.999, EMA weights", "EMA 0.999，EMA 权重", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-ema0.9998", "", "EMA 0.9998, raw weights", "EMA 0.9998，原始权重", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-ema0.9998", "-ema", "EMA 0.9998, EMA weights", "EMA 0.9998，EMA 权重", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-b96", "", "Batch 96", "batch 96", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-v16k", "", "16K truncation", "16K 截短版", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-v32k", "", "32K truncation", "32K 截短版", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-v64k", "", "64K truncation", "64K 截短版", "300m", "w514", "6"),
+    (f"{P}300m-della4xh100-bytes", "", "Bytes, seed 0", "字节，种子 0", "300m", "w514", "6"),
+    (f"{P}130m-della4xh100-tpp200", "", "10x steps, 2.60 passes, seed 0", "10 倍步数，读 2.60 遍，种子 0", "130m", "w514", "7"),
+    (f"{P}130m-della4xh100-tpp200-s1", "", "10x steps, 2.60 passes, seed 1", "10 倍步数，读 2.60 遍，种子 1", "130m", "w514", "7")]
+N_SEQ = 2441406   # sequences of fineweb-edu-10B under the Marin tokenizer (w465 log)
+
+
+def sampled(steps, tail):
+    t = np.arange(steps)
+    return len(np.union1d(t[t % 64 < 8], t[-8:])) + tail
+
+
+def new_rows():
+    rows = []
+    for run, sfx, en, zh, size, w, figs in NEW:
+        cfg = json.load(open(f"/scratch/gpfs/GROUP/USER/project/trec/cache/wandb/{run}.json"))["config"]
+        steps, batch = cfg["trainer"]["num_train_steps"], cfg["trainer"]["train_batch_size"]
+        once = "-v" in run or "-bytes" in run or steps * batch <= N_SEQ   # the K-token streams hold more sequences
+        rows.append(dict(model=None, run=run, out=f"runs/{run}{sfx}", setup={"en": en, "zh": zh}, size=size, layers=cfg["model"]["num_layers"],
+                         steps=steps, batches=sampled(steps, 512 if once else 0), jobs=[w], figs=figs))
+    return rows
+
+
+ROWS += new_rows()
+OTHER = ["w439", "w447", "w512"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke)
 CODE = "https://github.com/wenhaochai/marin-pli/tree/09e8580bd6be1240572b858130a2df0411f68bef"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-27 (Figure 5 second seed)
 
 
@@ -88,8 +133,8 @@ def main():
                 row["gpus"] = int(spec["gpus"])
                 row["submitted"] = row["submitted"] or iso(spec["submitted"])
                 row["segments"] += [[iso(s), iso(e) if e else None] for s, e in runs_of(state)]
-                share = [scoring_seconds(q["run"]) for q in ROWS if w in q["jobs"]]
-                mine = scoring_seconds(r["run"])
+                share = [scoring_seconds(q.get("out", q["run"])) for q in ROWS if w in q["jobs"]]
+                mine = scoring_seconds(r.get("out", r["run"]))
                 row["hours"] += gpu_hours(w) / int(spec["gpus"]) * (mine / sum(share) if sum(share) else 1 / len(share))
             bad = [s for s in states if s in ("failed", "cancelled")]
             if bad:

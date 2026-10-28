@@ -74,6 +74,14 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   cluster user and group 0).
   Website: pretrain-practice e2d3fef; the main merge waits for the owner's weekly approval.
 
+## Other checkpoints (owner popups 2026-10-27, running)
+- 24 more final MuonH checkpoints, one setting changed per group: depth (130m d1-d5, d24, d36), size (pls0-noev 300m,
+  520m, 1.2b), learning rate (300m v8k, lrx2/3/4 from step T/8), EMA (ema0.999, ema0.9998; raw and averaged weights),
+  training length (130m tpp200, two seeds), batch (b96), tokenizer (v16k, v32k, v64k, bytes) and seed (v8k-s1).
+  1 in 8 training batches (blocks of 8 steps every 64) plus 512 unread ones; jobs w512 (smoke), w513, w514.
+- The fineweb-edu-10B stream has 2,441,406 sequences: 520m (1.04 passes), 1.2b (2.40) and 130m tpp200 (2.60) read it
+  more than once and have no unread batches. Owner: a separate figure for these, as their own question.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.
