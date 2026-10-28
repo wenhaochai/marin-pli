@@ -541,6 +541,15 @@ EMBED_WD_FROM_PASS = int(os.environ.get("EMBED_WD_FROM_PASS", "0"))
 # the same step, total steps / 8 * (p - 1), where pass p would start in the 8-pass run.
 LR_MULT = float(os.environ.get("LR_MULT", "0"))
 LR_MULT_FROM_PASS = int(os.environ.get("LR_MULT_FROM_PASS", "0"))
+# LR_SCHED=wsd (owner popup 2026-10-28, "A WSD+EMA"): after warmup the learning rate stays at its peak, then falls linearly to
+# MIN_LR_RATIO x peak over the last LR_DECAY of the steps (Levanter linear schedule with decay=LR_DECAY), instead of the
+# size's cosine. MIN_LR_RATIO=r (owner popup 2026-10-28, "B 余弦底 30%"): the schedule ends at r x peak, not 0. Both act on
+# the main and the Adam rate alike, in unique-token and repeated runs alike. Tags -wsd<LR_DECAY>, -minlr<r>.
+LR_SCHED = os.environ.get("LR_SCHED", "")
+LR_DECAY = float(os.environ.get("LR_DECAY", "0.2"))
+MIN_LR_RATIO = float(os.environ.get("MIN_LR_RATIO", "0"))
+if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO < 1:
+    raise ValueError(f"LR_SCHED={LR_SCHED!r} LR_DECAY={LR_DECAY} MIN_LR_RATIO={MIN_LR_RATIO}: LR_SCHED is empty or wsd, 0 < LR_DECAY < 1, 0 <= MIN_LR_RATIO < 1")
 # CVD_RATE_COUNT=C (survey idea 4, owner popup 2026-10-21): with VARIANT=cvd on the Marin tokenizer at 300m, a rare token
 # with c occurrences in the 1/8 subset is replaced with probability CVD_P * min(1, C / c) (subset_counts_300m_v128k.npy,
 # pass 1 of the rs cache). Tag -rc<C> after -p<CVD_P>.
@@ -635,6 +644,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-ewd{EMBED_WD_PERIOD:g}-fp{EMBED_WD_FROM_PASS}"
     if LR_MULT:
         variant_tags += f"-lrx{LR_MULT:g}-fp{LR_MULT_FROM_PASS}"
+    if LR_SCHED == "wsd":
+        variant_tags += f"-wsd{LR_DECAY:g}"
+    if MIN_LR_RATIO:
+        variant_tags += f"-minlr{MIN_LR_RATIO:g}"
     if DTP:
         variant_tags += f"-dtp{DTP:g}-fp{DTP_FROM_PASS}"
     if VARIANT == "inoise":
@@ -937,10 +950,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         # norm, and the Adam group (embeddings, vectors) has no decay; the upstream recipe passes none either. The 0.1 only
         # reaches the logged config, so no note or page should describe these runs as using weight decay 0.1.
         weight_decay=0.1,
-        lr_schedule=s["schedule"],
-        decay=s["decay"],
+        lr_schedule="linear" if LR_SCHED == "wsd" else s["schedule"],
+        decay=LR_DECAY if LR_SCHED == "wsd" else s["decay"],
         warmup=s["warmup"],
-        min_lr_ratio=0.0,
+        min_lr_ratio=MIN_LR_RATIO,
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
         **opt_extra,
