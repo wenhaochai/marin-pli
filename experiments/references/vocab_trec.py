@@ -35,6 +35,8 @@ SEQ = int(os.environ.get("SEQ_LEN", "4096"))
 # the unique-token run's own data config: no repetition, no variant
 for k in ("PASS_DATA", "VARIANT", "SMOKE_STEPS", "TOTAL_STEPS", "BATCH", "TPP", "SEED", "DATA_EPOCHS"):
     os.environ.pop(k, None)
+if os.environ.get("TREC_BATCH"):   # trec_score: a run trained at another batch size (-b96) reads the same stream in other batches
+    os.environ["BATCH"] = os.environ["TREC_BATCH"]
 os.environ.update(SIZE=SIZE, DRY_RUN="1", MEMSTATS_EVERY="0")
 if K:
     os.environ["VOCAB_K"] = str(K)

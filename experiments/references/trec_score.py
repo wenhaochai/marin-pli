@@ -10,30 +10,54 @@ train_lm builds it (training_batches()); batch t = indices t*128 .. t*128+127 of
 4959 batches of the 300m stream (same cache, seed, permutation and batch), so its tail batches are taken after step
 11444, where neither size read, and the two models are scored on the same unread text.
 
+RUN=<W&B run id> (owner popups 2026-10-27: the other MuonH checkpoints, one setting changed at a time) takes the model
+shape, batch size, step count and tokenizer from the run's cached W&B config (experiments/trec/fetch_wandb.py) instead of
+MODEL. A batch of 128 reads the stream above, 96 the same stream in batches of 96 (-b96), 256 the 520m stream (520m and
+1.2b); the 130m runs of 4959 steps or fewer take their tail after step 11444 as above. A run that read its stream more
+than once (520m 1.04 passes, 1.2b 2.40, 130m -tpp200 2.60; levanter restarts a finished dataset) has no unread batches
+and gets no tail. SUBPATH=model_averaging/model scores the EMA weights of an -ema run instead of the raw ones.
+
 STEPS=all scores the run's T training batches and N_TAIL batches spread evenly over the unread part of the stream;
-STEPS=smoke the last 12 and first 4 training batches and 4 tail batches (the last ones must match the W&B train loss,
-since the schedules end at lr 0). Results go to OUT/<first index>.npz per chunk of CHUNK stream indices (index [n],
-seq_loss [n, B] summed nats, seq_weight [n, B] loss weights, seconds); a rerun skips the chunks present, so the job
-resumes where it stopped.
+SAMPLE=s scores 1 in s of the training batches, as blocks of BLOCK consecutive steps every s * BLOCK steps, plus the
+last BLOCK steps; STEPS=smoke the last 12 and first 4 training batches and 4 tail batches (the last ones must match the
+W&B train loss, since the schedules end at lr 0). Results go to OUT/<first index>.npz per chunk of CHUNK stream indices
+(index [n], seq_loss [n, B] summed nats, seq_weight [n, B] loss weights, seconds); a rerun skips the chunks present, so
+the job resumes where it stopped.
 
     CKPT=<.../checkpoints/step-N> MODEL=300m|130m-d12 [VOCAB_K=8000] OUT=<dir> [STEPS=all|smoke] [N_TAIL=512]
+    CKPT=<.../checkpoints/step-N> RUN=<run id> [SUBPATH=model_averaging/model] [SAMPLE=8 BLOCK=8] OUT=<dir> [STEPS=all|smoke]
     python -m experiments.references.trec_score
 """
 
+import json
 import os
 import time
 
 MODEL = os.environ.get("MODEL", "300m")
+RUN = os.environ.get("RUN", "")
 STEPS = os.environ.get("STEPS", "all")
 N_TAIL = int(os.environ.get("N_TAIL", "512"))
+SAMPLE = int(os.environ.get("SAMPLE", "1"))
+BLOCK = int(os.environ.get("BLOCK", "8"))
+SUBPATH = os.environ.get("SUBPATH", "model")
 CHUNK = int(os.environ.get("CHUNK", "256"))
 OUT_DIR = os.environ["OUT"]
 os.environ.setdefault("EVAL_BATCH", "32")   # per device; training ran 32 sequences per device with the backward pass
 os.environ["N_STEPS"], os.environ["N_TAIL"] = "0", "0"   # vocab_trec's own sampling is not used
 os.environ["SIZE"] = "300m"   # the stream: every model here reads the 300m stream (see the docstring)
+if RUN:
+    CFG = json.load(open(f"/scratch/gpfs/GROUP/USER/project/trec/cache/wandb/{RUN}.json"))["config"]
+    BATCH = CFG["trainer"]["train_batch_size"]
+    tok = CFG["data"]["tokenizer"]
+    os.environ["VOCAB_K"] = "0" if tok == "marin-community/marin-tokenizer" else tok.rsplit("/v", 1)[1]
+    os.environ["SIZE"] = {128: "300m", 96: "300m", 256: "520m"}[BATCH]
+    if BATCH == 96:
+        os.environ["TREC_BATCH"] = "96"
+    MODEL = RUN
 if MODEL == "130m-d12" and os.environ.get("VOCAB_K", "0") != "0":
     raise ValueError("the 130m depth control was trained on the Marin tokenizer")
 
+import equinox as eqx  # noqa: E402
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
@@ -41,12 +65,13 @@ import numpy as np  # noqa: E402
 import haliax as hax  # noqa: E402
 from haliax import Axis  # noqa: E402
 from haliax.partitioning import round_axis_for_partitioning  # noqa: E402
+from levanter.checkpoint import load_checkpoint  # noqa: E402
 from levanter.data.loader import DataLoader  # noqa: E402
 from levanter.data.text.datasets import NamedLmDataset  # noqa: E402
 from levanter.layers.attention import AttentionBackend  # noqa: E402
-from levanter.model_loading import load_levanter_checkpoint  # noqa: E402
 from levanter.models.loss import maybe_fused_next_token_loss  # noqa: E402
 from levanter.models.qwen import Qwen3Config  # noqa: E402
+from levanter.utils.jax_utils import use_cpu_device  # noqa: E402
 from levanter.utils.tree_utils import inference_mode  # noqa: E402
 
 from experiments.references import vocab_trec as vt  # noqa: E402
@@ -73,6 +98,11 @@ def training_batches(Pos):
 
 
 def model_config():
+    if RUN:   # every run here differs from the 300m one only in these fields (W&B configs diffed 2026-10-27)
+        m = CFG["model"]
+        return Qwen3Config(max_seq_len=vt.SEQ, hidden_dim=m["hidden_dim"], intermediate_dim=m["intermediate_dim"], num_layers=m["num_layers"],
+                           num_heads=m["num_heads"], num_kv_heads=m["num_kv_heads"], hybrid_norm=m["hybrid_norm"],
+                           attn_backend=AttentionBackend.JAX_FLASH)
     if MODEL == "130m-d12":   # marin-pls della_muonh_qwen3_scaling.py, SIZE=130m LAYERS=12 (run tag -d12)
         return Qwen3Config(max_seq_len=vt.SEQ, hidden_dim=512, intermediate_dim=1792, num_layers=12, num_heads=8, num_kv_heads=8,
                            hybrid_norm=True, attn_backend=AttentionBackend.JAX_FLASH)
@@ -80,23 +110,37 @@ def model_config():
     return vtk.model_config()
 
 
+def tail_from(batch, total):
+    if RUN and batch == 128 and vt.K == 0 and total <= 11444:   # the 130m runs share the 300m run's unread batches
+        return 11444
+    return TAIL_FROM.get(MODEL, total)
+
+
 def plan(n_seq, batch, total):
     """The stream indices to score, in order: training batches, then unread ones."""
-    tail_from = TAIL_FROM.get(MODEL, total)
-    spare = n_seq // batch - tail_from
+    start = tail_from(batch, total)
+    spare = n_seq // batch - start
     if STEPS == "smoke":
         train, n_tail = np.r_[0:4, total - 12:total], 4
     else:
         assert STEPS == "all", STEPS
         train, n_tail = np.arange(total), N_TAIL
-    assert spare >= n_tail, f"only {spare} unread batches after step {tail_from}"
-    tail = tail_from + (np.arange(n_tail) * (spare // max(n_tail, 1))).astype(np.int64)
+        if SAMPLE > 1:
+            train = np.union1d(train[train % (SAMPLE * BLOCK) < BLOCK], train[-BLOCK:])
+    if spare <= 0:   # read more than once: nothing in the stream is unread
+        print(f"{total} steps of {batch} read {total * batch / n_seq:.2f} passes: no unread batches", flush=True)
+        n_tail, spare = 0, 0
+    assert spare >= n_tail, f"only {spare} unread batches after step {start}"
+    tail = start + (np.arange(n_tail) * (spare // max(n_tail, 1))).astype(np.int64)
     return np.concatenate([train, tail]).astype(np.int64)
 
 
 def main():
     ds, batch, total = vt.training_stream()
     total = TOTAL.get(MODEL, total)
+    if RUN:
+        assert batch == BATCH, (batch, BATCH)
+        total = CFG["trainer"]["num_train_steps"]
     n_seq = len(ds.as_sync_dataset())
     every = plan(n_seq, batch, total)
     chunks = [every[i:i + CHUNK] for i in range(0, len(every), CHUNK)]
@@ -117,8 +161,9 @@ def main():
     with trainer.use_device_mesh(), hax.axis_mapping(trainer.compute_axis_mapping):
         Vocab = round_axis_for_partitioning(Axis("vocab", len(vtk.data_config().the_tokenizer)), trainer.parameter_axis_mapping)
         t0 = time.time()
-        model = inference_mode(load_levanter_checkpoint(model_config(), vtk.CKPT, Vocab=Vocab, axis_mapping=trainer.parameter_axis_mapping,
-                                                        key=jax.random.PRNGKey(0)), True)
+        with use_cpu_device():   # as levanter.model_loading.load_levanter_checkpoint, with the subpath (raw or EMA weights)
+            model = load_checkpoint(eqx.filter_eval_shape(model_config().build, Vocab, key=jax.random.PRNGKey(0)), vtk.CKPT, subpath=SUBPATH)
+        model = inference_mode(hax.shard_with_axis_mapping(model, trainer.parameter_axis_mapping), True)
         print(f"loaded in {time.time() - t0:.0f}s", flush=True)
         mp = trainer.mp
 
@@ -149,7 +194,7 @@ def main():
             seq_loss, seq_weight = np.concatenate(ls), np.concatenate(ws)
             dt = time.time() - t1
             path = os.path.join(OUT_DIR, f"{c[0]:06d}.npz")
-            np.savez(path + ".tmp.npz", ckpt=vtk.CKPT, model=MODEL, index=c, total_steps=total, seq_loss=seq_loss,
+            np.savez(path + ".tmp.npz", ckpt=vtk.CKPT, model=MODEL, subpath=SUBPATH, index=c, total_steps=total, seq_loss=seq_loss,
                      seq_weight=seq_weight, seconds=dt)
             os.replace(path + ".tmp.npz", path)
             mean = seq_loss.sum(1) / seq_weight.sum(1)
