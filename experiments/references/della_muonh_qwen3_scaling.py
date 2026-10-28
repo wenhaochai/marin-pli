@@ -70,6 +70,7 @@ from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
+from experiments.references.hnet_qwen3 import HNetQwen3Config
 from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
 from experiments.references.cvd_flood_qwen3 import CvdFloodQwen3Config
 from experiments.references.flood_qwen3 import FloodQwen3Config, flood_levels
@@ -559,6 +560,13 @@ if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO 
 # data). Levanter's default mask decays every Linear (the Muon matrices and lm_head), not the embedding or the norms.
 # 300m, VARIANT=baseline only. The norm guard (LEVANTER_NORM_GUARD) assumes MuonH's constant norms, so it must be 0.
 # Tag -muonwd<MUON_WD>.
+# VARIANT=hnet (owner 2026-10-28, after Cartesia's "From Tokens to Bytes I/II"; popup "再加一个 H-Net 实验"): a one-stage H-Net on
+# the bytes (experiments/references/hnet_qwen3.py): HNET_ENC encoder and HNET_DEC decoder layers at every byte, the size's layers
+# as the main network on learned chunks of HNET_N target bytes. Needs VOCAB_K=256 and the segmented attention (fa4 or
+# jax_flash: the main network's chunk mask has no THD metadata). Tag -hnet<enc>x<dec>n<N>.
+HNET_ENC = int(os.environ.get("HNET_ENC", "2"))
+HNET_DEC = int(os.environ.get("HNET_DEC", "2"))
+HNET_N = float(os.environ.get("HNET_N", "4.74"))
 OPT = os.environ.get("OPT", "muonh")
 MUON_WD = float(os.environ.get("MUON_WD", "0.1"))
 if OPT not in ("muonh", "muon"):
@@ -574,7 +582,7 @@ DTP = float(os.environ.get("DTP", "0"))
 if VOCAB_SET and (VOCAB_K or VARIANT != "baseline" or PASS_DATA or DTP or not VOCAB_SET.startswith("f")):
     raise ValueError(f"VOCAB_SET={VOCAB_SET}: f<T>, plain runs only (no VOCAB_K, VARIANT, PASS_DATA or DTP)")
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", "cvdflood", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", "cvdflood", "hnet", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -667,6 +675,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-dtp{DTP:g}-fp{DTP_FROM_PASS}"
     if VARIANT == "inoise":
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-r{INOISE_RAND_MAX // 1000}k" if INOISE_RAND_MAX else "") + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
+    if VARIANT == "hnet":
+        variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}"
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
@@ -816,6 +826,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if not SMOKE_STEPS and n_level != s["steps"]:
             raise ValueError(f"{level}: {n_level} steps, the run has {s['steps']}")
         model_cls, model_extra = FloodQwen3Config, dict(fl_level=level, fl_from_step=round((SMOKE_STEPS or s["steps"]) / 8) * (FL_FROM_PASS - 1))
+    elif VARIANT == "hnet":
+        if VOCAB_K != 256 or ATTN_BACKEND == "fa4thd" or TIE:
+            raise ValueError("VARIANT=hnet: VOCAB_K=256, ATTN_BACKEND fa4 or jax_flash, untied tables")
+        model_cls, model_extra = HNetQwen3Config, dict(enc_layers=HNET_ENC, dec_layers=HNET_DEC, chunk_ratio=HNET_N)
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)
