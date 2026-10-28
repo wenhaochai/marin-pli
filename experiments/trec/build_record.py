@@ -86,7 +86,7 @@ def new_rows():
 
 ROWS += new_rows()
 OTHER = ["w439", "w447", "w512"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke)
-CODE = "https://github.com/wenhaochai/marin-pli/tree/09e8580bd6be1240572b858130a2df0411f68bef"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-27 (Figure 5 second seed)
+CODE = "https://github.com/wenhaochai/marin-pli/tree/2347279edabd36dcdf1ac0097d335d3d76130ccc"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-28 (Figures 6 and 7)
 
 
 def job(w):

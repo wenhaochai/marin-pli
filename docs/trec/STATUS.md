@@ -72,7 +72,7 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 - Before publishing (2026-10-27): anti-autoresearch, deterministic-only (no codex reviewer in the session), L0 on the
   page text: CLEAN_GIVEN_EVIDENCE (tmp/trec_audit/REPORT.md). A manual check of every hand-written number fixed two
   captions (the unread band is +-2 SE, not 2 SE wide; the low points are four fifths to nine tenths, not about four
-  fifths). Public code: wenhaochai/marin-pli branch trec at 3b44498, then 09e8580 with the second seed (scrubbed; secrets 0,
+  fifths). Public code: wenhaochai/marin-pli branch trec at 3b44498, then 09e8580 with the second seed, then 2347279 with Figures 6-7 (scrubbed; secrets 0,
   cluster user and group 0).
   Website: pretrain-practice e2d3fef; the main merge waits for the owner's weekly approval.
 
