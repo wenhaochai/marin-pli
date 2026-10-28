@@ -75,6 +75,8 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   fifths). Public code: wenhaochai/marin-pli branch trec at 3b44498, then 09e8580 with the second seed, then 2347279 with Figures 6-7 (scrubbed; secrets 0,
   cluster user and group 0).
   Website: pretrain-practice e2d3fef; the main merge waits for the owner's weekly approval.
+  2026-10-28: Figures 6-7, Q4/Q5 answered; pretrain-practice 7be7eaf, released to main as d22ff55 (owner approval via the
+  controller; record audit: 37 rows done, main 37.0 H100-h, other 0.4).
 
 ## Other checkpoints (owner popups 2026-10-27; done 2026-10-28)
 - 24 more final MuonH checkpoints, one setting changed per group: depth (130m d1-d5, d24, d36), size (pls0-noev 300m,
