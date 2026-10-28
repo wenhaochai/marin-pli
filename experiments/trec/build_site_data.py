@@ -254,32 +254,142 @@ def fig_tokenizers():
 
 
 # Figures 6 and 7 (owner popups 2026-10-27): the other MuonH checkpoints, scored by wq w513 and w514
-# (scripts/della/trec-runs-*.sbatch); placeholders until those jobs end.
-SETTINGS = [({"en": "Depth, 130m", "zh": "深度，130m"}, ["1", "2", "3", "4", "5", "12", "24", "36"]),
-            ({"en": "Learning rate after T/8, 300m 8K", "zh": "T/8 之后的学习率，300m 8K"}, ["×1", "×2", "×3", "×4"]),
+# (scripts/della/trec-runs-*.sbatch): 1 training batch in 8 (blocks of 8 steps every 64, plus the last 8), out/runs/<run>[-ema].
+# The two fully scored runs (w465) enter through the same 1-in-8 blocks.
+P3, P1 = "muonh-qwen3-300m-della4xh100", "muonh-qwen3-130m-della4xh100"
+R128 = "muonh-qwen3-300m-della8xh100-pls0-noev"   # 300m 128K, training seed 0: the reference of the batch and tokenizer panels
+SETTINGS = [({"en": "Depth, 130m", "zh": "深度，130m"}, ["1", "2", "3", "4", "5", "12", "24", "36"],
+             [f"{P1}-d{k}" for k in (1, 2, 3, 4, 5, 12, 24, 36)]),
+            ({"en": "Learning rate after T/8, 300m 8K", "zh": "T/8 之后的学习率，300m 8K"}, ["×1", "×2", "×3", "×4"],
+             [f"{P3}-v8k"] + [f"{P3}-lrx{k}-fp2-v8k" for k in (2, 3, 4)]),
             ({"en": "EMA weights, 300m", "zh": "EMA 权重，300m"}, [{"en": "0.999 raw", "zh": "0.999 原始"}, {"en": "0.999 EMA", "zh": "0.999 EMA"},
-                                                              {"en": "0.9998 raw", "zh": "0.9998 原始"}, {"en": "0.9998 EMA", "zh": "0.9998 EMA"}]),
-            ({"en": "Batch, 300m", "zh": "batch，300m"}, ["128", "96"]),
-            ({"en": "Tokenizer, 300m", "zh": "tokenizer，300m"}, ["8K", "16K", "32K", "64K", "128K", {"en": "bytes", "zh": "字节"}]),
-            ({"en": "Training seed, 300m 128K then 8K", "zh": "训练种子，300m，先 128K 后 8K"}, ["0", "1", "0 ", "1 "])]
-MULTIPASS = [{"en": "520m, 1.04 passes", "zh": "520m，1.04 遍"}, {"en": "1.2b, 2.40 passes", "zh": "1.2b，2.40 遍"},
-             {"en": "130m, 10x steps, 2.60 passes", "zh": "130m，10 倍步数，2.60 遍"}]
+                                                              {"en": "0.9998 raw", "zh": "0.9998 原始"}, {"en": "0.9998 EMA", "zh": "0.9998 EMA"}],
+             [f"{P3}-ema0.999", f"{P3}-ema0.999-ema", f"{P3}-ema0.9998", f"{P3}-ema0.9998-ema"]),
+            ({"en": "Batch, 300m", "zh": "batch，300m"}, ["128", "96"], [R128, f"{P3}-b96"]),
+            ({"en": "Tokenizer, 300m", "zh": "tokenizer，300m"}, ["8K", "16K", "32K", "64K", "128K", {"en": "bytes", "zh": "字节"}],
+             [f"{P3}-v8k", f"{P3}-v16k", f"{P3}-v32k", f"{P3}-v64k", R128, f"{P3}-bytes"]),
+            ({"en": "Training seed, 300m 128K then 8K", "zh": "训练种子，300m，先 128K 后 8K"}, ["0", "1", "0 ", "1 "],
+             [R128, f"{P3}-s1-rerun", f"{P3}-v8k", f"{P3}-v8k-s1"])]
+M_FIG1 = {0.95: 4.2, 0.98: 3.5}   # m of the momentum reading fitted in fig-predict: 130m (momentum 0.95), 300m (0.98)
+BLOCK, EVERY, WIN = 8, 64, 8      # sampled blocks; the low point is the minimum of a moving mean over WIN blocks (512 steps)
+
+
+def sampled(name):
+    """(block-centre training fractions, block mean losses, unread losses) of one checkpoint on the 1-in-8 blocks."""
+    d = os.path.join(OUT, "runs", name)
+    if not os.path.isdir(d):
+        d = os.path.join(OUT, name)   # fully scored by w465
+    idx, loss = [], []
+    for f in sorted(glob.glob(os.path.join(d, "[0-9]*.npz"))):
+        z = np.load(f)
+        idx.append(z["index"])
+        loss.append(z["seq_loss"].sum(1) / z["seq_weight"].sum(1))
+        T = int(z["total_steps"])
+    if not idx:
+        return None
+    idx, loss = np.concatenate(idx), np.concatenate(loss)
+    tr = idx < T
+    keep = tr & ((idx % EVERY < BLOCK) | (idx >= T - BLOCK))
+    b = idx[keep] // BLOCK
+    ub = np.unique(b)
+    x = np.array([idx[keep][b == k].mean() for k in ub]) / T
+    y = np.array([loss[keep][b == k].mean() for k in ub])
+    return x, y, loss[~tr], T
+
+
+def low_point(x, y):
+    xm, ym = np.convolve(x, np.ones(WIN) / WIN, mode="valid"), np.convolve(y, np.ones(WIN) / WIN, mode="valid")
+    return float(xm[np.argmin(ym)])
+N_SEQ = 2441406   # sequences of the fineweb-edu-10B stream under the Marin tokenizer
+MULTIPASS = [({"en": "520m, 1.04 passes", "zh": "520m，1.04 遍"}, ["muonh-qwen3-520m-della8xh100-pls0-noev"]),
+             ({"en": "1.2b, 2.40 passes", "zh": "1.2b，2.40 遍"}, ["muonh-qwen3-1_2b-della8xh100-pls0-noev"]),
+             ({"en": "130m, 10x steps, 2.60 passes", "zh": "130m，10 倍步数，2.60 遍"}, [f"{P1}-tpp200", f"{P1}-tpp200-s1"])]
+LAST = {"en": "by last read", "zh": "按最后一次读到的时间"}
+SEEDS = [BLUE, "#8AB4F8"]
 
 
 def fig_settings():
-    panels = [{"xlim": [-0.6, len(cats) - 0.4], "ylim": [0.5, 1.0], "yticks": ticks(0.5, 0.9, 0.1, 1), "cats": cats, "label": label,
-               "empty": QUEUED, "marks": []} for label, cats in SETTINGS]
+    """Per checkpoint: the measured low point (minimum of the moving mean over 8 sampled blocks) and the momentum
+    reading's low point, 1 - sqrt(c) t^m with the run's own learning rates and m from fig-predict at its size."""
+    panels, lows = [], {}
+    for label, cats, names in SETTINGS:
+        meas, pred = [], []
+        for j, name in enumerate(names):
+            s = sampled(name)
+            if s is None:
+                break
+            x, y, unread, T = s
+            base = name[:-len("-ema")] if name.endswith("-ema") else name
+            cfg = json.load(open(os.path.join(predict.CACHE, f"{base}.json")))["config"]
+            beta = cfg["trainer"]["model_averaging"]["beta"] if name.endswith("-ema") else None
+            c = predict.run_coefficients(base, T, beta)
+            lm, lp = low_point(x, y), predict.valley(c, M_FIG1[cfg["optimizer"]["momentum"]])
+            meas.append([j, round(lm, 4)])
+            pred.append([j, round(lp, 4)])
+            lows[name] = {"measured": round(lm, 3), "predicted": round(lp, 3)}
+        p = {"xlim": [-0.6, len(cats) - 0.4], "ylim": [0.6, 1.0], "yticks": ticks(0.6, 0.9, 0.1, 1), "cats": cats, "label": label}
+        if len(meas) < len(names):
+            panels.append(dict(p, empty=QUEUED, marks=[]))
+            continue
+        panels.append(dict(p, marks=[{"type": "dots", "pts": meas, "color": INK, "dx": -0.12}, {"type": "rings", "pts": pred, "color": INK, "dx": 0.12}]))
     return {"title": {"en": "TREC low points", "zh": "TREC 最低点"},
             "quantity": {"en": "Low point (training fraction)", "zh": "最低点（训练进度）"}, "cols": 2, "height": 170,
             "legend": [[{"en": "Measured", "zh": "实测"}, INK, "dot"], [{"en": "Predicted", "zh": "预测"}, INK, "ring"]],
-            "panels": panels}
+            "panels": panels, "lows": lows}
+
+
+def last_read(name, idx, T):
+    """(training fraction of the last read, read count) of each batch: batch t holds stream positions B t .. B t + B - 1,
+    read as sequence q = p mod N (restart strategy; the 2048-sequence mixture permutation moves a position by under
+    2048 / B steps), and q is read again at every step (q + k N) / B < T."""
+    B = json.load(open(os.path.join(predict.CACHE, f"{name}.json")))["config"]["trainer"]["train_batch_size"]
+    q = (B * idx + B // 2) % N_SEQ
+    k = (T * B - 1 - q) // N_SEQ
+    return (q + k * N_SEQ) / B / T, k + 1
 
 
 def fig_multipass():
-    panels = [{"xlim": [0, 1], "ylim": [2.5, 3.5], "xticks": XTICKS, "yticks": ticks(2.5, 3.25, 0.25, 2), "label": label,
-               "empty": QUEUED, "marks": []} for label in MULTIPASS]
+    """Per run, the final model's loss on its 1-in-8 training blocks: left against the training fraction of the batch
+    (moving mean over 8 blocks); right against the time the batch's data was last read, batches sorted by that time
+    and averaged over 64 batches (8 blocks) within each read count."""
+    rows = []
+    for label, names in MULTIPASS:
+        left, right, lo, hi = [], [], [], []
+        for name, col in zip(names, SEEDS):
+            d = os.path.join(OUT, "runs", name)
+            idx, loss = [], []
+            for f in sorted(glob.glob(os.path.join(d, "[0-9]*.npz"))):
+                z = np.load(f)
+                idx.append(z["index"])
+                loss.append(z["seq_loss"].sum(1) / z["seq_weight"].sum(1))
+                T = int(z["total_steps"])
+            idx, loss = np.concatenate(idx), np.concatenate(loss)
+            x, y, _, _ = sampled(name)
+            xm, ym = np.convolve(x, np.ones(WIN) / WIN, mode="valid"), np.convolve(y, np.ones(WIN) / WIN, mode="valid")
+            left.append({"type": "line", "pts": thin(xm, ym), "color": col, "width": 1.8, "alpha": 0.85})
+            tl, reads = last_read(name, idx, T)
+            for r in np.unique(reads):
+                o = np.flatnonzero(reads == r)
+                o = o[np.argsort(tl[o])]
+                w = BLOCK * WIN
+                if len(o) < w:
+                    continue
+                xr, yr = np.convolve(tl[o], np.ones(w) / w, mode="valid"), np.convolve(loss[o], np.ones(w) / w, mode="valid")
+                right.append({"type": "line", "pts": thin(xr, yr), "color": col, "width": 1.8, "alpha": 0.85})
+                lo.append(yr.min()); hi.append(yr.max())
+            lo.append(ym.min()); hi.append(ym.max())
+        rows.append((label, left, right, min(lo), max(hi)))
+    rng = max(h - l for *_, l, h in rows)
+    step = 0.02 if rng < 0.1 else 0.05
+    span = np.ceil(rng * 1.45 / step) * step   # one span for every row (writing:plot rule 7), headroom for the panel name
+    panels = []
+    for label, left, right, l, h in rows:
+        ylo = min(np.floor((l - 0.08 * rng) / step), np.round(((l + h) / 2 - 0.45 * span) / step)) * step   # centred, unless the name would cover the data
+        y = {"ylim": [round(ylo, 4), round(ylo + span, 4)], "yticks": ticks(ylo, ylo + span - step, step, 2), "xticks": XTICKS, "xlim": [0, 1]}
+        panels.append(dict(y, label=label, marks=left))
+        panels.append(dict(y, label={k: label[k].split(",")[0] + ("，" if k == "zh" else ", ") + LAST[k] for k in label}, marks=right))
     return {"title": {"en": "TRECs of runs that read their data more than once", "zh": "数据读了不止一遍的 run 的 TREC"},
-            "quantity": {"en": "Loss (nats)", "zh": "损失（nats）"}, "xlabel": XLABEL, "cols": 1, "height": 150,
+            "quantity": {"en": "Loss (nats)", "zh": "损失（nats）"}, "xlabel": XLABEL, "cols": 2, "height": 150,
             "legend": [[{"en": "Seed 0", "zh": "种子 0"}, BLUE, "line"], [{"en": "Seed 1", "zh": "种子 1"}, "#8AB4F8", "line"]],
             "panels": panels}
 

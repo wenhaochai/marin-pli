@@ -24,9 +24,9 @@ OUT = "/scratch/gpfs/GROUP/USER/project/trec/out"
 NY = zoneinfo.ZoneInfo("America/New_York")
 ROWS = [
     dict(model="130m-d12", run="muonh-qwen3-130m-della4xh100-d12", setup={"en": "WSD to zero, lr 0.02", "zh": "WSD 降到零，lr 0.02"},
-         size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=["w465"], figs="1, 2, 3, 4"),
+         size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=["w465"], figs="1, 2, 3, 4, 6"),
     dict(model="300m", run="muonh-qwen3-300m-della4xh100-s1-rerun", setup={"en": "Cosine to zero, lr 0.01", "zh": "cosine 降到零，lr 0.01"},
-         size="300m", layers=12, steps=11444, batches=11444 + 512, jobs=["w465"], figs="1, 2, 3, 4, 5"),
+         size="300m", layers=12, steps=11444, batches=11444 + 512, jobs=["w465"], figs="1, 2, 3, 4, 5, 6"),
 ] + [   # scored by the vocab session's wq w438 and w457 for its page (192 training blocks and 16 unread ones); their cost is on that page
     dict(model=None, run=f"muonh-qwen3-300m-della4xh100{tag}", setup={"en": f"{en}, seed {seed}", "zh": f"{zh}，种子 {seed}"}, size="300m", layers=12,
          steps=steps, batches=208, jobs=[], figs="5", external=True)

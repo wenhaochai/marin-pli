@@ -59,6 +59,26 @@ def coefficients(eta, reading, model):
     return c / c.max()
 
 
+def run_coefficients(run, T, beta=None):
+    """The momentum reading for any W&B run: its logged matrix learning rate, A from its momentum (23 at 0.95, 73 at
+    0.98). With beta, the weights are the EMA sum_s w_s W_s, w_s = (1 - beta) beta^(T-1-s), so update i enters with
+    c_i = eta_i sum_{s>=i} w_s prod_{j=i..s} a_j (EMA weights of fig-settings)."""
+    d = json.load(open(os.path.join(CACHE, f"{run}.json")))
+    s, v = np.array(d["optim/learning_rate"]).T
+    eta = np.interp(np.arange(T), s, v)
+    A_run = {0.95: 23.0, 0.98: 73.0}[d["config"]["optimizer"]["momentum"]]
+    a = 1 / np.sqrt(1 + 2 * eta * ((A_run - 1) / 2 * eta + R0) + eta ** 2)
+    if beta is None:
+        c = eta * np.exp(np.cumsum(np.log(a)[::-1])[::-1])
+    else:
+        w = (1 - beta) * beta ** (T - 1 - np.arange(T))
+        G = np.zeros(T + 1)
+        for i in range(T - 1, -1, -1):
+            G[i] = a[i] * (w[i] + G[i + 1])
+        c = eta * G[:T]
+    return c / c.max()
+
+
 def predicted(c, m, p=0.5):
     t = (np.arange(len(c)) + 1) / len(c)
     return 1 - c ** p * t ** m

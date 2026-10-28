@@ -1,13 +1,15 @@
 # TREC: training re-evaluation curves of existing MuonH checkpoints
 
-**Result (2026-10-27).** Re-scored with their final weights, two MuonH runs fit best the batches they read about four
+**Result (2026-10-27, extended 2026-10-28).** Re-scored with their final weights, two MuonH runs fit best the batches they read about four
 fifths of the way through training (0.81 at 300m with cosine, 0.89 at 130m with a linear decay; 0.069 and 0.088 nats
 below unread text) and have forgotten the first quarter (0.001 +- 0.001 nats below unread text). Bergsma et al.'s
 formula 1 - sqrt(c) t^m follows this shape only with a fitted exponent (m 3.4-4.8, Pearson r 0.96-0.99), and then a
 control without any averaging (c = learning rate) fits nearly as well (r 0.963 against 0.971 for the momentum reading
 at 300m, 0.988 for both at 130m); with the paper's m* for AdamW every reading misplaces the low point by 0.04-0.15 of
 training. More steps over the same text (8K, bytes) move the low point later than the averaging predicts, with
-either training seed.
+either training seed. On 24 more checkpoints (2026-10-28), a larger learning rate, a long EMA and bytes move the low point by
+0.07-0.11 of training, the averaging predicts the direction and a quarter to three fifths of the size, depth, batch and
+seed do not move it; runs that reread their data fall on one TREC when each batch is placed at its last read.
 
 Owner request 2026-10-26: a new Experiments page that applies Bergsma, Dey and Hestness (2025, arXiv 2509.25380) to
 our finished pretraining checkpoints. Page: `exps/trec.html` on the website branch `pretrain-practice`
@@ -74,13 +76,26 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   cluster user and group 0).
   Website: pretrain-practice e2d3fef; the main merge waits for the owner's weekly approval.
 
-## Other checkpoints (owner popups 2026-10-27, running)
+## Other checkpoints (owner popups 2026-10-27; done 2026-10-28)
 - 24 more final MuonH checkpoints, one setting changed per group: depth (130m d1-d5, d24, d36), size (pls0-noev 300m,
   520m, 1.2b), learning rate (300m v8k, lrx2/3/4 from step T/8), EMA (ema0.999, ema0.9998; raw and averaged weights),
   training length (130m tpp200, two seeds), batch (b96), tokenizer (v16k, v32k, v64k, bytes) and seed (v8k-s1).
-  1 in 8 training batches (blocks of 8 steps every 64) plus 512 unread ones; jobs w512 (smoke), w513, w514.
+  1 in 8 training batches (blocks of 8 steps every 64) plus 512 unread ones.
+- Jobs: w512 smoke 21:50-22:09 (1 GPU; all 26 last batches within 0.0001 nats of W&B), w513 23:23-02:32 and w514
+  22:21-02:47 (4 GPUs each), 30.3 GPU-h. Controller 2026-10-27: wq jobs as whole 4-GPU blocks from now on.
+- Low point = minimum of a moving mean over 8 sampled blocks (512 steps). Noise: the 7 other block offsets of the
+  fully scored d12 / s1-rerun move it by sd 0.009 / 0.011; windows of 4 or 16 blocks by up to 0.034. Runs that share a
+  data stream share batch difficulty, so seeds agree to 0.001 (128K 0.797 / 0.797, 8K 0.822 / 0.822).
+- Figure 6 (measured / momentum prediction, m 4.2 at momentum 0.95, 3.5 at 0.98): depth 1-36 all 0.898 / 0.898;
+  lr x1-x4 0.822, 0.842, 0.867, 0.896 / 0.798, 0.817, 0.832, 0.844; EMA weights 0.999 0.797 / 0.782, 0.9998 0.685 /
+  0.750 (raw 0.797 / 0.796; EMA prediction averages c over the EMA weights, predict.run_coefficients); batch 96 0.812 /
+  0.798; 8K 0.822, 16K 0.806, 32K 0.799, 64K 0.806, 128K 0.797, bytes 0.863 / 0.797-0.812. The prediction gets each
+  direction and 0.24-0.62 of the large shifts (lr x4, EMA 0.9998, bytes).
 - The fineweb-edu-10B stream has 2,441,406 sequences: 520m (1.04 passes), 1.2b (2.40) and 130m tpp200 (2.60) read it
-  more than once and have no unread batches. Owner: a separate figure for these, as their own question.
+  more than once. Figure 7 (owner popup 2026-10-28: both x axes): against t the 1.2b TREC repeats every pass (0.417);
+  against the last read of each batch's data it is one curve, low 0.81 (prediction 0.80); 520m 0.79 (0.80); tpp200
+  0.957 in both seeds (0.92), 0.03 nats deep. At the read-count edge (1.2b 0.833, tpp200 0.769) the loss changes by
+  <= 0.003 nats (within 1.4 SE): an earlier read leaves no measurable trace.
 
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
