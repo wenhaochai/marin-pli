@@ -99,6 +99,19 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   0.957 in both seeds (0.92), 0.03 nats deep. At the read-count edge (1.2b 0.833, tpp200 0.769) the loss changes by
   <= 0.003 nats (within 1.4 SE): an earlier read leaves no measurable trace.
 
+## 1/sqrt(t) schedule (owner request and popup 2026-10-28)
+- Source: Su, kexue.fm/archives/11459 (EMA view of weight decay): every batch keeps the same weight in the final
+  weights when e^(lambda_j eta_j) eta_j = eta_(j-1); with lambda proportional to eta, eta_s = eta_max / sqrt(1 + 2 lambda_max eta_max s).
+  MuonH's fixed norm shrinks the weights by a ~ 1 - A eta^2 / 2 per step, a weight decay lambda = A eta / 2 proportional
+  to eta, so eta_s = eta_max / sqrt(1 + A eta_max^2 s) (within 4% of the exact recursion with r0). On 130m d12 the weight
+  c of the first quarter goes from 0.004 to 1.0 (300m: 0.000 to 1.0).
+- Arms (popup: 130m, both): d12 trained again from its commit 4530d3bb (branch trec-rsqrt, worktree
+  project/marin-trec-rsqrt, LR_SCHEDULE knob) with rsqrt (lr 0.02 / sqrt(1 + 0.0092 t), ends at 0.0028) and rsqrtcd
+  (the same to step 3967, then linear to 0); CPU check: the built schedules equal the formula, and without the knob
+  the code builds d12's schedule. Job scripts/della/trec_rsqrt.sbatch: 30-step smoke, training, TREC (MODEL=130m-d12).
+  wq w590 (rsqrt), w591 (rsqrtcd), 4 GPUs, about 8 GPU-h each. Record logs/trec-rsqrt.yaml.
+- Page: Question 6 and Figure 8 placeholder (popup approved): learning rates now, TREC queued.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.

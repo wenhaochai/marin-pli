@@ -85,6 +85,13 @@ def new_rows():
 
 
 ROWS += new_rows()
+# Figure 8 (owner popup 2026-10-28): the 130m d12 control trained again under the equal-weight schedule of
+# kexue.fm/archives/11459 (branch trec-rsqrt) and scored on every training batch and 512 unread ones, in one wq job each
+# (training and scoring); code: the public commit once the runs finish (empty until then; queued rows show no code link)
+ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-{tag}", out=f"muonh-qwen3-130m-della4xh100-d12-{tag}", setup={"en": en, "zh": zh},
+              size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=[w], figs="8", code="")
+         for tag, en, zh, w in [("rsqrt", "lr 0.02 / \u221a(1 + 0.0092 t)", "lr 0.02 / \u221a(1 + 0.0092 t)", "w590"),
+                                ("rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t), linear to zero over the last fifth", "lr 0.02 / \u221a(1 + 0.0092 t)，最后五分之一线性降到零", "w591")]]
 OTHER = ["w439", "w447", "w512"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke)
 CODE = "https://github.com/wenhaochai/marin-pli/tree/2347279edabd36dcdf1ac0097d335d3d76130ccc"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-28 (Figures 6 and 7)
 
@@ -119,7 +126,7 @@ def main():
     for r in ROWS:
         row = {k: r[k] for k in ("setup", "size", "layers", "steps", "batches", "figs")}
         row["url"] = f"https://wandb.ai/reself/marin-della/runs/{r['run']}"
-        row["code"], row["gpus"], row["hours"], row["segments"], row["submitted"] = CODE, 0, 0.0, [], ""
+        row["code"], row["gpus"], row["hours"], row["segments"], row["submitted"] = r.get("code", CODE), 0, 0.0, [], ""
         if r.get("external"):
             row["state"] = ""
         elif not r["jobs"]:
