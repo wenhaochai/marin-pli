@@ -387,7 +387,7 @@ def fig_multipass():
         ylo = min(np.floor((l - 0.08 * rng) / step), np.round(((l + h) / 2 - 0.45 * span) / step)) * step   # centred, unless the name would cover the data
         y = {"ylim": [round(ylo, 4), round(ylo + span, 4)], "yticks": ticks(ylo, ylo + span - step, step, 2), "xticks": XTICKS, "xlim": [0, 1]}
         panels.append(dict(y, label=label, marks=left))
-        panels.append(dict(y, label={k: label[k].split(",")[0] + ("，" if k == "zh" else ", ") + LAST[k] for k in label}, marks=right))
+        panels.append(dict(y, label={k: label[k].split("，" if k == "zh" else ",")[0] + ("，" if k == "zh" else ", ") + LAST[k] for k in label}, marks=right))
     return {"title": {"en": "TRECs of runs that read their data more than once", "zh": "数据读了不止一遍的 run 的 TREC"},
             "quantity": {"en": "Loss (nats)", "zh": "损失（nats）"}, "xlabel": XLABEL, "cols": 2, "height": 150,
             "legend": [[{"en": "Seed 0", "zh": "种子 0"}, BLUE, "line"], [{"en": "Seed 1", "zh": "种子 1"}, "#8AB4F8", "line"]],
