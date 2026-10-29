@@ -167,6 +167,9 @@ LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "")
 if LR_SCHEDULE not in ("", "rsqrt", "rsqrtcd"):
     raise ValueError(f"LR_SCHEDULE must be rsqrt or rsqrtcd, got {LR_SCHEDULE}")
 STEP_AUTOCORR = {0.95: 23.0, 0.98: 73.0}
+# KEEP_EVERY (default 0: the permanent checkpoint every 10000 steps only) keeps a checkpoint every KEEP_EVERY steps, for
+# TRECs of intermediate checkpoints (how much reading a batch lowers its loss, and how fast that decays). Tag -ck{N}.
+KEEP_EVERY = int(os.environ.get("KEEP_EVERY", "0"))
 
 
 @LrSchedule.register_subclass("inv_sqrt_cooldown")
@@ -358,6 +361,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-d{LAYERS}"
     if LR_SCHEDULE:
         variant_tags += f"-{LR_SCHEDULE}"
+    if KEEP_EVERY:
+        variant_tags += f"-ck{KEEP_EVERY}"
     if SEED != 0:
         variant_tags += f"-s{SEED}"
     if LR_MUL != 1:
@@ -504,7 +509,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
                 num_train_steps=SMOKE_STEPS or TOTAL_STEPS or s["steps"],
                 steps_per_eval=SMOKE_STEPS or 1000,
                 max_eval_batches=1 if SMOKE_STEPS else None,
-                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=10000)]),
+                checkpointer=CheckpointerConfig(save_interval=timedelta(minutes=10), keep=[dict(every=KEEP_EVERY or 10000)]),
                 mesh=MeshConfig(
                     axes={"data": -1, "replica": 1, "model": 1},
                     compute_mapping={
