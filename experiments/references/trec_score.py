@@ -39,6 +39,7 @@ STEPS = os.environ.get("STEPS", "all")
 N_TAIL = int(os.environ.get("N_TAIL", "512"))
 SAMPLE = int(os.environ.get("SAMPLE", "1"))
 BLOCK = int(os.environ.get("BLOCK", "8"))
+TRAIN_RANGE = os.environ.get("TRAIN_RANGE", "")   # a:b scores training batches a..b-1 only (the branch runs of Figure 10)
 SUBPATH = os.environ.get("SUBPATH", "model")
 CHUNK = int(os.environ.get("CHUNK", "256"))
 OUT_DIR = os.environ["OUT"]
@@ -127,6 +128,9 @@ def plan(n_seq, batch, total):
         train, n_tail = np.arange(total), N_TAIL
         if SAMPLE > 1:
             train = np.union1d(train[train % (SAMPLE * BLOCK) < BLOCK], train[-BLOCK:])
+        if TRAIN_RANGE:
+            a, b = (int(v) for v in TRAIN_RANGE.split(":"))
+            train = np.arange(a, b)
     if spare <= 0:   # read more than once: nothing in the stream is unread
         print(f"{total} steps of {batch} read {total * batch / n_seq:.2f} passes: no unread batches", flush=True)
         n_tail, spare = 0, 0
