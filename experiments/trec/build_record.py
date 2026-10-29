@@ -100,6 +100,13 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12{tag}-ck248", ou
               size="130m", layers=12, steps=4959, batches=_CK_SCORED, jobs=[w], figs="9", code="")
          for tag, en, zh, w in [("", "WSD to zero, lr 0.02, a checkpoint every 248 steps", "WSD 降到零，lr 0.02，每 248 步一个 checkpoint", "w642"),
                                 ("-rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t) with cooldown, a checkpoint every 248 steps", "lr 0.02 / \u221a(1 + 0.0092 t) 加冷却，每 248 步一个 checkpoint", "w643")]]
+# Figure 10 (owner popup 2026-10-29): d12-ck248 continued from step 2480 at a constant lr, lr x steps = 5 (branch
+# trec-rsqrt dc5c92b4c9); checkpoints every 124 steps score batches 2232-2479 and 256 unread ones (arm a also scores
+# the d12-ck248 checkpoints 2232 and 2480)
+ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br2480", out=f"ck/branch/muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br2480",
+              setup={"en": f"From step 2480 of the checkpointed WSD run, lr {lr} for {n} steps", "zh": f"从每 248 步存 checkpoint 的 WSD run 第 2480 步起，lr {lr} 训练 {n} 步"},
+              size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if w == "w651" else 0)) * (248 + 256), jobs=[w], figs="10", code="")
+         for m, lr, n, w in [("0.5", 0.01, 500, "w651"), ("0.25", 0.005, 1000, "w652"), ("0.125", 0.0025, 2000, "w653")]]
 OTHER = ["w439", "w447", "w512"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke)
 CODE = "https://github.com/wenhaochai/marin-pli/tree/2347279edabd36dcdf1ac0097d335d3d76130ccc"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-28 (Figures 6 and 7)
 
