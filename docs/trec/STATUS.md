@@ -111,6 +111,16 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   the code builds d12's schedule. Job scripts/della/trec_rsqrt.sbatch: 30-step smoke, training, TREC (MODEL=130m-d12).
   wq w590 (rsqrt), w591 (rsqrtcd), 4 GPUs, about 8 GPU-h each. Record logs/trec-rsqrt.yaml.
 - Page: Question 6 and Figure 8 placeholder (popup approved): learning rates now, TREC queued.
+- Result (w590 17:43-19:38, w591 17:54-19:49, exit 0; 15.4 H100-h; tools/rsqrt_trec.py, rsqrt_eval.py): logged lr
+  within 0.9% of the formula; no NaN. Quarter means minus unread (d12 / rsqrt / rsqrtcd): Q1 -0.0010 / -0.0037 /
+  -0.0042, Q2 -0.0073 / -0.0116 / -0.0144, Q3 -0.0274 / -0.0214 / -0.0316, Q4 -0.0669 / -0.0701 / -0.0656 (+-0.0014;
+  paired against d12, same batches: Q1 -0.0027 / -0.0032 +- 0.0001). Unread 3.1422 / 3.2390 / 3.1702; Paloma eval/loss
+  3.8519 / 3.9591 / 3.8828. Low point (100-step) 0.886 / 0.998 / 0.886 (predicted 0.898 / 1.000 / 0.896).
+  Conclusion: c 0.004 -> 1.0 keeps 0.003 nats more of the first quarter and costs 0.03 (cooldown) to 0.11 nats of final
+  loss; the share c of an update does not set how well the final model fits its batch.
+- Page: Q6 answered, Figure 8 filled, standfirst = takeaways = meta extended; deterministic anti-autoresearch L0:
+  CLEAN_GIVEN_EVIDENCE. Not done: public code for trec-rsqrt (based on the pls commit 4530d3bb; the scrub covers the
+  trec branch only), so the two record rows carry no Code link.
 
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
