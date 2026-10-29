@@ -45,15 +45,16 @@ T1=$((2480 + N))
 nvidia-smi -L
 echo "arm $NAME lr $(python3 -c "print(0.02*$MUL)") x $N steps, run $rid $(date +%F_%T)"
 
-# 1. smoke: 10 steps from the branch point into a throwaway run; it must start from the checkpoint (loss near 3.4, not 10)
+# 1. smoke: 10 steps from the branch point into a throwaway run; it must resume at step 2481 and its eval loss must be
+#    that of a trained model (4.28 at the branch point; about 10 from scratch). A 10-step run prints no train-loss postfix.
 if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" != SUCCESS ] && [ ! -d "$out/checkpoints" ]; then
   slog=logs/trec_br_${JID}_smoke.log
   rc=0; TOTAL_STEPS=2490 KEEP_EVERY=0 RUN_TAG=-j${JID}s PYTHONPATH=$(src $WT) timeout 30m $PY -m experiments.references.della_muonh_qwen3_scaling > $slog 2>&1 || rc=$?
   for d in $MARIN_PREFIX/speedrun/muonh-qwen3-130m-della4xh100-d12-constant-lrm${MUL}-br2480-j${JID}s; do [ -d "$d" ] && rm -rf -- "$d" "$MARIN_PREFIX/tmp/checkpoints-temp$d"; done
-  loss=$(grep -o "postfix:loss=[0-9.]*" $slog | tail -1 | cut -d= -f2)
-  grep -q "Initializing from" $slog && [ -n "$loss" ] && python3 -c "import sys; sys.exit(0 if float('$loss') < 4 else 1)" || rc=${rc/#0/5}
+  loss=$(grep -E "^wandb: +eval/loss [0-9.]+$" $slog | tail -1 | awk '{print $3}')
+  grep -q "Resuming training from step 2481" $slog && [ -n "$loss" ] && python3 -c "import sys; sys.exit(0 if float('$loss') < 5 else 1)" || rc=${rc/#0/5}
   [ $rc -eq 0 ] || { echo "SMOKE FAILED rc=$rc loss=${loss:-none} ($slog)"; exit 3; }
-  echo "smoke passed: started from step 2480, loss $loss $(date +%T)"
+  echo "smoke passed: resumed at step 2481, eval loss $loss $(date +%T)"
 fi
 
 # 2. training
