@@ -129,6 +129,15 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   the smoke keeps checkpoints every 10 steps and must leave step-10 and step-20). wq w642, w643 (--partial, 4 GPUs).
   Figure 9: one line per checkpoint (steps 992-4958), unread level minus batch loss against when the batch was read.
 - Record logs/trec-ck.yaml. Scratch file quota: 97.2M of 100M files (2026-10-29); a checkpoint is 24 files.
+- Result (w642 04:31-07:30, w643 -07:55, exit 0; tools/imprint.py): imprint E = (U_s - L_s(b)) - (U_p - L_p(b)), p the
+  last checkpoint before the read. d12: first-quarter batches 0.073 nats right after the read, 0.0007 at the end (1%);
+  0.75-0.95: 0.102 -> 0.072 (71%); batches of the first half lose 81% within ~500 steps. rsqrtcd: first quarter 0.120 ->
+  0.0044 (4%). Decay of the two runs lines up best against the sum of lr since the read (relative spread 0.24; steps
+  0.56, sum lr^2 0.57; tools/imprint_collapse.py). Q7 answered: learned, then forgotten.
+- Q8 (owner popup 2026-10-29): branches from d12-ck248 step 2480 (INIT_FROM: step, optimizer, data position) at a
+  constant lr with lr x N = 5: 0.01 x 500, 0.005 x 1000, 0.0025 x 2000 (sum lr^2 0.05, 0.025, 0.0125); checkpoints every
+  124 steps score batches 2232-2479 + 256 unread (scripts/della/trec_branch.sbatch, commit dc5c92b4c9; smoke must start
+  from the checkpoint, loss < 4). wq w651-w653. Figure 10: fraction of the imprint left against the three measures.
 
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
