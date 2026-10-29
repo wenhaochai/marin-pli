@@ -92,6 +92,14 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-{tag}", out=f"m
               size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=[w], figs="8", code="")
          for tag, en, zh, w in [("rsqrt", "lr 0.02 / \u221a(1 + 0.0092 t)", "lr 0.02 / \u221a(1 + 0.0092 t)", "w590"),
                                 ("rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t), linear to zero over the last fifth", "lr 0.02 / \u221a(1 + 0.0092 t)，最后五分之一线性降到零", "w591")]]
+# Figure 9 (owner popup 2026-10-29): the same two schedules with a checkpoint every 248 steps (branch trec-rsqrt
+# 31a2bb26e0); checkpoints 248..4712 score a 1-in-16 sample (blocks of 8 every 128, plus the last 8) and 256 unread
+# batches, the final one every batch and 512 unread ones
+_CK_SCORED = 19 * (len(np.union1d(np.arange(4959)[np.arange(4959) % 128 < 8], np.arange(4951, 4959))) + 256) + 4959 + 512
+ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12{tag}-ck248", out=f"ck/muonh-qwen3-130m-della4xh100-d12{tag}-ck248", setup={"en": en, "zh": zh},
+              size="130m", layers=12, steps=4959, batches=_CK_SCORED, jobs=[w], figs="9", code="")
+         for tag, en, zh, w in [("", "WSD to zero, lr 0.02, a checkpoint every 248 steps", "WSD 降到零，lr 0.02，每 248 步一个 checkpoint", "w642"),
+                                ("-rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t) with cooldown, a checkpoint every 248 steps", "lr 0.02 / \u221a(1 + 0.0092 t) 加冷却，每 248 步一个 checkpoint", "w643")]]
 OTHER = ["w439", "w447", "w512"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke)
 CODE = "https://github.com/wenhaochai/marin-pli/tree/2347279edabd36dcdf1ac0097d335d3d76130ccc"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-28 (Figures 6 and 7)
 
