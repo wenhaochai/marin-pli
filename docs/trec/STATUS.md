@@ -122,6 +122,14 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   CLEAN_GIVEN_EVIDENCE. Not done: public code for trec-rsqrt (based on the pls commit 4530d3bb; the scrub covers the
   trec branch only), so the two record rows carry no Code link.
 
+## Imprint and decay (owner via the controller 2026-10-29: sessions add experiments; popup "提交两个", placeholder approved)
+- Question 7: were the early batches learned little, or learned and then forgotten? d12 and rsqrtcd trained again
+  with a checkpoint every 248 steps (KEEP_EVERY=248, tag -ck248, commit 31a2bb26e0); each checkpoint scores 1 in 16
+  training batches (blocks of 8 every 128) and 256 unread ones, the final one every batch (scripts/della/trec_ck.sbatch;
+  the smoke keeps checkpoints every 10 steps and must leave step-10 and step-20). wq w642, w643 (--partial, 4 GPUs).
+  Figure 9: one line per checkpoint (steps 992-4958), unread level minus batch loss against when the batch was read.
+- Record logs/trec-ck.yaml. Scratch file quota: 97.2M of 100M files (2026-10-29); a checkpoint is 24 files.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.
