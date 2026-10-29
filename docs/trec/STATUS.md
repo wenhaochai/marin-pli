@@ -139,6 +139,12 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   124 steps score batches 2232-2479 + 256 unread (scripts/della/trec_branch.sbatch, commit dc5c92b4c9; smoke must start
   from the checkpoint, loss < 4). wq w651-w653. Figure 10: fraction of the imprint left against the three measures.
 
+- Branch jobs w651-w653 failed their smoke gate (the smokes were good: resumed at 2481, eval loss 4.25-4.28; a 10-step
+  run prints no train-loss postfix). Gate fixed (resume line + W&B eval/loss < 5, c316659b4d); rerun as w658-w660.
+- Figure 9 at 300m (owner popup 2026-10-29): the s1-rerun config (its W&B config equals what trec-rsqrt builds for
+  SIZE=300m SEED=1, tools/cfg_diff_300m.py) trained again with a checkpoint every 572 steps (run
+  muonh-qwen3-300m-della4xh100-ck572-s1, scripts/della/trec_ck300.sbatch, 2aaa9d3507); wq w667 (--partial, ~40 GPU-h).
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.

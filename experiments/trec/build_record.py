@@ -100,6 +100,12 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12{tag}-ck248", ou
               size="130m", layers=12, steps=4959, batches=_CK_SCORED, jobs=[w], figs="9", code="")
          for tag, en, zh, w in [("", "WSD to zero, lr 0.02, a checkpoint every 248 steps", "WSD 降到零，lr 0.02，每 248 步一个 checkpoint", "w642"),
                                 ("-rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t) with cooldown, a checkpoint every 248 steps", "lr 0.02 / \u221a(1 + 0.0092 t) 加冷却，每 248 步一个 checkpoint", "w643")]]
+# Figure 9 at 300m (owner popup 2026-10-29): the 300m reference run trained again with a checkpoint every 572 steps
+# (branch trec-rsqrt 2aaa9d3507)
+_CK300 = 20 * (len(np.union1d(np.arange(11444)[np.arange(11444) % 128 < 8], np.arange(11436, 11444))) + 256) + 11444 + 512
+ROWS += [dict(model=None, run="muonh-qwen3-300m-della4xh100-ck572-s1", out="ck/muonh-qwen3-300m-della4xh100-ck572-s1",
+              setup={"en": "Cosine to zero, lr 0.01, seed 1, a checkpoint every 572 steps", "zh": "cosine 降到零，lr 0.01，种子 1，每 572 步一个 checkpoint"},
+              size="300m", layers=12, steps=11444, batches=_CK300, jobs=["w667"], figs="9", code="")]
 # Figure 10 (owner popup 2026-10-29): d12-ck248 continued from step 2480 at a constant lr, lr x steps = 5 (branch
 # trec-rsqrt dc5c92b4c9); checkpoints every 124 steps score batches 2232-2479 and 256 unread ones (arm a also scores
 # the d12-ck248 checkpoints 2232 and 2480)

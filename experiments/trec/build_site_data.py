@@ -447,9 +447,10 @@ def fig_rsqrt():
             "legend": [[label, col, "line"] for _, label, col in RSQRT], "panels": [lrp, tp]}
 
 
-CK = [("muonh-qwen3-130m-della4xh100-d12-ck248", {"en": "d12", "zh": "d12"}),
-      ("muonh-qwen3-130m-della4xh100-d12-rsqrtcd-ck248", {"en": "1/\u221at + cooldown", "zh": "1/\u221at + \u51b7\u5374"})]
-CK_STEPS = [992, 1984, 2976, 3968, 4958]
+CK = [("muonh-qwen3-130m-della4xh100-d12-ck248", {"en": "130m, WSD", "zh": "130m\uff0cWSD"}, 4959, [992, 1984, 2976, 3968, 4958]),
+      ("muonh-qwen3-130m-della4xh100-d12-rsqrtcd-ck248", {"en": "130m, 1/\u221at + cooldown", "zh": "130m\uff0c1/\u221at + \u51b7\u5374"}, 4959, [992, 1984, 2976, 3968, 4958]),
+      ("muonh-qwen3-300m-della4xh100-ck572-s1", {"en": "300m, cosine", "zh": "300m\uff0ccosine"}, 11444, [2288, 4576, 6864, 9152, 11443])]   # wq w667
+CK_FRACS = [0.2, 0.4, 0.6, 0.8, 1.0]   # each run's checkpoints at these training fractions
 CK_COLORS = ["#AECBFA", "#669DF6", "#1A73E8", "#185ABC", "#174EA6"]   # GM2 blue 200-900: the order is the message
 
 
@@ -458,10 +459,10 @@ def fig_imprint():
     w643). Per checkpoint, the unread level minus the loss on 1 in 16 training batches (blocks of 8 steps every 128; the
     final checkpoint scores every batch and is cut to the same blocks), as a moving mean over 3 blocks, against the
     training fraction at which the batch was read. Queued until every checkpoint of a run is scored."""
-    T, panels = 4959, []
-    for run, label in CK:
+    panels = []
+    for run, label, T, ck_steps in CK:
         marks = []
-        for step, col in zip(CK_STEPS, CK_COLORS):
+        for step, col in zip(ck_steps, CK_COLORS):
             files = sorted(glob.glob(os.path.join(OUT, "ck", run, f"step-{step}", "[0-9]*.npz")))
             if not files:
                 break
@@ -478,7 +479,7 @@ def fig_imprint():
             marks.append({"type": "line", "pts": thin(np.convolve(x, np.ones(w) / w, "valid"), np.convolve(y, np.ones(w) / w, "valid")),
                           "color": col, "width": 1.6, "alpha": 0.9})
         p = {"label": label, "xlim": [0, 1], "xticks": XTICKS}
-        if len(marks) < len(CK_STEPS):
+        if len(marks) < len(ck_steps):
             p.update(ylim=[0, 0.12], yticks=ticks(0, 0.1, 0.02, 2), empty=QUEUED, marks=[])
         else:
             p.update(marks=marks)
@@ -494,8 +495,8 @@ def fig_imprint():
     return {"title": {"en": "Imprint of each batch over training", "zh": "\u6bcf\u4e2a\u6279\u6b21\u5728\u8bad\u7ec3\u4e2d\u7684\u5370\u8bb0"},
             "quantity": {"en": "Below the unread level (nats)", "zh": "\u4f4e\u4e8e\u672a\u8bfb\u6c34\u5e73\u7684\u91cf\uff08nats\uff09"},
             "xlabel": {"en": "Training fraction when read", "zh": "\u8bfb\u5230\u65f6\u7684\u8bad\u7ec3\u8fdb\u5ea6"}, "cols": 2, "height": 200,
-            "legend": [[{"en": f"Step {s}", "zh": f"\u7b2c {s} \u6b65"} if i == 0 else {"en": str(s), "zh": str(s)}, c, "line"]
-                       for i, (s, c) in enumerate(zip(CK_STEPS, CK_COLORS))], "panels": panels}
+            "legend": [[{"en": f"Checkpoint at {f:g}", "zh": f"\u8bad\u7ec3\u8fdb\u5ea6 {f:g} \u5904\u7684 checkpoint"} if i == 0 else {"en": f"{f:g}", "zh": f"{f:g}"}, c, "line"]
+                       for i, (f, c) in enumerate(zip(CK_FRACS, CK_COLORS))], "panels": panels}
 
 
 BRANCH = [("muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm0.5-br2480", "lr 0.01 \u00d7 500", 0.01, "#8AB4F8"),
