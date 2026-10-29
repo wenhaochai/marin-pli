@@ -90,12 +90,15 @@ if os.environ.get("XLA_CMD_BUFFER_WHILE", "0") == "1" and "xla_gpu_enable_comman
 
 # ATTN_BACKEND=fa4 (the Tokenizer Size session's 6497ef5720): attention through levanter's grug FA4/CuTe segmented
 # kernel (AttentionBackend.FA4_CUTE) in place of the pure-JAX flash loop; same mask, different kernel, so the math
-# changes at bf16 level. Run tag -fa4 (speed work 2026-10-26). Default jax_flash: every run id unchanged.
+# changes at bf16 level. Run tag -fa4 (speed work 2026-10-26).
 # ATTN_BACKEND=fa4thd: the same attention through upstream FA4's native SM90 varlen kernels (AttentionBackend.FA4_THD,
 # the Tokenizer Size session's fa4-sm90 386de97318): 1.9-2.7x faster than fa4 at head_dim 64 with the same errors against
 # fp32 (its w283). Its sequence count per device is static: LEVANTER_FA4_THD_DOCS_PER_ROW x rows; pls runs 1-4 rows per
 # device and a fineweb-edu row holds up to 17 documents, so 32 per row here (an overflow gives a NaN, never a wrong mask).
-ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "jax_flash")
+# Default fa4thd since 2026-10-29 (owner popup 2026-10-28, after full H100 runs w334/w387/w501 trained through their mid
+# evals and checkpoints): 19% faster per step than jax_flash on the Pre-LN 48-layer pair, layer-48 loss +0.001 (w500 vs
+# w501). Its runs carry the tag -fa4thd, so a run started on jax_flash resumes only with ATTN_BACKEND=jax_flash.
+ATTN_BACKEND = os.environ.get("ATTN_BACKEND", "fa4thd")
 if ATTN_BACKEND not in ("jax_flash", "fa4", "fa4thd"):
     raise ValueError(f"ATTN_BACKEND={ATTN_BACKEND!r}: jax_flash | fa4 | fa4thd")
 if ATTN_BACKEND == "fa4thd":
