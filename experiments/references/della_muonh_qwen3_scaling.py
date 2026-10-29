@@ -161,11 +161,12 @@ WARMUP = int(os.environ["WARMUP"]) if os.environ.get("WARMUP") else None
 # trec-rsqrt, owner popup 2026-10-28). MuonH's fixed norm shrinks the weights by about 1 - A eta^2 / 2 every step (A the
 # two-sided sum of the step autocorrelation: 23 at momentum 0.95, 73 at 0.98), a weight decay lambda = A eta / 2 that
 # follows eta, and then every step keeps the same weight in the final model when eta_s = eta_max / sqrt(1 + A eta_max^2 s).
-# rsqrtcd: the same for the first 80% of the steps, then linear to 0. Both groups (MuonH and its Adam group) follow it,
+# rsqrtcd: the same for the first 80% of the steps, then linear to 0. constant: the peak rate throughout (for branches
+# continued from a checkpoint with INIT_FROM, whose step and optimizer state carry on; LR_MUL sets the rate). Both groups (MuonH and its Adam group) follow it,
 # as they follow the size's own schedule; no warmup. Run tags -rsqrt, -rsqrtcd.
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "")
-if LR_SCHEDULE not in ("", "rsqrt", "rsqrtcd"):
-    raise ValueError(f"LR_SCHEDULE must be rsqrt or rsqrtcd, got {LR_SCHEDULE}")
+if LR_SCHEDULE not in ("", "rsqrt", "rsqrtcd", "constant"):
+    raise ValueError(f"LR_SCHEDULE must be rsqrt, rsqrtcd or constant, got {LR_SCHEDULE}")
 STEP_AUTOCORR = {0.95: 23.0, 0.98: 73.0}
 # KEEP_EVERY (default 0: the permanent checkpoint every 10000 steps only) keeps a checkpoint every KEEP_EVERY steps, for
 # TRECs of intermediate checkpoints (how much reading a batch lowers its loss, and how fast that decays). Tag -ck{N}.
@@ -304,6 +305,8 @@ def _run_size(config: TrainLmOnPodConfig) -> None:
 def _lr_schedule(s):
     if not LR_SCHEDULE:
         return s["schedule"]
+    if LR_SCHEDULE == "constant":
+        return "constant"
     if s["warmup"] if WARMUP is None else WARMUP:
         raise ValueError("LR_SCHEDULE starts at the peak learning rate: it takes no warmup")
     T = SMOKE_STEPS or TOTAL_STEPS or s["steps"]   # the schedule spans the run: lr / sqrt(1 + c t / T), c = A eta_max^2 T
