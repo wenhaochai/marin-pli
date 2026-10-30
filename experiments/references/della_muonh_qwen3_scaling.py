@@ -558,7 +558,7 @@ if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO 
 # 0.98, eps 1e-15, momentum 0.98, muon eps 1e-5, linear schedule decaying over the last 80% of the steps, no warmup, max grad
 # norm 1, and weight decay MUON_WD (their optimum 0.1; Kim et al. 2025, arXiv 2509.14786, find 1.6 at 300M on repeated
 # data). Levanter's default mask decays every Linear (the Muon matrices and lm_head), not the embedding or the norms.
-# 300m, VARIANT=baseline only. The norm guard (LEVANTER_NORM_GUARD) assumes MuonH's constant norms, so it must be 0.
+# 300m; VARIANT baseline, or inoise / drop (model-side noise, 2026-10-29). The norm guard (LEVANTER_NORM_GUARD) assumes MuonH's constant norms, so it must be 0.
 # Tag -muonwd<MUON_WD>.
 # VARIANT=hnet (owner 2026-10-28, after Cartesia's "From Tokens to Bytes I/II"; popup "再加一个 H-Net 实验"): a one-stage H-Net on
 # the bytes (experiments/references/hnet_qwen3.py): HNET_ENC encoder and HNET_DEC decoder layers at every byte, the size's layers
@@ -988,8 +988,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         **opt_extra,
     )
     if OPT == "muon":
-        if not (size == "300m" and VARIANT == "baseline" and opt_cls is MuonHConfig and not LR_SCHED and not MIN_LR_RATIO and MUON_WD >= 0):
-            raise ValueError("OPT=muon: the 300m Table 86 recipe, VARIANT=baseline, no other optimizer or schedule knob")
+        if not (size == "300m" and VARIANT in ("baseline", "inoise", "drop") and opt_cls is MuonHConfig and not LR_SCHED and not MIN_LR_RATIO and MUON_WD >= 0):
+            raise ValueError("OPT=muon: the 300m Table 86 recipe, VARIANT baseline, inoise or drop (model-side only), no other optimizer or schedule knob")
         if float(os.environ.get("LEVANTER_NORM_GUARD", "0") or 0) > 0:
             raise ValueError("OPT=muon: set LEVANTER_NORM_GUARD=0 (the guard assumes MuonH's constant norms)")
         optimizer = MuonConfig(
