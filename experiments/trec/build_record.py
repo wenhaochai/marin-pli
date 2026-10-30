@@ -22,6 +22,8 @@ import numpy as np
 WQ = "/scratch/gpfs/GROUP/USER/wq/jobs"
 OUT = "/scratch/gpfs/GROUP/USER/project/trec/out"
 NY = zoneinfo.ZoneInfo("America/New_York")
+CODE = "https://github.com/wenhaochai/marin-pli/tree/4a20d7cd9c24ba31c8c563a0f72a50f7efad66bd"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-30 (Figures 1-10 builders, scorer)
+RSQRT_CODE = "https://github.com/wenhaochai/marin-pli/tree/efa55ee76b865cb1791aa660414c216e49784e3a"   # branch trec-rsqrt (training of the Figure 8-10 runs), scrubbed and scanned 2026-10-30
 ROWS = [
     dict(model="130m-d12", run="muonh-qwen3-130m-della4xh100-d12", setup={"en": "WSD to zero, lr 0.02", "zh": "WSD 降到零，lr 0.02"},
          size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=["w465"], figs="1, 2, 3, 4, 6"),
@@ -89,7 +91,7 @@ ROWS += new_rows()
 # kexue.fm/archives/11459 (branch trec-rsqrt) and scored on every training batch and 512 unread ones, in one wq job each
 # (training and scoring); code: the public commit once the runs finish (empty until then; queued rows show no code link)
 ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-{tag}", out=f"muonh-qwen3-130m-della4xh100-d12-{tag}", setup={"en": en, "zh": zh},
-              size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=[w], figs="8", code="")
+              size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=[w], figs="8", code=RSQRT_CODE)
          for tag, en, zh, w in [("rsqrt", "lr 0.02 / \u221a(1 + 0.0092 t)", "lr 0.02 / \u221a(1 + 0.0092 t)", "w590"),
                                 ("rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t), linear to zero over the last fifth", "lr 0.02 / \u221a(1 + 0.0092 t)，最后五分之一线性降到零", "w591")]]
 # Figure 9 (owner popup 2026-10-29): the same two schedules with a checkpoint every 248 steps (branch trec-rsqrt
@@ -97,7 +99,7 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-{tag}", out=f"m
 # batches, the final one every batch and 512 unread ones
 _CK_SCORED = 19 * (len(np.union1d(np.arange(4959)[np.arange(4959) % 128 < 8], np.arange(4951, 4959))) + 256) + 4959 + 512
 ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12{tag}-ck248", out=f"ck/muonh-qwen3-130m-della4xh100-d12{tag}-ck248", setup={"en": en, "zh": zh},
-              size="130m", layers=12, steps=4959, batches=_CK_SCORED, jobs=[w], figs="9", code="")
+              size="130m", layers=12, steps=4959, batches=_CK_SCORED, jobs=[w], figs="9", code=RSQRT_CODE)
          for tag, en, zh, w in [("", "WSD to zero, lr 0.02, a checkpoint every 248 steps", "WSD 降到零，lr 0.02，每 248 步一个 checkpoint", "w642"),
                                 ("-rsqrtcd", "lr 0.02 / \u221a(1 + 0.0092 t) with cooldown, a checkpoint every 248 steps", "lr 0.02 / \u221a(1 + 0.0092 t) 加冷却，每 248 步一个 checkpoint", "w643")]]
 # Figure 9 at 300m (owner popup 2026-10-29): the 300m reference run trained again with a checkpoint every 572 steps
@@ -105,22 +107,21 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12{tag}-ck248", ou
 _CK300 = 20 * (len(np.union1d(np.arange(11444)[np.arange(11444) % 128 < 8], np.arange(11436, 11444))) + 256) + 11444 + 512
 ROWS += [dict(model=None, run="muonh-qwen3-300m-della4xh100-ck572-s1", out="ck/muonh-qwen3-300m-della4xh100-ck572-s1",
               setup={"en": "Cosine to zero, lr 0.01, seed 1, a checkpoint every 572 steps", "zh": "cosine 降到零，lr 0.01，种子 1，每 572 步一个 checkpoint"},
-              size="300m", layers=12, steps=11444, batches=_CK300, jobs=["w667"], figs="9", code="")]
+              size="300m", layers=12, steps=11444, batches=_CK300, jobs=["w667"], figs="9", code=RSQRT_CODE)]
 # Figure 10 (owner popup 2026-10-29): d12-ck248 continued from step 2480 at a constant lr, lr x steps = 5 (branch
 # trec-rsqrt dc5c92b4c9); checkpoints every 124 steps score batches 2232-2479 and 256 unread ones (arm a also scores
 # the d12-ck248 checkpoints 2232 and 2480)
 ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br2480", out=f"ck/branch/muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br2480",
               setup={"en": f"From step 2480 of the checkpointed WSD run, lr {lr} for {n} steps", "zh": f"从每 248 步存 checkpoint 的 WSD run 第 2480 步起，lr {lr} 训练 {n} 步"},
-              size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if w == "w658" else 0)) * (248 + 256), jobs=[w], figs="10", code="")
+              size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if w == "w658" else 0)) * (248 + 256), jobs=[w], figs="10", code=RSQRT_CODE)
          for m, lr, n, w in [("0.5", 0.01, 500, "w658"), ("0.25", 0.005, 1000, "w659"), ("0.125", 0.0025, 2000, "w660")]]
 # Figure 10 at branch points 1240 and 3720 (owner popup 2026-10-29: is p the same early and late?), trec-rsqrt 8970c90296
 ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br{bp}", out=f"ck/branch/muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br{bp}",
               setup={"en": f"From step {bp} of the checkpointed WSD run, lr {lr} for {n} steps", "zh": f"从每 248 步存 checkpoint 的 WSD run 第 {bp} 步起，lr {lr} 训练 {n} 步"},
-              size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if arm == "a" else 0)) * (248 + 256), jobs=[w], figs="10", code="")
+              size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if arm == "a" else 0)) * (248 + 256), jobs=[w], figs="10", code=RSQRT_CODE)
          for bp, ws in [(1240, ["w671", "w672", "w673"]), (3720, ["w674", "w675", "w676"])]
          for (m, lr, n, arm), w in zip([("0.5", 0.01, 500, "a"), ("0.25", 0.005, 1000, "b"), ("0.125", 0.0025, 2000, "c")], ws)]
 OTHER = ["w439", "w447", "w512", "w651", "w652", "w653"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke); w651-w653: Figure 10 branches whose good smokes failed a gate that looked for a loss line a 10-step run does not print (rerun as w658-w660)
-CODE = "https://github.com/wenhaochai/marin-pli/tree/2347279edabd36dcdf1ac0097d335d3d76130ccc"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-28 (Figures 6 and 7)
 
 
 def job(w):

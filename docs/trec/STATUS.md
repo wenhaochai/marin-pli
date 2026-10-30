@@ -155,6 +155,11 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 - Q8 at other branch points (owner popup 2026-10-29): the same three arms from d12-ck248 steps 1240 and 3720, scoring
   the 248 batches read before each (trec_branch.sbatch, job names trec-br<step>-a|b|c, 8970c90296). wq w671-w676.
 
+- Public code (owner 2026-10-30, "都要"): marin-pli trec fast-forwarded 2347279 -> 4a20d7cd9c, new branch trec-rsqrt at
+  efa55ee76b (tmp/trec_scan2/scrub.sh <branch>; scan: secrets 0, cluster user and group 0; reself and the pli account as
+  before). Record: Figures 1-7 rows link trec, Figures 8-10 rows link trec-rsqrt. Figure 10 gets a fourth panel (sum of
+  lr^1.32). The Kaggle-worker permission rule was blocked as self-modification: the owner adds it.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.
