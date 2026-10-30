@@ -72,6 +72,7 @@ from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
 from experiments.references.hnet_qwen3 import HNetQwen3Config
 from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
+from experiments.references.selfkd_qwen3 import SelfKDMuonHConfig, SelfKDQwen3Config
 from experiments.references.cvd_flood_qwen3 import CvdFloodQwen3Config
 from experiments.references.flood_qwen3 import FloodQwen3Config, flood_levels
 from experiments.references.lazy_embed_muonh import LazyEmbedMuonHConfig
@@ -440,6 +441,13 @@ DROP_FROM_PASS = int(os.environ.get("DROP_FROM_PASS", "0"))
 # in logs/vocab_token_losses/subset_counts_<K>.npy, K = 128000 or 8000). Evaluation is plain CE. Tag -us<eps>-fp<pass>.
 US_EPS = float(os.environ.get("US_EPS", "0.05"))
 US_FROM_PASS = int(os.environ.get("US_FROM_PASS", "0"))
+# VARIANT=selfkd (owner 2026-10-30, self-distillation in the repeated passes): from the first update of pass KD_FROM_PASS of 8
+# on, each training position's loss is (1 - KD_ALPHA) CE + KD_ALPHA KL(teacher || student), the teacher frozen at the run's
+# own weights that update reads (selfkd_qwen3.py: the teacher lives in the model, so a --partial resume restores it; the
+# optimizer skips it and copies the student into it once). 8-pass runs only: the full-data run never distils (its point is
+# the plain one). Evaluation is plain CE. Tag -kd<alpha>-fp<pass>.
+KD_ALPHA = float(os.environ.get("KD_ALPHA", "0.5"))
+KD_FROM_PASS = int(os.environ.get("KD_FROM_PASS", "2"))
 # VARIANT=flood (owner popup 2026-10-25, the four extra jobs): from the first update of pass FL_FROM_PASS of 8 on, the batch
 # loss L becomes |L - b| + b (Ishida et al. 2020), b = the step's level from logs/vocab_flood/level_<K>_f<FL_F>.npy
 # (scripts/della/flood_levels.py): the unique-token run's smoothed train loss, moved a share FL_F toward the plain 8-pass
@@ -585,7 +593,7 @@ DTP = float(os.environ.get("DTP", "0"))
 if VOCAB_SET and (VOCAB_K or VARIANT != "baseline" or PASS_DATA or DTP or not VOCAB_SET.startswith("f")):
     raise ValueError(f"VOCAB_SET={VOCAB_SET}: f<T>, plain runs only (no VOCAB_K, VARIANT, PASS_DATA or DTP)")
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
-if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "flood", "cvdflood", "hnet", *OBJECTIVE_VARIANTS):
+if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "selfkd", "flood", "cvdflood", "hnet", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")
 INIT_FROM = os.environ.get("INIT_FROM") or None
 TOTAL_STEPS = int(os.environ["TOTAL_STEPS"]) if os.environ.get("TOTAL_STEPS") else None
@@ -686,6 +694,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
         variant_tags += f"-us{US_EPS:g}-fp{US_FROM_PASS}"
+    if VARIANT == "selfkd":
+        variant_tags += f"-kd{KD_ALPHA:g}-fp{KD_FROM_PASS}"
     if VARIANT in ("flood", "cvdflood"):
         variant_tags += f"-fl{FL_F:g}-fp{FL_FROM_PASS}"
     if VARIANT in ("ovgram", "ovgram3", "ovgramss"):
@@ -821,6 +831,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise FileNotFoundError(counts)
         model_cls, model_extra = UniSmoothQwen3Config, dict(us_eps=US_EPS, us_counts=counts,
                                                           us_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (US_FROM_PASS - 1))
+    elif VARIANT == "selfkd":
+        if not (DATA_EPOCHS == 8 and 2 <= KD_FROM_PASS <= 7 and 0 < KD_ALPHA <= 1 and not PASS_DATA.startswith(("bpd", "rsplit")) and not TIE and OPT == "muonh"):
+            raise ValueError("VARIANT=selfkd: DATA_EPOCHS=8, KD_FROM_PASS 2..7, 0 < KD_ALPHA <= 1, equal passes, untied tables, MuonH")
+        model_cls, model_extra = SelfKDQwen3Config, dict(kd_alpha=KD_ALPHA, kd_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (KD_FROM_PASS - 1))
     elif VARIANT == "flood":
         if not (DATA_EPOCHS == 8 and 2 <= FL_FROM_PASS <= 7 and 0 <= FL_F < 1 and VOCAB_K in (0, 32000, 8000) and PASS_DATA == "" and not TOTAL_STEPS):
             raise ValueError("VARIANT=flood: DATA_EPOCHS=8, FL_FROM_PASS 2..7, 0 <= FL_F < 1, VOCAB_K 0, 32000 or 8000, plain passes, default steps")
@@ -967,6 +981,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError(f"DTP={DTP}, DTP_FROM_PASS={DTP_FROM_PASS}: rate > 0 and pass 2..7, only with VARIANT=baseline on the Marin tokenizer, DATA_EPOCHS=8 and equal passes")
         opt_cls, opt_extra = DecayToPiecesMuonHConfig, dict(dtp_map=f"{_PREFIX}/tokenizers/marin-small/v{CV_K}/expand_full.npz", dtp=DTP,
                                                             dtp_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DTP_FROM_PASS - 1))
+    if VARIANT == "selfkd":   # MuonH on the student; the teacher takes the student's weights once, at the model's kd_from_step
+        if opt_cls is not MuonHConfig:
+            raise ValueError("VARIANT=selfkd: the plain MuonH optimizer only (no other optimizer change)")
+        opt_cls, opt_extra = SelfKDMuonHConfig, dict(kd_from_step=model_extra["kd_from_step"])
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
