@@ -152,6 +152,9 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   arms meet against sum(lr^p) with p = 1.32 (1.26-1.39 within 2x the best gap): mean squared log gap 7.0e-4, against
   1.5e-2 (p=1), 6.7e-2 (p=2, the fixed-norm shrink), 0.13 (steps). Q8 answered; takeaway extended.
 
+- Q8 at other branch points (owner popup 2026-10-29): the same three arms from d12-ck248 steps 1240 and 3720, scoring
+  the 248 batches read before each (trec_branch.sbatch, job names trec-br<step>-a|b|c, 8970c90296). wq w671-w676.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.

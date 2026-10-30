@@ -113,6 +113,12 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-
               setup={"en": f"From step 2480 of the checkpointed WSD run, lr {lr} for {n} steps", "zh": f"从每 248 步存 checkpoint 的 WSD run 第 2480 步起，lr {lr} 训练 {n} 步"},
               size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if w == "w658" else 0)) * (248 + 256), jobs=[w], figs="10", code="")
          for m, lr, n, w in [("0.5", 0.01, 500, "w658"), ("0.25", 0.005, 1000, "w659"), ("0.125", 0.0025, 2000, "w660")]]
+# Figure 10 at branch points 1240 and 3720 (owner popup 2026-10-29: is p the same early and late?), trec-rsqrt 8970c90296
+ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br{bp}", out=f"ck/branch/muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-br{bp}",
+              setup={"en": f"From step {bp} of the checkpointed WSD run, lr {lr} for {n} steps", "zh": f"从每 248 步存 checkpoint 的 WSD run 第 {bp} 步起，lr {lr} 训练 {n} 步"},
+              size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if arm == "a" else 0)) * (248 + 256), jobs=[w], figs="10", code="")
+         for bp, ws in [(1240, ["w671", "w672", "w673"]), (3720, ["w674", "w675", "w676"])]
+         for (m, lr, n, arm), w in zip([("0.5", 0.01, 500, "a"), ("0.25", 0.005, 1000, "b"), ("0.125", 0.0025, 2000, "c")], ws)]
 OTHER = ["w439", "w447", "w512", "w651", "w652", "w653"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke); w651-w653: Figure 10 branches whose good smokes failed a gate that looked for a loss line a 10-step run does not print (rerun as w658-w660)
 CODE = "https://github.com/wenhaochai/marin-pli/tree/2347279edabd36dcdf1ac0097d335d3d76130ccc"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-28 (Figures 6 and 7)
 
