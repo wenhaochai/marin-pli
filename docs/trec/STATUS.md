@@ -10,6 +10,8 @@ training. More steps over the same text (8K, bytes) move the low point later tha
 either training seed. On 24 more checkpoints (2026-10-28), a larger learning rate, a long EMA and bytes move the low point by
 0.07-0.11 of training, the averaging predicts the direction and a quarter to three fifths of the size, depth, batch and
 seed do not move it; runs that reread their data fall on one TREC when each batch is placed at its last read.
+On 2026-10-29: equal weights c (the 1/sqrt(t) schedule) keep 0.003 nats more of the first quarter and cost 0.03-0.11 nats;
+early batches are learned (0.07-0.12 nats) and then forgotten (1-4% left), at a rate set by sum(lr^1.3).
 
 Owner request 2026-10-26: a new Experiments page that applies Bergsma, Dey and Hestness (2025, arXiv 2509.25380) to
 our finished pretraining checkpoints. Page: `exps/trec.html` on the website branch `pretrain-practice`
@@ -144,6 +146,11 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 - Figure 9 at 300m (owner popup 2026-10-29): the s1-rerun config (its W&B config equals what trec-rsqrt builds for
   SIZE=300m SEED=1, tools/cfg_diff_300m.py) trained again with a checkpoint every 572 steps (run
   muonh-qwen3-300m-della4xh100-ck572-s1, scripts/della/trec_ck300.sbatch, 2aaa9d3507); wq w667 (--partial, ~40 GPU-h).
+
+- Q8 result (w658-w660 exit 0; tools/branch_fit.py): imprint at the branch 0.157 nats. Fraction left after 248 steps
+  0.33 / 0.57 / 0.77 (lr 0.01 / 0.005 / 0.0025), half-life 124 / 339 / 784 steps; at sum lr 5: 0.19 / 0.23 / 0.26. The
+  arms meet against sum(lr^p) with p = 1.32 (1.26-1.39 within 2x the best gap): mean squared log gap 7.0e-4, against
+  1.5e-2 (p=1), 6.7e-2 (p=2, the fixed-norm shrink), 0.13 (steps). Q8 answered; takeaway extended.
 
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
