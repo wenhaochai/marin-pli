@@ -66,6 +66,11 @@
 #                                does the separate-heads cost at the last layer stay once the intermediate losses stop?
 #                                Controls: the seed-0 separate-heads and probes runs of each design. Pre-flight: wq
 #                                pls-off-test (PLS_OFF=15 over 40 steps with a mid eval and checkpoint)
+#   arch3-mhcidlin-{sep,probes}  mHC with identity mixing and HC's linear read/write (owner popup 2026-10-30, causal test
+#                                of the offline stream-collapse analysis: no averaging of the streams and signed writes
+#                                give mHC HC's stream-difference space; prediction: cost near HC's 0.048, from 0.08-0.10)
+#   arch3-hcwsh-{sep,probes}     HC whose write is one weight shared by every stream (HC_WRITE=shared; same popup: no
+#                                sublayer writes into the stream differences; prediction: cost rises toward Pre-LN's 0.089)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -106,6 +111,8 @@ case $DESIGN in
   arch3-hc-newstack) S="$base LAYERS=48 PDP=4 ARCH=hc ATTN_BACKEND=fa4thd LEVANTER_CE_BTILED_MIN_BATCH=4096 PLS_SERIAL=1 LEVANTER_CE_GIF_BARRIER=1";;
   arch3-hcrwsig) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RW=sigmoid";;
   arch3-mhcrwlin) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RW=linear";;
+  arch3-mhcidlin) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity MHC_RW=linear";;
+  arch3-hcwsh) S="$base LAYERS=48 PDP=4 ARCH=hc HC_WRITE=shared";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40

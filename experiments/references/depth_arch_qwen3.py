@@ -65,6 +65,10 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            depth_hc_rw="sigmoid"): r = e_k + (pre - read constants), w = 1 + post, where pre and post are mhc's
                            logits (gain * projection + bias) and the constants are mhc's +8 / -8 read biases. At init r = e_k
                            and w = 1, mhc's function up to its read leak sigmoid(-8); the residual mixing stays mhc's.
+    depth_hc_write="shared"  hc whose write is one weight per token shared by every stream, the mean of hc's per-stream
+                           write w (owner popup 2026-10-30): a sublayer adds the same w_bar F to every stream, so it never
+                           writes into the stream differences, the part of the state no readout (the stream sum) sees.
+                           Read and mixing stay hc's. At init w = 1 on every stream, hc's function.
     DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
                            after each step, so that its logit scale s = ||q * g|| sqrt(d) stays <= tau: q <- q min(1, tau / s)
                            (the key gain g is not clipped). A source's logit is s cos(v, q * g), so tau bounds every logit.
@@ -322,6 +326,9 @@ class DepthArchLayer(eqx.Module):
             if _hc_rw_sigmoid(self.config):  # mHC's maps on hc's logits: the learned offsets and dynamic terms of read and write
                 read = hax.nn.sigmoid(MHC_READ_BIAS * (2.0 * c_read - 1.0) + (read - c_read))
                 write = 2.0 * hax.nn.sigmoid(write - c_write)
+            if _hc_write_shared(self.config):  # one write for every stream: the mean of the per-stream writes
+                So_ = write.resolve_axis("stream_out")
+                write = hax.mean(write, axis=So_).broadcast_axis(So_)
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
@@ -415,6 +422,13 @@ def _hc_rw_sigmoid(config) -> bool:
     if rw not in ("linear", "sigmoid"):
         raise ValueError(f"depth_hc_rw must be 'linear' or 'sigmoid', got {rw!r}")
     return rw == "sigmoid"
+
+
+def _hc_write_shared(config) -> bool:
+    wr = getattr(config, "depth_hc_write", "stream")
+    if wr not in ("stream", "shared"):
+        raise ValueError(f"depth_hc_write must be 'stream' or 'shared', got {wr!r}")
+    return wr == "shared"
 
 
 def _static_weights(theta: NamedArray, n, d: int) -> NamedArray:
@@ -533,6 +547,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_hc_rw='sigmoid' needs hc, got {arch!r}")
         if _mhc_rw_linear(config) and arch != "mhc":
             raise ValueError(f"depth_mhc_rw='linear' needs mhc, got {arch!r}")
+        if _hc_write_shared(config) and arch != "hc":
+            raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
         if static and arch != "attnres":
             raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
         if _static(config) and arch not in ("hc", "attnres"):
