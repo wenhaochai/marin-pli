@@ -541,7 +541,9 @@ def fig_branch():
             curves.append((label, lr, col, np.array(pts)))
     axes = [("Sum of lr since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr", lambda a, lr: a * lr, [0, 5.25], [0, 1, 2, 3, 4, 5]),
             ("Steps since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684\u6b65\u6570", lambda a, lr: a, [0, 2100], [0, 500, 1000, 1500, 2000]),
-            ("Sum of lr\u00b2 since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b2", lambda a, lr: a * lr * lr, [0, 0.0525], [0, 0.01, 0.02, 0.03, 0.04, 0.05])]
+            ("Sum of lr\u00b2 since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b2", lambda a, lr: a * lr * lr, [0, 0.0525], [0, 0.01, 0.02, 0.03, 0.04, 0.05]),
+            # owner 2026-10-30: a fourth panel on the axis where the arms meet (p fitted by tools/branch_fit.py, 1.32)
+            ("Sum of lr\u00b9\u00b7\u00b3 since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b9\u00b7\u00b3", lambda a, lr: a * lr ** 1.32, [0, 1.2], [0, 0.25, 0.5, 0.75, 1.0])]
     panels = []
     for en, zh, fx, xlim, xt in axes:
         p = {"label": {"en": en, "zh": zh}, "xlim": xlim, "xticks": [[v, f"{v:g}"] for v in xt], "ylim": [0, 1.3], "yticks": ticks(0, 1.0, 0.25, 2)}
