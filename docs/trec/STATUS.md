@@ -160,6 +160,12 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   before). Record: Figures 1-7 rows link trec, Figures 8-10 rows link trec-rsqrt. Figure 10 gets a fourth panel (sum of
   lr^1.32). The Kaggle-worker permission rule was blocked as self-modification: the owner adds it.
 
+- Results 2026-10-30: branch points (tools/branch_fit.py, branch_curves(b)): p = 1.22 (1.14-1.30) at 1240, 1.32
+  (1.26-1.39) at 2480, 1.40 (1.33-1.48) at 3720; half-lives at lr 0.01/0.005/0.0025: 146/383/814, 121/339/784,
+  102/235/578 steps (halving lr: x2.1-2.8). 300m (w667, tools/imprint.py run 11444): first quarter 0.092 -> -0.0012
+  (nothing left), 0.75-0.95: 0.072 -> 0.049 (69%); its last checkpoint peaks near 0.78 (cosine to zero). Takeaway:
+  power between 1.2 and 1.4. Record cost: main 143.9 H100-h (17 jobs), other 0.6.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.
