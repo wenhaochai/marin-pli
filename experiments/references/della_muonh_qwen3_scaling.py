@@ -550,6 +550,9 @@ LR_MULT_FROM_PASS = int(os.environ.get("LR_MULT_FROM_PASS", "0"))
 LR_SCHED = os.environ.get("LR_SCHED", "")
 LR_DECAY = float(os.environ.get("LR_DECAY", "0.2"))
 MIN_LR_RATIO = float(os.environ.get("MIN_LR_RATIO", "0"))
+# LR_CYCLES=n (owner 2026-10-30, new directions): the size's cosine split into n cycles (Levanter cycles), each rewarmed over
+# 5% of its steps and decayed to MIN_LR_RATIO; with n = 8 and 8 passes every pass ends in a low-rate stretch. Tag -cyc<n>.
+LR_CYCLES = int(os.environ.get("LR_CYCLES", "0"))
 if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO < 1:
     raise ValueError(f"LR_SCHED={LR_SCHED!r} LR_DECAY={LR_DECAY} MIN_LR_RATIO={MIN_LR_RATIO}: LR_SCHED is empty or wsd, 0 < LR_DECAY < 1, 0 <= MIN_LR_RATIO < 1")
 # OPT=muon (owner 2026-10-28: "换一个标准muon用很高的weight decay，大于1"; popup "128K+8K x wd 0.1/1.6/3.2"): standard Muon
@@ -669,6 +672,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-wsd{LR_DECAY:g}"
     if MIN_LR_RATIO:
         variant_tags += f"-minlr{MIN_LR_RATIO:g}"
+    if LR_CYCLES:
+        variant_tags += f"-cyc{LR_CYCLES}"
     if OPT == "muon":
         variant_tags += f"-muonwd{MUON_WD:g}"
     if DTP:
@@ -983,6 +988,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         decay=LR_DECAY if LR_SCHED == "wsd" else s["decay"],
         warmup=s["warmup"],
         min_lr_ratio=MIN_LR_RATIO,
+        **({"cycles": LR_CYCLES, "rewarmup": 0.05} if LR_CYCLES else {}),
         # The originals ran the fixed (3.4445, -4.7750, 2.0315) iteration; main defaults to quintic coefficients.
         coefficient_type="simple",
         **opt_extra,
