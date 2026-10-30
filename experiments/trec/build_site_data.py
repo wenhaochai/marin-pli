@@ -504,17 +504,41 @@ BRANCH = [("muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm0.5-br2480", "lr 
           ("muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm0.125-br2480", "lr 0.0025 \u00d7 2000", 0.0025, "#174EA6")]
 
 
-def _range_score(d):
-    """(unread mean, per-batch losses of training batches 2232..2479) of one TRAIN_RANGE scoring, else None."""
+def _range_score(d, b=2480):
+    """(unread mean, per-batch losses of the 248 training batches read before step b) of one TRAIN_RANGE scoring, else
+    None."""
     files = sorted(glob.glob(os.path.join(d, "[0-9]*.npz")))
     if not files:
         return None
     idx = np.concatenate([np.load(f)["index"] for f in files])
     loss = np.concatenate([np.load(f)["seq_loss"].sum(1) / np.load(f)["seq_weight"].sum(1) for f in files])
-    tr = (idx >= 2232) & (idx < 2480)
+    tr = (idx >= b - 248) & (idx < b)
     if tr.sum() != 248 or (idx >= 4959).sum() != 256:
         return None
     return loss[idx >= 4959].mean(), loss[tr][np.argsort(idx[tr])]
+
+
+def branch_curves(b):
+    """[(label, lr, colour, [(steps since b, fraction of the imprint left)])] of the three branches from step b
+    (2480: wq w658-w660; 1240 and 3720: w671-w676), or None until every arm is scored."""
+    base = os.path.join(OUT, "ck", "branch")
+    pre, at = _range_score(os.path.join(base, "base", f"step-{b - 248}"), b), _range_score(os.path.join(base, "base", f"step-{b}"), b)
+    if not (pre and at):
+        return None
+    e0 = ((at[0] - at[1]) - (pre[0] - pre[1])).mean()
+    curves = []
+    for run, label, lr, col in BRANCH:
+        run = run.replace("-br2480", f"-br{b}")
+        pts = [(0, 1.0)]
+        for st in sorted(int(d.split("-")[-1]) for d in glob.glob(os.path.join(base, run, "step-*"))):
+            r = _range_score(os.path.join(base, run, f"step-{st}"), b)
+            if r is None:
+                return None
+            pts.append((st - b, float(((r[0] - r[1]) - (pre[0] - pre[1])).mean() / e0)))
+        if pts[-1][0] < round(5 / lr) - 1:
+            return None
+        curves.append((label, lr, col, np.array(pts)))
+    return curves
 
 
 def fig_branch():
@@ -522,23 +546,7 @@ def fig_branch():
     (wq w651-w653). Fraction of the imprint of the batches read at steps 2232-2479 that is left at each kept checkpoint:
     E_s = mean_b [(U_s - L_s(b)) - (U_2232 - L_2232(b))] over those batches, divided by E at step 2480; against the sum
     of lr, the number of steps and the sum of lr^2 since step 2480. Queued until every arm is scored."""
-    base = os.path.join(OUT, "ck", "branch")
-    pre, at = _range_score(os.path.join(base, "base", "step-2232")), _range_score(os.path.join(base, "base", "step-2480"))
-    curves = []
-    if pre and at:
-        e0 = ((at[0] - at[1]) - (pre[0] - pre[1])).mean()
-        for run, label, lr, col in BRANCH:
-            steps = sorted(int(d.split("-")[-1]) for d in glob.glob(os.path.join(base, run, "step-*")))
-            pts = [(0, 1.0)]
-            for st in steps:
-                r = _range_score(os.path.join(base, run, f"step-{st}"))
-                if r is None:
-                    break
-                pts.append((st - 2480, float(((r[0] - r[1]) - (pre[0] - pre[1])).mean() / e0)))
-            n = round(5 / lr)
-            if pts[-1][0] < n - 1:
-                break
-            curves.append((label, lr, col, np.array(pts)))
+    curves = branch_curves(2480) or []
     axes = [("Sum of lr since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr", lambda a, lr: a * lr, [0, 5.25], [0, 1, 2, 3, 4, 5]),
             ("Steps since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684\u6b65\u6570", lambda a, lr: a, [0, 2100], [0, 500, 1000, 1500, 2000]),
             ("Sum of lr\u00b2 since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b2", lambda a, lr: a * lr * lr, [0, 0.0525], [0, 0.01, 0.02, 0.03, 0.04, 0.05]),
