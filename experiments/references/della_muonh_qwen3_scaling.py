@@ -356,6 +356,9 @@ if VOCAB_K and VOCAB_K < 1000 and VOCAB_K != 256:
 # VOCAB_SET=f<T> (owner popup 2026-10-27, "B 按频率选词表"): the 8K truncation of the Marin tokenizer plus every Marin token
 # seen at least T times in the repeated eighth (small_vocab_tokenizer.py build-freq); every other token is written with
 # its pieces under that vocabulary. Data, step count and evaluations as VOCAB_K; run tag -f<T>; plain runs only.
+# VOCAB_SET=bpe<K/1000>k (owner 2026-10-31, "检查有没有实验遗漏我们补一下"; the control for the truncations): a byte-level BPE
+# trained afresh to K ordinary tokens on a uniform sample of fineweb-edu (fresh_bpe_tokenizer.py), caches converted through
+# the text (convert_small_vocab_cache.py); everything else as v<K>. Run tag -bpe<K/1000>k; plain runs only.
 VOCAB_SET = os.environ.get("VOCAB_SET", "")
 VOCAB_NAME = VOCAB_SET or (f"v{VOCAB_K}" if VOCAB_K else "")
 # VARIANT=cv: the Marin tokenizer with its input embedding (CV_SIDE=in), output head (out) or both composed from the rows of
@@ -596,8 +599,8 @@ CVD_RATE_COUNT = int(os.environ.get("CVD_RATE_COUNT", "0"))
 # rare input rows (ids CV_K .. V-257) decay toward the mean of their CV_K-token pieces' rows at rate adam_lr * lambda
 # (DecayToPiecesMuonHConfig). Tag -dtp<lambda>-fp<p>.
 DTP = float(os.environ.get("DTP", "0"))
-if VOCAB_SET and (VOCAB_K or VARIANT != "baseline" or PASS_DATA or DTP or not VOCAB_SET.startswith("f")):
-    raise ValueError(f"VOCAB_SET={VOCAB_SET}: f<T>, plain runs only (no VOCAB_K, VARIANT, PASS_DATA or DTP)")
+if VOCAB_SET and (VOCAB_K or VARIANT != "baseline" or PASS_DATA or DTP or not VOCAB_SET.startswith(("f", "bpe"))):
+    raise ValueError(f"VOCAB_SET={VOCAB_SET}: f<T> or bpe<K/1000>k, plain runs only (no VOCAB_K, VARIANT, PASS_DATA or DTP)")
 DTP_FROM_PASS = int(os.environ.get("DTP_FROM_PASS", "0"))
 if VARIANT not in ("baseline", "fbt", "ss", "ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss", "focal", "cv", "fo", "fop", "fip", "lr", "rm", "cvr", "cvd", "drop", "inoise", "unismooth", "selfkd", "flood", "cvdflood", "hnet", *OBJECTIVE_VARIANTS):
     raise ValueError(f"unknown VARIANT={VARIANT!r}")

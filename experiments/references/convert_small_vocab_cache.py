@@ -12,6 +12,11 @@ ratio (converted / source) that sets the step count of the fixed-text comparison
 
     K=32000 [LIMIT=n] [SKIP_TRAIN=1] python -m experiments.references.convert_small_vocab_cache
     VOCAB_SET=f1000 [LIMIT=n] [SKIP_TRAIN=1] python -m experiments.references.convert_small_vocab_cache   (frequency set)
+    VOCAB_SET=bpe8k [LIMIT=n] [SKIP_TRAIN=1] python -m experiments.references.convert_small_vocab_cache   (fresh BPE)
+
+A fresh BPE (fresh_bpe_tokenizer.py, VOCAB_SET=bpe<K/1000>k) has its own merges, so no id-level expansion exists: each
+document is converted through its text instead (reencode_docs: decode the Marin ids, encode with the new tokenizer, special
+tokens kept in place), and check() requires every sampled document to equal encoding its text with the new tokenizer.
 """
 
 import json
@@ -26,10 +31,12 @@ from levanter.store.cache import CacheMetadata, SerialCacheWriter, TreeCache
 from experiments.references.small_vocab_tokenizer import N_ORDINARY, SRC, expansion
 
 VOCAB_SET = os.environ.get("VOCAB_SET", "")   # f<T>: a frequency set (small_vocab_tokenizer.py build-freq), not a truncation
+REENC = VOCAB_SET.startswith("bpe")   # bpe<K/1000>k: a fresh BPE (fresh_bpe_tokenizer.py), converted through the text
 NAME = VOCAB_SET or f"v{os.environ['K']}"
 PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
 TOK_DIR = f"{PREFIX}/tokenizers/marin-small/{NAME}"
-K = len(np.load(f"{TOK_DIR}/keep.npy")) if VOCAB_SET else int(os.environ["K"])   # ordinary tokens; specials at K..K+255
+K = (Tokenizer.from_file(f"{TOK_DIR}/tokenizer.json").get_vocab_size(with_added_tokens=False) if REENC   # ordinary tokens; specials at K..K+255
+     else len(np.load(f"{TOK_DIR}/keep.npy")) if VOCAB_SET else int(os.environ["K"]))
 LIMIT = int(os.environ.get("LIMIT", "0"))   # documents per cache, for a quick test (0 = all)
 CHUNK = 32768
 CHECK_DOCS = int(os.environ.get("CHECK_DOCS", "300"))
@@ -49,14 +56,37 @@ def convert_docs(docs, flat, offs):
     return np.split(out, np.cumsum(doc_out_len)[:-1]), int(ids.size), int(out.size)
 
 
-def convert_cache(src_dir, dst_dir, flat, offs):
+def reencode_docs(docs, full, small, k):
+    """Lists of Marin ids -> lists of ids of another tokenizer with k ordinary tokens, through the text: every run of ordinary
+    ids between special tokens is decoded with the Marin tokenizer (full) and encoded with the new one (small, no added
+    specials); each special token keeps its place and moves to k + (id - N_ORDINARY), as in convert_docs."""
+    segs, plans = [], []
+    for d in docs:
+        x = np.asarray(d, np.int64)
+        plan, prev = [], 0
+        for j in np.flatnonzero(x >= N_ORDINARY).tolist() + [x.size]:
+            if j > prev:
+                plan.append(len(segs)); segs.append(x[prev:j].tolist())
+            if j < x.size:
+                plan.append(-1 - (int(x[j]) - N_ORDINARY + k))   # a special token, as a negative code
+            prev = j + 1
+        plans.append(plan)
+    texts = full.decode_batch(segs, skip_special_tokens=False)
+    enc = getattr(small, "encode_batch_fast", small.encode_batch)(texts, add_special_tokens=False)
+    pieces = [np.asarray(e.ids, np.int32) for e in enc]
+    out = [np.concatenate([pieces[c] if c >= 0 else np.asarray([-1 - c], np.int32) for c in plan]) if plan else np.zeros(0, np.int32)
+           for plan in plans]
+    return out, int(sum(len(d) for d in docs)), int(sum(o.size for o in out))
+
+
+def convert_cache(src_dir, dst_dir, conv):
     src = TreeCache.load(src_dir, EX)
     n = len(src) if not LIMIT else min(LIMIT, len(src))
     t0, n_in, n_out = time.time(), 0, 0
     with SerialCacheWriter(dst_dir, EX, metadata=CacheMetadata.empty()) as w:
         for a in range(0, n, CHUNK):
             docs = [d["input_ids"] for d in src.get_batch_sync(list(range(a, min(n, a + CHUNK))))]
-            new, i, o = convert_docs(docs, flat, offs)
+            new, i, o = conv(docs)
             w.write_batch([{"input_ids": x} for x in new])
             n_in += i; n_out += o
             if (a // CHUNK) % 20 == 0:
@@ -83,7 +113,12 @@ def check(src_dir, dst_dir, n):
         tb = small.decode([t for t in b if t < K], skip_special_tokens=False)
         assert ta == tb, (src_dir, "decoded text differs")
         body = [t for t in a if t < N_ORDINARY]
-        if full.encode(ta, add_special_tokens=False).ids == body:
+        if REENC:
+            # through the text, a document with one run of ordinary ids is exactly its text encoded with the new tokenizer
+            if sum(1 for i, t in enumerate(a) if t < N_ORDINARY and (i == 0 or a[i - 1] >= N_ORDINARY)) <= 1:
+                assert [t for t in b if t < K] == small.encode(ta, add_special_tokens=False).ids, (src_dir, "re-encoded document differs from encoding its text")
+                canon += 1
+        elif full.encode(ta, add_special_tokens=False).ids == body:
             canon += 1
             # a frequency set is a two-stage tokenization, not BPE with its vocabulary (small_vocab_tokenizer.expansion)
             assert VOCAB_SET or [t for t in b if t < K] == small.encode(ta, add_special_tokens=False).ids, (src_dir, "canonical document re-encodes differently")
@@ -91,7 +126,12 @@ def check(src_dir, dst_dir, n):
 
 
 def main():
-    flat, offs = expansion(K, TOK_DIR)
+    if REENC:
+        full, small = Tokenizer.from_file(os.path.join(SRC, "tokenizer.json")), Tokenizer.from_file(os.path.join(TOK_DIR, "tokenizer.json"))
+        conv = lambda docs: reencode_docs(docs, full, small, K)  # noqa: E731
+    else:
+        flat, offs = expansion(K, TOK_DIR)
+        conv = lambda docs: convert_docs(docs, flat, offs)  # noqa: E731
     out = {"K": K, "name": NAME}
     jobs = []
     if not os.environ.get("SKIP_TRAIN"):
@@ -101,7 +141,7 @@ def main():
         if os.path.isdir(os.path.join(pal, d, "validation")):
             jobs.append((d.rsplit("-", 1)[0], os.path.join(pal, d, "validation"), f"{PREFIX}/tokenized/paloma-{NAME}/{d.rsplit('-', 1)[0]}/validation"))
     for name, s, d in jobs:
-        n, i, o = convert_cache(s, d, flat, offs)
+        n, i, o = convert_cache(s, d, conv)
         c, canon = check(s, d, n)
         out[name] = dict(docs=n, tokens_in=i, tokens_out=o, ratio=o / i, checked=c, canonical=canon)
         print(f"{name}: {n} docs, {i} -> {o} tokens (x{o / i:.4f}); {c} sampled documents decode to the same text, {canon} canonical ones equal re-encoding", flush=True)
