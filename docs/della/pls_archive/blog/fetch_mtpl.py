@@ -42,7 +42,10 @@ for size, (ntp, mtp) in RUNS.items():
         print(size, arm, d[arm], "params", d.get("params"))
 PROBES = {"130m": ("130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958", "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958", 6),
           "300m": ("300m-della8xh100-pls0-noev-probes2000at11443", "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443", 12),
-          "520m": ("520m-della8xh100-pls0-noev-probes1000at9917", "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917", 24),
+          # 520m: the PARAM_MAP=vocab reruns (wq w12/w13, -vs-); the first runs (no -vs-) read the frozen head wrongly (9.8 nats
+          # against 3.5 in eval; invalid, found 2026-10-21). The reruns finished 2026-10-24/25 and were first fetched by the
+          # 2026-10-31 audit: their last layer reads 2.66 against eval 3.34, the same train-eval offset as 130m, 300m and 1_2b.
+          "520m": ("520m-della8xh100-pls0-noev-vs-probes1000at9917", "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917", 24),
           "1_2b": ("1_2b-della8xh100-pls0-noev-probes1000at22887", "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887", 16)}
 for size, (ntp, mtp, L) in PROBES.items():
     got = {}

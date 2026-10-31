@@ -375,7 +375,7 @@ n-gram。若某个臂最终层显著好于池（Δ ≤ −0.001 且补到 n ≥ 
    Mechanism test on existing checkpoints (scripts/della/pls_hc_hidden_cpu.py): HC separate heads should hold more of its
    state in the zero-sum stream part than HC probes; mHC little in either, and its static writes all positive.
    Mechanism test result (job 15534022, 2 x 512 c4 tokens): the state-level prediction FAILS. Zero-sum share of the
-   stream energy, mean over layers 1-47: HC separate heads 0.26, HC probes 0.59, mHC 0.35 / 0.36. HC's separate-heads model
+   stream energy, mean over layers 1-47: HC separate heads 0.26, HC probes 0.59, mHC 0.35 / 0.36 (energy-weighted: every token's squared norms summed before the ratio; the token-averaged share of the later scripts is 0.41 for HC separate heads, the other three agree; audit 2026-10-31). HC's separate-heads model
    keeps LESS of its state out of the readouts' sight, not more (high in layers 1-12, then about 0.05-0.15 from layer 13);
    mHC is not low (unequal positive writes still put a zero-sum part in the streams). At the write level a narrower
    version fits: sublayers whose static write is >80% zero-sum (nearly invisible): HC separate heads 10/96 (layers
@@ -972,3 +972,309 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
 3. 4 个实验没有条目，已补上：w145/w146（梯度冲突）、w147–w150（Pre-LN 12/24 层）、w154（权重 1/47）、w495–w498（短轨迹）。
 4. `logs/pls_speed.yaml` 的状态改为 completed，18 个写着 queued 的速度测试改为 done，6 个没有记录的速度测试补了一行。
 5. 本文档 3 个写着"排队中"的标题已改为已完成。
+
+## 补录：此前没有写进本文档的页面结果（2026-10-31 审计）
+
+审计发现，网页上 49 张图里有 25 张的结果没有写进本文档，主要是 10-05 到 10-25 的实验。这些结果原来只在 YAML 和网页上。
+下面各节由 Kaggle worker 根据 YAML、网页图数据和 JSON 起草（`tmp/pls_audit2/docs_gap_draft.md`）。我逐节核对，并抽查了数字。
+审计期间找到的冲突都已解决，各节写明了改正了什么。来源标记：YAML = `logs/pls_depth_controls.yaml`；F:<图> = 网页图数据
+（`assets/data/plc-figures.js`）；F:<图>/文字 = 网页图注；J:<文件>[键] = `tmp/pls_blog/` 下的 JSON（存档在 `docs/della/pls_archive/blog/`）；
+"算" = 由来源相减或计数得到的数。
+
+### 层损失权重与梯度范围（2026-10-05 至 10-07，作业 14998751–14998753、15064965、15064966）
+
+1. 问题：独立头让最后一层的损失变高。原因是层损失的权重，还是层损失梯度的范围？
+2. 方法：130m、6 层、独立头。R1：每层权重 0.2（`-pls0.2-sep`，14998751）。R2：每个头只训自己那一层（`-pls1-sep-local`，14998752）。R3：两者都用（`-pls0.2-sep-local`，14998753）。另有权重 0.1（`-pls0.1-sep`，15064965）和 0.05（`-pls0.05-sep`，15064966）（YAML）。`tmp/pls_blog/fetch_fix.py` 把数据取到 `fix.npz`。每个值是最后 50 步的平均训练损失。
+3. 结果：
+   1. 权重 0.2：L1–L6 为 4.199、3.747、3.555、3.420、3.357、3.322 nats（YAML；F:fig-fix 4.1994 … 3.322）。最后一层到基线的差距缩小 44%。第 1–3 层高 0.06 nats（YAML）。Paloma macro 4.287，c4_en bpb 1.1832（YAML）。
+   2. 权重 0.1：L1–L6 为 4.264、3.787、3.622、3.465、3.356、3.298 nats。与同深度普通模型的差距平均 0.161 nats，最大 0.293 nats（YAML）。
+   3. 权重 0.05：L1–L6 为 4.365、3.921、3.689、3.494、3.370、3.281 nats。差距平均 0.215 nats，最大 0.394 nats（YAML）。
+   4. 权重 1、0.2、0.1、0.05 的平均差距：0.107、0.129、0.161、0.215 nats。最后一层的差距：0.110、0.062、0.038、0.021 nats（YAML）。
+   5. R2（只训自己那层）：L1–L6 为 4.2884、3.8328、3.658、3.569、3.519、3.4909 nats（F:fig-fix）。YAML 原只记了第 4852 步的中途值 4.313 … 3.508，审计已补上最终值。
+   6. R3（权重 0.2 + 只训自己那层）：L1–L6 为 4.365、3.965、3.715、3.536、3.412、3.354 nats。Paloma macro 4.350，c4_en bpb 1.1929（YAML；F:fig-fix 4.3652 … 3.3539）。
+   7. 页面结论：权重每降一档，最后一层更接近基线，前几层离基线更远。把梯度停在头自己那层没有帮助，在权重 1 时让每一层都变差（F:fig-fix/文字）。YAML 写 "the weight is the lever, the gradient reach is not"。
+4. 页面图：fig-fix。数据：`tmp/pls_blog/fix.npz`（`fetch_fix.py`）、`tmp/pls_blog/depth.json`（同深度普通模型）。
+
+### 权重形状与梯度手术（2026-10-05 至 10-07，作业 15055614、15055616、15055618、15083130）
+
+1. 问题：权重随深度增加，或去掉相互冲突的梯度分量，能否让每一层都低于权重 1 的独立头？
+2. 方法：130m、6 层。A：权重 k/15（`-pls0.2-sep-shdepth`，15055614）。D：权重 0.2 加逐 token 梯度手术（`-pls0.2-sep-pcg`，15055616）。C：两者都用（`-pls0.2-sep-shdepth-pcg`，15055618）。E：权重 1 加梯度手术（`-pls1-sep-pcg`，15083130）（YAML）。冒烟测试 15055613（YAML）。判据：与同深度普通模型的逐层差距，看平均和最大（YAML）。
+3. 结果：
+   1. A：L1–L6 为 4.386、3.817、3.534、3.392、3.336、3.309 nats。差距 0.415、0.274、0.117、0.048、0.042、0.049，平均 0.158 nats，最大 0.415 nats（YAML）。
+   2. D：L1–L6 为 4.213、3.728、3.550、3.424、3.358、3.323 nats。差距平均 0.128 nats，最大 0.242 nats。只用权重 0.2 的 R1 是 0.129（YAML）。
+   3. C：差距平均 0.157 nats，最大 0.422 nats。A 是 0.158（YAML）。两对中，有手术和没有手术的逐层损失从第 1 步起相差 ≤ 0.01 nats（YAML）。
+   4. E：L1–L6 为 4.139、3.668、3.496、3.418、3.384、3.367 nats。差距平均 0.107 nats，最大 0.168 nats。每层与权重 1 的独立头相差 ≤ 0.007 nats（YAML）。
+   5. 2026-10-01 的探针运行（14808812/13）测得层损失与最终损失在骨干上的梯度余弦全程 0.8–0.9（YAML）。
+   6. 页面结论：没有一种设置在每一层都低于独立头。随深度增加的权重让最后一层最低、前两层最差。梯度手术改变很小（F:fig-mix/文字）。
+4. 页面图：fig-mix。数据：`tmp/pls_blog/fix.npz`。
+
+### 晚开独立头（2026-10-07 至 10-08，作业 15168919）
+
+1. 问题：先让头作为探针训练，到普通模型形成上下文电路之后再让梯度进入骨干。这样能否让每一层都低于从第 0 步开的独立头？
+2. 方法：130m、6 层、权重 1。第 S 步之前骨干梯度为 0，第 S 到 S+100 步线性升到 1（`PLS_ON`）。S = 300（`-pls1-sep-on300-400`）和 S = 1500（`-pls1-sep-on1500-1600`），两者在一个 8-GPU 成对作业 15168919 里（YAML）。冒烟测试 15160666（YAML）。判据：每一层都低于从第 0 步开的独立头（YAML）。
+3. 结果：
+   1. 第 300 步开：L1–L6 为 4.162、3.665、3.496、3.415、3.379、3.362 nats。差距平均 0.109 nats，最大 0.191 nats（YAML）。
+   2. 第 1500 步开：L1–L6 为 4.182、3.697、3.519、3.424、3.375、3.353 nats。差距平均 0.120 nats，最大 0.211 nats（YAML）。
+   3. 从第 0 步开的独立头：差距 0.167、0.132、0.072、0.073、0.090、0.110，平均 0.107 nats（YAML）。
+   4. 两种晚开都没有通过判据。第 300 步开：除第 1 层（+0.024 nats）外，与独立头相差 ≤ 0.01 nats。第 1500 步开：第 1–3 层高 0.02–0.04 nats，第 5–6 层低 0.01–0.02 nats（YAML）。
+4. 页面图：fig-late。数据：`tmp/pls_blog/fix.npz`。
+
+### 300m 独立头与探针（2026-10-03，作业 14940604、14888822）
+
+1. 问题：130m 的逐层图形在 300m（12 层，宽 768）上是否仍成立？
+2. 方法：300m 独立头 `-pls1-sep`（14940604）和探针 `-pls1-sep-bbfrozen`（14888822），各 11443 步（YAML）。
+3. 结果：
+   1. 独立头 L1–L12：4.047、3.560、3.355、3.231、3.143、3.093、3.064、3.046、3.034、3.026、3.020、3.016 nats（YAML；F:fig-traj-300m 4.0469 … 3.0156）。
+   2. 最后一层比 300m 基线 2.9005 高 0.115 nats。130m 是 0.110 nats（YAML）。
+   3. 探针第 12 层 2.8991，基线 2.8981，差 0.0009 nats（YAML）。探针 L1–L12：5.081 … 2.9015 nats（F:fig-heads-300m）。
+   4. 共享头第 12 层 3.0399 nats（F:fig-heads-300m）。
+4. 页面图：fig-traj-300m、fig-heads-300m。数据：`tmp/pls_blog/s300.npz`、`sep300.npz`（`fetch_sep300.py`）。
+
+### 300m 头重训：差距在特征，不在头（2026-10-06，作业 15011512、15011513）
+
+1. 问题：探针读早期层比独立头差。原因是头没训够，还是层里的特征不同？
+2. 方法：冻结两个 300m 模型的骨干（第 11443 步），用新的优化器再训头 2000 步，warmup 100 步，cosine（YAML）。run id `-pls1-sep-headft2000`、`-pls1-sep-bbfrozen-headft2000`。`fetch_headft.py` 取 eval/L{k}/loss 和最后 50 步的训练损失。
+3. 结果：
+   1. 第 0 步的逐层损失与原运行的最终训练损失相差 ≤ 0.01 nats（YAML）。
+   2. 训练损失：两个模型每层的变化都 ≤ 0.013 nats（YAML；J:headft.json[*.train]）。
+   3. 独立头的 eval 每层都升高 0.017–0.072 nats（算：J:headft.json[-pls1-sep-headft2000.eval] 减 [-pls1-sep.eval]；YAML 写 +0.02..0.07）。
+   4. 探针的 eval：第 1–8 层变化 ≤ 0.01 nats；第 9–11 层低 0.020–0.024 nats；第 12 层高 0.080 nats（算：J:headft.json；YAML）。
+   5. 重训后第 1 层：独立头 5.378 nats，探针 6.696 nats（J:headft.json[*-headft2000.eval][0]）。
+   6. 页面结论："The gap comes from the features of the layers"（F:fig-headft/文字）。页面原来还写 "No layer gets a better head"。探针第 9–11 层其实低 0.020–0.024 nats，所以审计把图注改为"重新训练几乎不改变任何一层"（站点 576cd37）。
+4. 页面图：fig-headft。数据：`tmp/pls_blog/headft.json`。
+
+### 降低最后一层代价的更多尝试（auto10，2026-10-16 至 10-19，作业 15698932、15698936、15699791、15700045、15700214、15699797、15772582、15805655、15755719）
+
+1. 问题：除了降权重，有没有一种改动能让第 6 层到达普通模型，同时第 1 层留在独立头附近？
+2. 方法：130m、6 层，分支 `pls-auto10`，脚本 `scripts/della/pls_auto10_pair.sbatch`（YAML）。14 种改动：1 单独裁剪（`-os`）；2 先归一化再混合 0.2（`-mix0.2`）；3 自蒸馏（`-kd`）；4 置信度门（`-conf`）；5 出口适配器 1024（`-ad1024`）；6 只更新 MLP（`-mlpo`）；7 只用前 256 个位置（`-first256`）；8 每步随机一层（`-randl`）；9 HC；10 AttnRes (Full)；11–13 只有第 1–n 层的读出进入骨干（`PLS_SEP_UPTO=3/2/1`）；14 n = 2 的种子 1（YAML）。kd 在第 3533 步停下，由 15755719 续跑（YAML）。量：最终训练损失减同深度普通模型（Sandwich-LN）。
+3. 结果（第 1 层 / 第 6 层的差距，nats；权重 1 的独立头是 0.167 / 0.110）：
+   1. 单独裁剪 +0.165 / +0.108；置信度门 +0.940 / +0.073；前 256 +0.318 / +0.165；随机单层 +0.379 / +0.130（YAML）。
+   2. 混合 0.2 +0.870 / +0.155；适配器 +0.103 / +0.111；只更新 MLP +1.106 / +0.280（YAML）。
+   3. 自蒸馏 0.578 / 0.698（YAML）。它从约第 100 步起落后于独立头：第 300 步 L6 7.02 对 4.21 nats。续跑处（第 3533 步）没有跳变（YAML）。
+   4. HC 6 层：独立头 L6 3.339，探针 3.2135，自身代价 +0.125 nats。对 Sandwich 普通模型 +0.128 / +0.079（YAML）。
+   5. AttnRes (Full) 6 层：独立头 L1–L6 4.134 … 3.367，探针 4.889 … 3.255。对基线结构的普通模型 +0.163 / +0.107。它自己的 6 层普通模型 3.255，基线 3.260（YAML）。
+   6. 只有第 1–3 层进入骨干：差距 [0.105, 0.076, 0.088, 0.191, 0.196, 0.115]。第 1–2 层：[0.061, 0.084, 0.325, 0.382, 0.286, 0.082]（YAML）。
+   7. 只有第 1 层：[0.024, 0.666, 0.730, 0.587, 0.272, 0.048]。第 1–2 层种子 1：第 1 层 0.070，第 6 层 0.080；种子 0 是 0.082（YAML）。
+   8. 页面结论：没有一种改动通过判据。进入骨干的读出越少，最后一层代价越小，变成探针的那些层失去收益（F:fig-auto10/文字）。
+4. 页面图：fig-auto10。数据：`tmp/pls_blog/auto10.json`（`fetch_auto10.py`）。
+
+### Logit lens：最终头能读出各层多少（2026-10-17 至 10-19，作业 15720392–15720395、15787177、15795008）
+
+1. 问题：探针和独立头显示一层知道什么。模型自己的输出头能否已经读出这一层？
+2. 方法：`LENS_FROM` 读冻结的检查点，用最终 norm 和 lm_head 测每一层的留出损失（Paloma）（YAML）。脚本 `scripts/della/pls_lens_group.sbatch`，CPU 测试 `pls_lens_cpu_test.py`。作业 15720392（130m）、15720393（48 层 Sandwich-LN）、15720394（48 层其他结构）、15720395（300m）、15787177（130m 独立头的 8-GPU 重跑 15720165 的检查点）、15795008（lens-48c）（YAML）。`fetch_lens.py` 取 own 和 lens 两组损失。
+3. 结果：
+   1. 130m 独立头重跑 15720165 的最终 L1–L6 [4.1384, 3.6601, 3.4909, 3.4163, 3.3836, 3.3677]。原 4-GPU 运行 [4.1383, 3.6753, 3.4887, 3.4155, 3.3843, 3.3696] nats（YAML）。
+   2. 130m lens 减自身读出：独立头 [1.471, 0.494, 0.244, 0.091, 0.026, 0.0]；探针 [2.861, 2.795, 2.246, 2.111, 0.592, 0.0] nats（YAML；J:lens.json[130m]）。
+   3. 48 层 Sandwich-LN 独立头：lens 第 24 层比最后一层高 0.146 nats，第 36 层高 0.042 nats（算：J:lens.json[d48.sep.lens]）。YAML 原写 0.12 和 0.03，审计已改正。
+   4. 48 层 Sandwich-LN 普通模型：lens 到第 40 层都在 5.3 nats 以上，最后 4 层下降（YAML；J:lens.json[d48.probes.lens] 第 40 层 5.313）。
+   5. 300m 独立头：lens 第 9 层比最后一层高 0.099 nats，第 11 层高 0.035 nats（算：J:lens.json[300m.sep]）。YAML 原写"从第 9 层起约 0.04"，审计已改正。300m 普通模型：lens 第 11 层 4.146，最后一层 3.582 nats（J:lens.json[300m.probes]）。
+   6. 12、24、36 层的普通模型（只有 lens）：倒数第 2 层 4.241、3.912、3.811 nats，最后一层 3.852、3.753、3.716 nats（J:lens.json[depth]）。
+   7. 其他结构：HC、mHC 成功。AttnRes、AttnRes (Block)、MoDA 在 15720394 里显存不足（rc 1），因为 lens 不设 PDP，microbatch 是每卡的整个 batch（YAML）。重跑 15795008（PDP=1）的 6 个评测也全部失败：NCCL AllToAll 报 Cuda failure 2 out of memory（2026-10-19 10:52–11:18）。之后没有再跑。J:lens.json 里没有这三种结构。图 17 的三个面板现在写"显存不足；见图 34"，审计前写的是"排队中"。
+   8. 页面结论：独立头把中间层放进输出头的坐标；普通模型只在最后四分之一进入。九种结构中，只有 HC 的普通模型在四分之三深度就进入（F:fig-lens/文字；F:fig-lens-arch/文字）。
+   9. 15720392 的 d1 运行 rc 134，已去掉。它留下的 21 个 `-lensat` 目录（11.6 GB）已删除。15720393–15720395 的 `-lensat` 目录留给所有者删除（YAML）。
+4. 页面图：fig-lens、fig-lens-arch。数据：`tmp/pls_blog/lens.json`（`fetch_lens.py`）。
+
+### 多 token 预测在更大的模型上（MTP 阶梯，2026-10-15 至 10-21，作业 15591470–15591507、15714847、15907475、15907916）
+
+1. 问题：130m 上 MTP 不改变下一个词的损失。300m、520m、1.2b 上是否不同？
+2. 方法：每个尺度比较 NTP 和 NTP + 一个 DeepSeek-V3 MTP 模块（权重 0.3）。基线训练（`PLS_W=0`），8 GPU，一个种子，分支 `pls-mtp@5aea76151c`，脚本 `scripts/della/pls_mtp_ladder_submit.sh`（YAML）。训练后在冻结的最终检查点上训练新探针（`PROBE_FROM`）：130m 2000 步（15591508/09），300m 2000 步，1.2b 1000 步（YAML）。主模型的量是 Paloma eval/loss（`fetch_mtpl.py`）。
+3. 结果：
+   1. 主模型 eval 损失（NTP / MTP）：130m 3.97616 / 3.97545；300m 3.58374 / 3.58392；520m 3.33882 / 3.33409；1.2b 3.11632 / 3.11723 nats（J:mtpl.json[*.ntp, *.mtp]；YAML）。
+   2. 520m 的 MTP 低 0.0047 nats。130m 和 300m 相差 ≤ 0.001 nats（YAML）。1.2b 相差 0.0009 nats（算）。页面把 520m 的差读作运行间噪声（F:fig-mtpl/文字）。
+   3. 参数量（不含探针和 MTP 模块）：154,154,240、299,669,760、602,509,312、1,431,443,456（J:mtpl.json[*.params]）。
+   4. 130m 的事后探针重现训练中的探针。MTP 减 NTP：第 5 层下一个词 +0.085 对 +0.080 nats，第 6 层后一个词 −0.185 对 −0.183 nats（`fetch_mtpl.py` 文档字符串）。
+   5. 300m（12 层）后一个词探针：MTP 减 NTP 从约 60% 深度开始变负，最后一层 −0.262 nats。下一个词探针最大偏离 0.088 nats（算：J:mtpl.json[300m.probes]；F:fig-mtpl-depth）。
+   6. 1.2b（16 层）后一个词探针：最后一层 −0.377 nats。下一个词探针：第 8 层 +0.152 nats，最后一层 +0.003 nats（算：J:mtpl.json[1_2b.probes]；F:fig-mtpl-depth）。
+   7. 训练时间：300m NTP 2:52 h，MTP 3:40 h；520m NTP 11:41 h，MTP 14:34 h（YAML）。520m 和 1.2b 在每个 microbatch 32 条时 OOM；改为 520m 16 条、1.2b 8 条（YAML）。
+   8. 1.2b 探针：第一次（PDP 2）冒烟 OOM，需要 109.30 GiB。改为 PDP 8 加 XLA slop 因子 70 后通过（YAML）。NTP 15907475 在 2026-10-21 10:12 rc 0，用了 16.5 h，因为宿主节点 della-k16g1 的 GPU 2 降频到 345 MHz（YAML）。
+   9. 520m 事后探针（15716064 → 15738658，15699612 → 15738657）无效：冻结的最终头在训练路径上从第 2 步起读出 9.8 nats，eval 是 3.547 nats。原因与 48 层的 FSDP 问题相同。这两个运行已从图和 mtpl.json 去掉（YAML）。
+4. 页面图：fig-mtpl、fig-mtpl-depth。数据：`tmp/pls_blog/mtpl.json`（`fetch_mtpl.py`）。
+
+### 520m 探针重跑与保留权重的 130m 探针（2026-10-21 至 10-25，wq w12、w13、w14）
+
+1. 问题：在 `PARAM_MAP=vocab` 下重跑 520m 事后探针（w12 NTP，w13 MTP）。再跑一次 130m NTP 探针并保留探针权重，用于写入方向检验（w14，L5）（YAML）。
+2. 方法：`pls-mtp` 的 `scripts/della/pls_probe_fetchable.sbatch`，8 GPU（wq:w12–w14 spec）。run id `muonh-qwen3-520m-della8xh100-pls0-noev{,-mtp0.3}-vs-probes1000at9917`、`muonh-qwen3-130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep`（`logs/slurm/*_w1[234].out` 第 14 行）。冒烟门：eval 的最后一个读出等于 eval loss；训练路径的最后一个读出 < eval + 0.5（YAML）。
+3. 结果：
+   1. 三个作业都完成，exit 0：w12 2026-10-24 07:53，w13 2026-10-25 05:17，w14 2026-10-25 01:37（wq:w12–w14 state）。YAML 原写 pending，审计已改正。
+   2. w12 冒烟：eval loss 3.547，最后读出 3.5471，差 0.0001。训练路径最后读出 2.675（`logs/slurm/mtpl-probe-520m-ntp_w12.out` 第 10–11 行）。
+   3. w13 冒烟：eval 3.534，最后读出 3.5335，差 0.0005。训练路径 2.676（`mtpl-probe-520m-mtp_w13.out` 第 10–11 行）。
+   4. w14 冒烟：eval 4.223，最后读出 4.2227，差 0.0003。训练路径 3.250（`mtpl-probe-130m-ntp-keep_w14.out` 第 10–11 行）。
+   5. 结果原来没有取回：`fetch_mtpl.py` 仍读第一次（无效）的运行名，图 21 还写 520m 探针"正在重跑"。审计改了运行名并取回（站点 2e9da4c）。重跑有效：冻结的最后一层在训练批上读 2.66 nats，eval 是 3.34 nats，与 130m、300m、1.2b 的训练–评测差相同。
+   6. 520m（24 层）MTP 减 NTP：下下个词的探针从约一半深度开始变负（第 12 层 −0.050），第 24 层 −0.363 nats。下一个词的探针在中间几层最多 +0.165 nats（第 13 层），最后一层 +0.001 nats（J:mtpl.json[520m.probes]）。
+   7. w14 保留了探针权重，检查点在 `marin_store_big/speedrun/muonh-qwen3-130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958-keep/2026.09.13/checkpoints/step-1999`。L5 的写入方向分析一直没有做，图 22（fig-mtp-dirs）仍是空的占位图。
+4. 页面图：fig-mtpl-depth、fig-mtp-dirs（占位）。数据：`tmp/pls_blog/mtpl.json`（`fetch_mtpl.py`）。
+
+### Kimi K3 的 logit lens（2026-10-17 至 10-19，作业 15726408、15736820）
+
+1. 问题：AttnRes 的读数在层间跳动。在 2.8T 参数、93 层、Block AttnRes 的 Kimi K3 上是否也这样？
+2. 方法：`scripts/della/k3_lens.py`（`k3_lens.sbatch`，分支 `pls-auto10@e84a10ccc5`）。64 × 1,024 个 WikiText-103 测试 token。每层三种读法：下一层读的混合（next）、在此处停下时的输出混合（exit）、各块的直接和（sum）；另记 AttnRes 权重（YAML）。冒烟 15726408（pli-cp，1 GPU，4 层）；全量 15736820（8 GPU）。
+3. 结果：
+   1. 15736820 在 2026-10-19 00:55–02:26 完成，8 个 rank，90.3 min（YAML；sacct）。
+   2. 经最终头的读数到第 78 层都在 10.2–13.9 nats（YAML）。
+   3. next / exit：第 84 层 6.2–6.6 nats，第 91 层 1.45 nats，第 93 层 0.41 nats（YAML；J:k3lens.json[layers][90].next_ce 1.451，[92].next_ce 0.406）。
+   4. 第 93 层 top-1 准确率 0.90（J:k3lens.json[layers][92].next_acc 0.9027）。YAML 认为 WikiText 可能在 K3 的训练数据里。
+   5. AttnRes 混合跳动：next 有 11 次升高 > 0.3 nats，最大 1.39 nats。各块的直接和平滑，最大升高 0.21 nats，最后 6.0 nats（YAML；J:k3lens.json[layers][92].sum_ce 6.008）。
+   6. 权重文件 `models/Kimi-K3`（1.5 TB）等待删除。工具的权限检查拒绝了 rm（YAML）。
+4. 页面图：fig-k3lens。数据：`tmp/pls_blog/k3lens.json`。
+
+### 项目暂停与目标改变（2026-10-18、2026-10-19，所有者）
+
+1. 2026-10-18：所有者在 K3 lens 之后暂停项目（「做完K3的探针就先停一停吧」）。已排队的 15736820、15805655、15755719、15795008、15738657/8、15760472/3、15779949/50 跑完；填入结果；不交新实验（YAML）。
+2. 2026-10-19（/goal）：放弃"让独立头的最后一层追上普通模型"这个目标。新目标：先对 K3 和我们的 AttnRes 做全面体检，再对十种 48 层 DepthBench 结构做内部检查，比较普通模型和独立头（YAML）。页面图 23–29 用 `checkup/`，图 30–34 用 `depthmed/`（YAML）。20 个 48 层检查点保留到检查结束（YAML）。
+3. 2026-10-18 磁盘清理：删除 65.6 GB（冒烟副本、1.2b 的 step-20000 检查点、`tmp/pls_blog/compare`）（YAML）。
+
+### AttnRes 全面体检：Kimi K3 和我们的模型（2026-10-19，作业 15844650、15855315）
+
+1. 问题：在同一段未见过的文本上，K3 和我们的 48 层 AttnRes (Block)、AttnRes (Full)（普通模型和独立头）在读数、混合权重、查询和写入上有什么不同？
+2. 方法：K3 用 `marin-pls-auto10/scripts/della/k3_checkup_v2.py`（作业 15844650，2026-10-19 14:01–14:15）和 `k3_checkup_v3.py`（作业 15855315，16:19–16:32）（sacct）。第一次的作业 15817869 被取消（它的日志）。我们的模型用 `attnres_checkup.py`（只读，读 `-vs-d48-g4` 的 step-4958）。文本：Paloma c4_en validation；K3 130,944 个 token，我们的模型 16,320 个 token（J:checkup/*.json[tokens]）。YAML 原来没有这些作业号，审计已补上一个条目。
+3. 结果：
+   1. 最后一层的 next 读数：K3 2.045，Block 普通模型 3.411，Full 普通模型 3.491，Block 独立头 3.516，Full 独立头 3.480 nats（J:checkup/*.json[ablations.baseline.ce]）。
+   2. 输出混合在嵌入上的权重：Block 普通模型第 1–6 层 0.88–0.92，第 48 层 0.09（J:checkup/block.json[layers][k].exit_probs[0]）。第 48 层输出混合的熵：Full 普通模型 3.72 nats，Block 普通模型 1.31 nats（J:checkup/*.json[layers][47].exit_entropy）。
+   3. 独立头把输出权重移到较老的块：从第 24 层起占 0.61–0.83（Block）和 0.73–0.91（Full）。K3 的输出头平均把 0.82 放在当前块，最后一层 0.84；每块的最后一层降到 0.07–0.37（F:fig-ck-mix/文字）。
+   4. Attention 读取：Block 普通模型平均给当前块 0.41、嵌入 0.15。独立头从第 24 层起给较老的块 0.70（Block）和 0.79（Full）。K3 平均给当前块 0.73；每块第一层读刚结束的块 0.30–0.91（F:fig-ck-read/文字）。MLP 读取：Block 普通模型当前块 0.43；独立头较老的块 0.51（Block）和 0.53（Full）；K3 当前块 0.78（F:fig-ck-read-mlp/文字）。
+   5. 子层查询与输出查询的平均余弦：普通模型 0.105（Block）、0.145（Full）；独立头 0.486（Block）、0.583（Full）；K3 0.193（算：J:checkup/*.json[queries.cos_out] 去掉最后一项后取平均）。独立头从第 15 层（Block）或第 18 层（Full）起，每个 attention 查询的余弦都 > 0.9（F:fig-ck-query/文字；记忆文件）。
+   6. 写入：Block 普通模型每块最后一层的写入是其他层的 1.43 倍，独立头是 0.71 倍。Full 普通模型第 44 层有一个写入是中位数的 52 倍。K3 每块最后一层的写入是其他层的 2.2 倍（attention）和 3.35 倍（MLP），与输出查询的余弦是 −0.15 和 −0.14（F:fig-ck-write/文字）。
+   7. 每个混合都用等权重时的最终损失：K3 9.62，Block 普通模型 10.92，Full 普通模型 17.01，Block 独立头 5.05，Full 独立头 6.60 nats（J:checkup/*.json[ablations.uniform_all.ce]）。去掉嵌入：K3 16.16 nats，Block 普通模型 15.08 nats。只留最近两块：K3 13.96 nats，我们的四个模型 11.89–15.91 nats（同文件 no_embedding、recent_only）。
+   8. 只在第 1 块用等权重：K3 2.425 nats（+0.38），Block 普通模型 8.199 nats（+4.79）（算：J:checkup/*.json[ablations.uniform_block_1.ce] 减 baseline）。页面写 K3 的嵌入代价全部在第 1 块的读取里（F:fig-ck-ablate/文字）。
+4. 页面图：fig-ck-lens、fig-ck-mix、fig-ck-read、fig-ck-read-mlp、fig-ck-query、fig-ck-write、fig-ck-ablate。数据：`tmp/pls_blog/checkup/{k3,block,full,block-sep,full-sep}.json`。
+
+### 十种结构的内部：独立头改变了什么（2026-10-19，作业 15844436、15849760、15855981）
+
+1. 问题：在十种 48 层 DepthBench 结构上，独立头怎样改变删层代价、写入大小、直接贡献、logit lens 和状态的形状？
+2. 方法：`marin-pls-auto10/scripts/della/depthmed.py`（只读，float32）。文本：Paloma c4_en validation 16 × 1,024 个 token；删层用前 8 条序列（`depthmed.py` 文档字符串）。作业 15844436（八种结构完成；AttnRes (Full) 的两个模型显存不足失败，所以 sacct 记 FAILED，日志最后仍打印 "all done"）、15849760（AttnRes）、15855981（`--delete`，真删层）（sacct；日志）。作业写到 `tmp/pls_status/depthmed/`，页面读 `tmp/pls_blog/depthmed/`。
+3. 结果：
+   1. 删掉第 48 层的代价（`skip_ce_delete − base_ce`）。普通模型：Pre-LN 0.495、LNS 0.324、DeepNorm 0.440、KEEL 0.416、mHC 0.448、MoDA 0.394、Sandwich 0.073、AttnRes (Block) 0.048、HC 0.003、AttnRes (Full) 0.000 nats。独立头：十种都 ≤ 0.0021 nats（算：J:depthmed/*.json[layers][47].skip_ce_delete 减 [base_ce]）。记忆文件写 "0.32-0.49 nats in six ord designs"，与前六种一致。
+   2. 删掉后代价低于阈值的层数，普通模型 / 独立头（算：J:depthmed/*.json[layers][k].skip_ce_delete 减 [base_ce]）。阈值 0.01 nats：Sandwich 0 / 30，Pre-LN 0 / 31，LNS 1 / 31，DeepNorm 0 / 13，KEEL 0 / 28，HC 12 / 21，mHC 8 / 27，AttnRes (Full) 5 / 25，AttnRes (Block) 0 / 3，MoDA 0 / 31。阈值 0.005 nats 时，独立头是 3–28 层。记忆文件原写"13–28 层"，没有写阈值，任何一个阈值都对不上，审计已改为这里的数。
+   3. HC 普通模型第 1 层：真删（混合也变为单位矩阵）的代价 5.688 nats；只把写入置零、保留混合的代价 0.616 nats（算：J:depthmed/hc-ord.json[layers][0].skip_ce_delete 8.942、skip_ce 3.870，base_ce 3.254）。
+   4. 写入比：AttnRes (Full) 普通模型第 44 层 MLP 1,339 倍，第 47 层约 1,006 倍。它的独立头模型最大是第 22 层 42 倍（J:depthmed/attnres-*.json[layers][k].mlp_write_ratio；F:fig-dm-write/文字）。
+   5. 最后一个 MLP 对正确 token 的直接贡献（`mlp_dla_w`）。普通模型：Pre-LN −1.93、LNS −1.57、KEEL −2.79、mHC −2.44、MoDA −1.66 logits。这五种的独立头在 ±0.04 logits 内（J:depthmed/*.json[layers][47].mlp_dla_w）。
+   6. 第 24 层：普通模型的 lens 是 5.05（HC）到 10.18（AttnRes (Full)）nats，自身探针 3.81–5.16 nats；独立头的 lens 是 3.61–4.32 nats（J:depthmed/*.json[layers][23].lens_ce、own_ce；F:fig-dm-lens/文字）。
+   7. 第 48 层的有效秩：多数模型 330–400；HC 独立头 63.6（J:depthmed/*.json[layers][47].eff_rank）。HC 独立头的最终损失 3.299 nats，是十个独立头模型中最低的（J:depthmed/hc-sep.json[base_ce]）。最大的单个激活在 AttnRes (Block) 普通模型第 44 层，是 RMS 的 637 倍（F:fig-dm-shape/文字）。
+4. 页面图：fig-dm-skip、fig-dm-write、fig-dm-dla、fig-dm-lens、fig-dm-shape。数据：`tmp/pls_blog/depthmed/<结构>-{ord,sep}.json`。
+
+### hc_pos 检查点的 CPU 分析（2026-10-17，作业 15536267 之后）
+
+这一节补 fig-hc-write 的缺口。docs 的 E1 表已有 hc_pos 的代价 0.035。
+1. 结果：在 step-4958 上，hc_pos 的写入全部为正，但流之差的份额仍然高。删掉流之差后的依赖与 HC 一样大（独立头在 c = 8 时 +4.19 nats）（YAML）。
+2. YAML 的结论："the causal test does not remove the storage"。页面写这个检验没有确定原因（F:fig-hc-write/文字）。
+3. 页面图：fig-hc-write。数据：YAML（我没有找到对应的 JSON 文件）。
+
+### 脚本与分析目录索引
+
+审计日期：2026-10-31。只读。docs = `docs/della/pls.md`（974 行），YAML = `logs/pls_depth_controls.yaml`（554 行）。行号按这个版本。
+
+| 名称 | 是什么 | docs 是否记录 | 位置 |
+|---|---|---|---|
+| pls_d48_eval_path.py | 诊断（10-08）：48 层探针 checkpoint 走训练 run 自己的 eval 函数和 ReadoutTaggedEvaluator，按 run 的设备数跑 | 否（docs 只写 PARAM_MAP=vocab，不写原因） | docs「## Next: depth」第 336 行只提开关；YAML 88、92、94、97、98、100、108、143、146、149、151 |
+| pls_d48_optcoupling_cpu.py | 诊断（10-07）：48 层、小宽度、MuonH 分组裁剪时，探针模型的骨干是否与普通模型相同 | 部分（耦合与 -os 有记录，模拟结果没有） | docs「## L6：优化器的实际设置」第 4 条、「## Next: depth」第 440–442 行；YAML 80 |
+| pls_d48_paths_cpu.py | 诊断（10-07）：同一权重上，逐层前向（scan_via）与普通前向（fold）在 48 层是否相同 | 否 | YAML 82、83、85 |
+| pls_d48_paths_probe_ckpt.py | pls_d48_paths_cpu.py 的变体（10-08）：加载 48 层探针 checkpoint（step 4958），只用 JAX_FLASH | 否 | YAML 85、87、88 |
+| pls_gradmix_cpu_test.py | CPU 测试：PLS_SHAPE（权重随深度）与 PLS_PCGRAD（逐 token 梯度投影） | 开关门控测试 | YAML 54、70 |
+| pls_hc_hidden_ablate_cpu.py | 10-14：HC/mHC 终点 checkpoint，第 c 层后把每条流换成流均值，测第 48 层 CE 升高 | 是（记 job 15534928，不记脚本名） | docs「## Next: depth」第 383–391 行；YAML 224 |
+| pls_hc_mixing.py | 10-30：HC 48 层 checkpoint 的残差混合 A_v，记 sum_gain、leak、diff_gain 和静态读写 | 否 | 无（输出在 tmp/pls_paths/mix-*） |
+| pls_heads_only_cpu_test.py | CPU 测试：HEADS_FROM / pls_heads_only（冻结骨干，只训头） | 开关门控测试 | YAML 40、61、65 |
+| pls_lateon_cpu_test.py | CPU 测试：PLS_ON（晚开：骨干梯度从 0 线性升到全量） | 开关门控测试 | YAML 70 |
+| pls_local_cpu_test.py | CPU 测试：PLS_LOCAL（每层损失只训自己的头和自己的层） | 开关门控测试 | 无 YAML 行名脚本 |
+| pls_optsplit_cpu_test.py | CPU 测试：PLS_OPT_SPLIT=1（辅助头和辅助 norm 进入自己的优化器组） | 开关门控测试（开关在 docs 有记录） | docs「## L6：优化器的实际设置」第 4 条；YAML 80 |
+| depth_arch_hcrw_test.py | CPU 测试：HC_RW=sigmoid（HC 用 mHC 的读写映射） | 开关门控测试 | YAML 400（只写开关） |
+| depth_arch_mhcrw_test.py | CPU 测试：MHC_RW=linear（mHC 用 HC 的读写映射） | 开关门控测试 | YAML 445 |
+| depth_arch_nan_probe.py | CPU 探针：48 层 hc/mhc/preln 的前向损失、每层最大幅度和几步 MuonH，找 NaN 出现的位置 | 否 | YAML 29、32 |
+| depth_arch_variant_test.py | CPU 测试：ROUTE=static（hc、attnres 静态路由）与 GAIN_INIT=lns | 开关门控测试 | 无 YAML 行名脚本 |
+| depth_inner_remat_test.py | CPU 测试：DEPTH_INNER_REMAT=save（两层 scan 的内层保存中间量） | 是（记 CPU 结果，不记脚本名） | docs「## 速度：GPU 结果（续，2026-10-26）」第 815 行 |
+| tmp/pls_conflict | conflict.py（scripts/della/pls_conflict.py 的前身）；test-preln.json（CPU，256 token）；gpu/*.json（w145/w146，8×1024 token） | 是 | docs「## 梯度冲突」、「## 新作业（所有者弹窗 2026-10-25，队列为 0 时）」第 696–707 行；YAML 509–515 |
+| tmp/pls_diag | train_eval_readout.py（训练与 eval 读出对比）；moda_bench.py、prof/、hlo/、grad_moda*.npy（MoDA 速度基准与布局修复）；prof_top.py | 否 | YAML 51、188、189 |
+| tmp/pls_fill | fill_test.py（8 条流 HC、3/6 块 AttnRes Block 的 CPU 检查） | 是 | docs「## 补充 4 个 job」第 752 行 |
+| tmp/pls_gain | lsck.py（列 checkpoint 键）；sep.py（独立头模型 Pre-LN/LNS 增益比）；equiv*.log（LNS 精确等价 CPU 测试输出） | 是 | docs「## L1：增益起点与步长各决定约一半的增益差距…」第 4 条、「### L1 完整版：Pre-LN 精确等价于 LNS」表；YAML 307 |
+| tmp/pls_hidden | hc_hidden.py（隐藏份额）；hc1_test.py（1、2 条流 HC 的 CPU 检查）；9 个 json/log | 部分（mHC 两行没有记录；一处冲突） | docs「## HC 的隐藏份额」；YAML 348 |
+| tmp/pls_muon_eff | muon_eff.py；Pre-LN、HC 48 层 json/log；Pre-LN 12 层试跑 | 是 | docs「## MuonH 更新效率」、「## 中途结果（2026-10-26）」第 760 行 |
+| tmp/pls_qscale | pls_qscale.py（AttnRes 伪查询尺度 s）；snap0.txt（内容是 wq 状态和冒烟测试行，不是 pls_qscale 的输出） | 是 | docs「## A3：结构变体与 HC 深度扫描」第 6 条 |
+| tmp/pls_static_src | src_rms.py、run.sh、static.json、dynamic-s1.json、run.log（AttnRes 每个源的 RMS） | 是 | docs「## L2：AttnRes 静态路由」第 661–667 行 |
+| tmp/pls_paths | paths-*（pls_branch_paths.py）、ws-*（pls_write_size.py）、ha-*/has-*（pls_hidden_ablate.py）、mix-*（pls_hc_mixing.py）、plot/（hidden_vs_cost*、causal_gap_live*）、run_*.sh、summarize.py、tab_has.py | 部分（ws-* 的 6 个 HC/mHC 变体、mix-*、causal_gap_live 没有记录） | docs「## Gated Residual 报告与 mHC 的路径分解」、「## 离线机理分析」；YAML 452–461 |
+
+#### pls_d48_eval_path.py
+
+1. 问题：48 层探针 run 的逐层 eval 与主 eval 不一致。run 在同一权重上记录 eval/L47 c4_en 6.479，主 eval c4_en 4.231 [YAML 108]。
+2. CPU，1 个设备，T=256：grug eval batch 与 with_segment_ids batch 的损失都是 6.1936。ReadoutTaggedEvaluator 累加的 L47 也是 6.1936 [tmp/optsplit/evalpath_ev1.log；YAML 94]。CPU，8 个设备（15220720），T=128，B=16：主 eval = 读出 L47 = 6.3277 [YAML 98]。
+3. GPU，参数不分片（15235521、15220612）：8 卡 4.2039，4 卡 4.2529，1 卡 3.7848。每个程序的读出 L47 都等于主 eval [YAML 108、149]。GPU，4 卡，FSDP 分片（15255032、15264999）：48 个读出的程序给出 L47 4.2378 和 4.2737，主 eval 是 4.2529 [YAML 143、151]。rep 和 vocab 布局下每个程序都是 4.2529 [YAML 151]。
+4. YAML 记录的原因：堆叠层权重的 FSDP 分片。修复：PARAM_MAP=vocab [YAML 151]。600 步验证（15265000）：eval/loss 4.550，eval/L47 4.5501 [YAML 146]。
+
+#### pls_d48_paths_cpu.py
+
+1. 问题：T3（15140369，48 层探针）结束时，普通路径 eval/loss 5.725，读出路径 eval/L47/loss 7.570，权重相同 [YAML 82]。
+2. CPU，T2 checkpoint（15140368_4，step 599），随机序列：fold 与 scan_via 的最终隐状态差在 fp32 下是 0，在 bf16 下是 2.861e-06。两条路径的损失在 fp32 下都是 12.6096，在 bf16 下都是 12.6083。VANILLA 和 JAX_FLASH 结果相同 [tmp/optsplit/paths_cpu_T4096.log]。
+3. YAML 的结论：CPU 上 fold 与 scan_via 完全一致，逐层循环在舍入误差内 [YAML 82]。
+
+#### pls_d48_paths_probe_ckpt.py
+
+1. CPU，探针 checkpoint（-pls1-sep-bbfrozen-d48 step 4958），Paloma c4_en 前 8192 个 token，带文档隔离：普通路径 3.5847，读出 L47 3.5847。读出 L0 7.0166，L23 4.9773，L46 3.5809 [tmp/optsplit/probe_real_seg_cpu.log]。YAML 写作 3.585 [YAML 87]。
+2. 没有文档隔离时，这个模型在 CPU 上得 8.29 [YAML 87]。
+3. GPU，1 张 H100（15207626）：普通路径 = 读出 L47 = 3.785（前 16384 个 token），4.253（前 65536 个 token） [YAML 88]。
+
+#### pls_d48_optcoupling_cpu.py
+
+1. 设置：宽 64，48 层，100 步，骨干初始化相同 [logs/optcoupling_d48.txt]。
+2. 裁剪阈值 1.0：探针与普通模型的骨干最大差在第 99 步是 1.628e-01。最后 20 步平均最终损失：普通模型 1.8435，探针 1.8434 [logs/optcoupling_d48.txt]。
+3. 不裁剪：骨干最大差在第 99 步是 1.481e-04。平均最终损失都是 1.8776 [logs/optcoupling_d48.txt]。
+4. YAML 把耦合记为候选原因，没有证明。修复开关是 PLS_OPT_SPLIT=1 [YAML 80]。后一条记录写：优化器拆分不是主因 [YAML 82]。
+
+#### pls_hc_mixing.py
+
+1. 输入：6 对 HC 48 层 checkpoint（step 4958），每对独立头和探针：4 条流、4 条流种子 1、1/2/8 条流、sigmoid 读写 [tmp/pls_paths/run_mix.sh]。
+2. 每个子层 v（96 个）记录 sum_gain、leak、diff_gain、scale_rr、scale_w 和静态读写 [tmp/pls_paths/mix-*.json，键 rows]。
+3. 汇总（独立头 / 探针）。来源：tmp/pls_paths/mix-<tag>.log 最后一行。例外：mix-sep-ahc-vs-d48-g4.log 不存在，这一格由本审计用脚本最后一行的同一公式从 mix-sep-ahc-vs-d48-g4.json 算出。
+
+   | checkpoint | 平均 leak | 平均 diff_gain | v ≥ 80 平均 sum_gain | log10 Π sum_gain |
+   |---|---|---|---|---|
+   | HC 4 条流 | 0.160 / 0.184 | 1.064 / 1.061 | 1.038 / 1.103 | −1.03 / −3.68 |
+   | HC 4 条流，种子 1 | 0.119 / 0.438 | 1.075 / 1.188 | 1.065 / 3.735 | −1.21 / 4.90 |
+   | HC 1 条流 | 0 / 0 | 0 / 0 | 1.489 / 0.985 | 2.51 / −0.76 |
+   | HC 2 条流 | 0.059 / 0.079 | 0.971 / 0.932 | 1.132 / 1.138 | −0.13 / −0.08 |
+   | HC 8 条流 | 0.384 / 0.267 | 1.244 / 1.174 | 1.242 / 0.987 | −1.75 / −12.38 |
+   | HC sigmoid 读写 | 0.184 / 0.212 | 1.114 / 1.090 | 1.084 / 0.954 | −1.05 / −6.54 |
+
+4. 结论（2026-10-30）：静态混合的乘积噪声大，不能解释代价。HC 1 条流的独立头模型在后期子层把残差每层放大约 1.5 倍（v ≥ 80 的 sum_gain 1.489）。
+
+#### depth_arch_nan_probe.py
+
+1. 48 层冒烟测试 14969857：hc 在第一步出现 NaN，mhc 在第 11–30 步内出现 NaN [YAML 29]。
+2. CPU 探针（48 层，小宽度）：前向和 6 步 MuonH 都是有限值 [YAML 29]。
+3. 审计找到原因：hc/mhc 对称初始化上的 Adam eps 1e-20，以及朴素 Sinkhorn。提交 8e6240cb56 修复 [YAML 32]。
+
+#### tmp/pls_diag
+
+1. train_eval_readout.py：AttnRes Block 冒烟测试中 eval L1 是 10.6，训练是 7.36。CPU 检查同一个 batch：训练读出与 eval 读出在 f32 下差 0，在 bf16 下差 ≤ 0.002 [YAML 51]。
+2. moda_bench.py：MoDA 在 microbatch 1 时每步 104 s [YAML 188]。
+3. 布局修复（604cdc18c7），1 张 A100，只算骨干，seq 4096，48 层前向加反向：旧 4830 ms，修复后 1647 ms，去掉深度项的 MoDA 789 ms，Pre-LN 285 ms。新旧 f32 梯度相对差 4e-4 [YAML 189]。
+
+#### tmp/pls_hidden（补 mHC 两行；隐藏份额的两种定义）
+
+1. mHC 48 层隐藏份额，平均 / 下半 / 上半：独立头 0.35 / 0.38 / 0.32，探针 0.36 / 0.40 / 0.32 [tmp/pls_hidden/130m-della4xh100-pls1-sep-amhc-vs-d48-g4.json 与 …-sep-bbfrozen-amhc-vs-d48-g4.json，键 hidden_share，本审计取平均]。
+2. HC 48 层独立头的隐藏份额有两个值，两者都对，定义不同。
+   - 0.26（第 1–47 层平均，job 15534022，2×512 个 token）[YAML 224；docs「## Next: depth」第 377 行]。
+   - 0.40（48 层平均），第 1–47 层平均 0.407（4×1024 个 token）[docs「## HC 的隐藏份额」表；tmp/pls_hidden/130m-della4xh100-pls1-sep-ahc-vs-d48-g4.json，键 hidden_share]。
+   - 同一 checkpoint 的另外三个值一致：HC 探针 0.59 对 0.589，mHC 0.35 / 0.36 对 0.355 / 0.365 [YAML 224；上面两个 json 和 …-sep-bbfrozen-ahc-vs-d48-g4.json，第 1–47 层平均]。
+   - 原因（审计核对代码）：10-14 的 `scripts/della/pls_hc_hidden_cpu.py` 先把所有 token 的平方范数加总再相除，按能量加权；10-25 的 `tmp/pls_hidden/hc_hidden.py` 和 10-30 的 `pls_hidden_ablate.py` 先算每个 token 的比例再取平均。范数大的少数 token 主导第一种算法。同一检查点按 token 平均三次都在 0.40 左右（4×1024 个 token 0.407，1×1024 个 token 0.403，`ha-sep-ahc-vs-d48-g4.json` 0.407）。
+
+#### tmp/pls_paths（只补没有记录的部分）
+
+1. 每层写入量，6 个 HC/mHC 变体（tmp/pls_paths/run_ws2.sh，2026-10-30）。量：最后 8 层 rel_write 的平均，独立头 / 普通模型。来源：tmp/pls_paths/ws-<tag>.json，键 rel_write，本审计算平均。这个算法对 docs 表中的 5 个结构给出相同的值（例如 HC 0.202 / 1.254）。
+   - HC 1 条流：2.855 / 0.145
+   - HC 2 条流：0.708 / 0.353
+   - HC 8 条流：0.839 / 0.665
+   - HC 种子 1：0.272 / 95.097
+   - HC sigmoid 读写：0.239 / 0.527
+   - mHC 线性读写：0.025 / 0.233
+   - 结论（2026-10-30）：在这几个 HC 变体之间，最后几层的相对写入大小与代价不同步。HC 种子 1 的普通模型 95.1 是一个离群值。
+2. mix-*：见上面「pls_hc_mixing.py」。
+3. plot/causal_gap_live.py：从 W&B 读 w711–w714（还在训练）的实时代价，画 causal_gap_live.png。没有数值输出文件，所以这里没有数字可记。
+
+#### 开关门控测试（每个一行）
+
+1. pls_gradmix_cpu_test.py：门控 PLS_SHAPE 和 PLS_PCGRAD。通过记录：YAML 54（「CPU tests 20/20」）、YAML 70；tmp/optsplit/pls_gradmix_cpu_test.log（「ALL PASS」）；docs/della/pls_audit_2026-10-07.md 第 5 行。它门控的 run（-shdepth、-pcg，YAML 66–68、77）的结果在 docs 中没有记录。
+2. pls_heads_only_cpu_test.py：门控 HEADS_FROM / pls_heads_only。通过记录：tmp/optsplit/pls_heads_only_cpu_test.log（「ALL HEADS-ONLY CPU TESTS PASSED」）；提交 69bc662575。300m 头重训的结果（YAML 65）在 docs 中没有记录。
+3. pls_lateon_cpu_test.py：门控 PLS_ON。通过记录：tmp/optsplit/pls_lateon_cpu_test.log（「30 passed, 0 failed」）；YAML 70；docs/della/pls_audit_2026-10-07.md 第 7 行。晚开 run 的结果（YAML 115）在 docs 中没有记录。
+4. pls_local_cpu_test.py：门控 PLS_LOCAL。通过记录：tmp/optsplit/pls_local_cpu_test.log（「all pls_local tests passed」）；提交 a4fe04941a、a23157fb62。YAML 57、58 记录了「own-layer heads」的 R2、R3 结果，logs/ 下有 -pls1-sep-local 和 -pls0.2-sep-local 两个 run 目录；docs 中这两个结果没有记录。
+5. pls_optsplit_cpu_test.py：门控 PLS_OPT_SPLIT=1。通过记录：YAML 80（「probes backbone == baseline (diff 0) at L=6 and 48」）；提交 d69ff2d433 的说明。
+6. depth_arch_hcrw_test.py：门控 HC_RW=sigmoid。通过记录：提交 825326986c 的说明（初始化时与 hc 的相对差 1.8e-7）。YAML 400 只写开关，不写测试。
+7. depth_arch_mhcrw_test.py：门控 MHC_RW=linear。通过记录：YAML 445（「ALL OK」）。
+8. depth_arch_variant_test.py：门控 ROUTE=static 和 GAIN_INIT=lns。通过记录：提交 30da580d69 的说明（「depth_arch_variant_test.py all OK」）。
