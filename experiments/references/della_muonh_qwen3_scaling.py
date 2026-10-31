@@ -351,8 +351,8 @@ VOCAB_K = int(os.environ.get("VOCAB_K", "0"))
 TPP = float(os.environ.get("TPP", "20"))
 if TPP < 20:
     raise ValueError(f"TPP={TPP}: 20 (the recipe) or more")
-if VOCAB_K and VOCAB_K < 1000 and VOCAB_K != 256:
-    raise ValueError(f"VOCAB_K={VOCAB_K}: 256 (bytes, run tag -bytes) or a multiple of 1000 (tag -v<K/1000>k)")
+if VOCAB_K and VOCAB_K < 1000 and VOCAB_K not in (256, 512):
+    raise ValueError(f"VOCAB_K={VOCAB_K}: 256 (bytes, run tag -bytes), 512 (tag -v512; owner 2026-10-31 '补一下512') or a multiple of 1000 (tag -v<K/1000>k)")
 # VOCAB_SET=f<T> (owner popup 2026-10-27, "B 按频率选词表"): the 8K truncation of the Marin tokenizer plus every Marin token
 # seen at least T times in the repeated eighth (small_vocab_tokenizer.py build-freq); every other token is written with
 # its pieces under that vocabulary. Data, step count and evaluations as VOCAB_K; run tag -f<T>; plain runs only.
@@ -724,7 +724,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT in OBJECTIVE_VARIANTS and FREE_HEADS:
         variant_tags += "-fh"
     if VOCAB_K:
-        variant_tags += "-bytes" if VOCAB_K == 256 else f"-v{VOCAB_K // 1000}k"
+        variant_tags += "-bytes" if VOCAB_K == 256 else "-v512" if VOCAB_K == 512 else f"-v{VOCAB_K // 1000}k"
     elif VOCAB_SET:
         variant_tags += f"-{VOCAB_SET}"
     if TPP != 20:
