@@ -1,5 +1,11 @@
 # TREC: training re-evaluation curves of existing MuonH checkpoints
 
+**In one sentence (2026-10-31).** The final weights of MuonH runs fit best the batches read four fifths to nine
+tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
+with p = 1.2-1.4; how much of the final weights its update keeps does not set the fit (equal shares under a
+1/sqrt(t) schedule keep 0.003 nats more of the first quarter), and how far the weights move does not set the rate.
+Open: whether MuonH's fixed-norm shrink sets p (momentum-0.98 branches w727-w729, queued).
+
 **Result (2026-10-27, extended 2026-10-28).** Re-scored with their final weights, two MuonH runs fit best the batches they read about four
 fifths of the way through training (0.81 at 300m with cosine, 0.89 at 130m with a linear decay; 0.069 and 0.088 nats
 below unread text) and have forgotten the first quarter (0.001 +- 0.001 nats below unread text). Bergsma et al.'s
@@ -12,6 +18,9 @@ either training seed. On 24 more checkpoints (2026-10-28), a larger learning rat
 seed do not move it; runs that reread their data fall on one TREC when each batch is placed at its last read.
 On 2026-10-29: equal weights c (the 1/sqrt(t) schedule) keep 0.003 nats more of the first quarter and cost 0.03-0.11 nats;
 early batches are learned (0.07-0.12 nats) and then forgotten (1-4% left), at a rate set by sum(lr^1.3).
+On 2026-10-30: p = 1.22, 1.32, 1.40 at branch points 1240, 2480, 3720; at 300m nothing of the first quarter is
+left. On 2026-10-30/31 (CPU): neither the weight displacement since the branch nor the reversal of the steps before
+it lines the branches up as well as sum(lr^p).
 
 Owner request 2026-10-26: a new Experiments page that applies Bergsma, Dey and Hestness (2025, arXiv 2509.25380) to
 our finished pretraining checkpoints. Page: `exps/trec.html` on the website branch `pretrain-practice`
@@ -57,6 +66,12 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   2026-10-27): 8K seed 0 at 0.814 (-0.0157 bpb), bytes seed 1 at 0.872 (-0.0144); 128K seed 0 has no unique-token run.
   Figure 5 draws one line per seed; each predicted ring sits on the seeds' mean curve.
 
+## Reruns (checked on W&B 2026-10-31)
+- The checkpointed runs are reruns, not copies: same config, GPU nondeterminism. Train loss agrees at step 2 (4e-4)
+  and drifts by up to 0.026 nats mid-run (d12, step 1000). Final train loss: d12-ck248 3.1170 vs d12 3.1151,
+  rsqrtcd-ck248 3.1429 vs 3.1434, ck572-s1 2.86534 vs s1-rerun 2.86532; Paloma eval/loss 3.8557 vs 3.8519, 3.8852 vs
+  3.8828, 3.5909 vs 3.5983. Figures 9 and 10 compare checkpoints of one run only, so the drift does not enter them.
+
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
 - `experiments/trec/predict.py` (c_i for three readings and the lr-only control, 1 - sqrt(c) t^m, m by Pearson r),
@@ -65,9 +80,40 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 - Outputs: `project/trec/out/<run>/<first index>.npz`, `out/init/`, `out/init_step/`; W&B cache
   `project/trec/cache/wandb/`; job records `project/trec/logs/*.yaml`.
 
-## Jobs
-- w439 smoke: check failed (replay order, fixed). w441: cancelled before start. w447 smoke: passed.
-- w465 main: done 2026-10-26 23:46 - 2026-10-27 01:27 on 4 GPUs, 6.7 GPU-h.
+## Jobs (every wq job of the page; H100-h = GPUs x wall time of every segment; checked against wq/jobs 2026-10-31)
+| wq | name | what | state | H100-h | log |
+|---|---|---|---|---|---|
+| w439 | trec-smoke | Smoke of trec_score.py; replay check failed (mixture permutation) | done | 0.02 | trec-smoke.yaml |
+| w441 | trec-smoke | Smoke rerun; cancelled before start (code change) | cancelled | 0.00 | trec-smoke2.yaml |
+| w447 | trec-smoke | Smoke of trec_score.py; passed | done | 0.02 | trec-smoke2.yaml |
+| w465 | trec | TREC of d12 and 300m s1-rerun, every batch (Figs 1-6) | done | 6.71 | trec.yaml |
+| w512 | trec-runs-smoke | Smoke of the 24 other checkpoints | done | 0.32 | trec-runs.yaml |
+| w513 | trec-runs-a | TREC of the other checkpoints, part a (Figs 6-7) | done | 12.59 | trec-runs.yaml |
+| w514 | trec-runs-b | TREC of the other checkpoints, part b (Figs 6-7) | done | 17.73 | trec-runs.yaml |
+| w590 | trec-rsqrt | d12 retrained with 1/sqrt(t), TREC (Fig 8) | done | 7.69 | trec-rsqrt.yaml |
+| w591 | trec-rsqrtcd | d12 retrained with 1/sqrt(t) + cooldown, TREC (Fig 8) | done | 7.69 | trec-rsqrt.yaml |
+| w642 | trec-ck-d12 | d12 retrained, checkpoint every 248 steps, TREC of each (Fig 9) | done | 11.92 | trec-ck.yaml |
+| w643 | trec-ck-rsqrtcd | rsqrtcd retrained, checkpoint every 248 steps (Fig 9) | done | 11.90 | trec-ck.yaml |
+| w651 | trec-br-a | Branch 2480 arm a; smoke gate bug, failed | failed, exit 3 | 0.09 | trec-branch.yaml |
+| w652 | trec-br-b | Branch 2480 arm b; smoke gate bug, failed | failed, exit 3 | 0.08 | trec-branch.yaml |
+| w653 | trec-br-c | Branch 2480 arm c; smoke gate bug, failed | failed, exit 3 | 0.08 | trec-branch.yaml |
+| w658 | trec-br-a | Branch 2480, lr 0.01 x 500 (Fig 10) | done | 2.12 | trec-branch.yaml |
+| w659 | trec-br-b | Branch 2480, lr 0.005 x 1000 (Fig 10) | done | 3.12 | trec-branch.yaml |
+| w660 | trec-br-c | Branch 2480, lr 0.0025 x 2000 (Fig 10) | done | 5.91 | trec-branch.yaml |
+| w667 | trec-ck-300m | 300m retrained, checkpoint every 572 steps (Fig 9) | done, 4 segments | 34.72 | trec-ck300.yaml |
+| w671 | trec-br1240-a | Branch 1240, lr 0.01 x 500 (Q8 text) | done | 2.14 | trec-branch.yaml |
+| w672 | trec-br1240-b | Branch 1240, lr 0.005 x 1000 (Q8 text) | done | 3.03 | trec-branch.yaml |
+| w673 | trec-br1240-c | Branch 1240, lr 0.0025 x 2000 (Q8 text) | done | 5.75 | trec-branch.yaml |
+| w674 | trec-br3720-a | Branch 3720, lr 0.01 x 500 (Q8 text) | done | 2.08 | trec-branch.yaml |
+| w675 | trec-br3720-b | Branch 3720, lr 0.005 x 1000 (Q8 text) | done | 3.04 | trec-branch.yaml |
+| w676 | trec-br3720-c | Branch 3720, lr 0.0025 x 2000 (Q8 text) | done | 5.76 | trec-branch.yaml |
+| w727 | trec-br2480m98-a | Branch 2480 at momentum 0.98, lr 0.01 x 500 (Fig 10 panel 5) | queued | 0.00 | trec-branch-m98.yaml |
+| w728 | trec-br2480m98-b | Branch 2480 at momentum 0.98, lr 0.005 x 1000 (Fig 10 panel 5) | queued | 0.00 | trec-branch-m98.yaml |
+| w729 | trec-br2480m98-c | Branch 2480 at momentum 0.98, lr 0.0025 x 2000 (Fig 10 panel 5) | queued | 0.00 | trec-branch-m98.yaml |
+
+Total 144.5 H100-h. Record table: main 143.9 (17 jobs), other 0.6 (6 smokes and failed gates); w441 never ran.
+The vocab session's w438 and w457 scored the Figure 5 runs; their cost is on that page.
+Every training run logged to W&B live (reself/marin-della); all 14 TREC training runs are finished there (2026-10-31).
 
 ## Page (exps/trec.html)
 - Q1 answered (Fig 1), Q2 answered (Figs 2-4), Q3 answered (Fig 5, w438). Standfirst = Takeaways = meta description.
@@ -121,8 +167,8 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   Conclusion: c 0.004 -> 1.0 keeps 0.003 nats more of the first quarter and costs 0.03 (cooldown) to 0.11 nats of final
   loss; the share c of an update does not set how well the final model fits its batch.
 - Page: Q6 answered, Figure 8 filled, standfirst = takeaways = meta extended; deterministic anti-autoresearch L0:
-  CLEAN_GIVEN_EVIDENCE. Not done: public code for trec-rsqrt (based on the pls commit 4530d3bb; the scrub covers the
-  trec branch only), so the two record rows carry no Code link.
+  CLEAN_GIVEN_EVIDENCE. Not done then: public code for trec-rsqrt (based on the pls commit 4530d3bb; the scrub covered the
+  trec branch only), so the two record rows carried no Code link. Done 2026-10-30 (see Public code below).
 
 ## Imprint and decay (owner via the controller 2026-10-29: sessions add experiments; popup "提交两个", placeholder approved)
 - Question 7: were the early batches learned little, or learned and then forgotten? d12 and rsqrtcd trained again
@@ -148,12 +194,13 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   muonh-qwen3-300m-della4xh100-ck572-s1, scripts/della/trec_ck300.sbatch, 2aaa9d3507); wq w667 (--partial, ~40 GPU-h).
 
 - Q8 result (w658-w660 exit 0; tools/branch_fit.py): imprint at the branch 0.157 nats. Fraction left after 248 steps
-  0.33 / 0.57 / 0.77 (lr 0.01 / 0.005 / 0.0025), half-life 124 / 339 / 784 steps; at sum lr 5: 0.19 / 0.23 / 0.26. The
+  0.33 / 0.57 / 0.77 (lr 0.01 / 0.005 / 0.0025), half-life 124 / 339 / 784 steps (superseded: 121 / 339 / 784 in Results 2026-10-30, the page's numbers); at sum lr 5: 0.19 / 0.23 / 0.26. The
   arms meet against sum(lr^p) with p = 1.32 (1.26-1.39 within 2x the best gap): mean squared log gap 7.0e-4, against
   1.5e-2 (p=1), 6.7e-2 (p=2, the fixed-norm shrink), 0.13 (steps). Q8 answered; takeaway extended.
 
 - Q8 at other branch points (owner popup 2026-10-29): the same three arms from d12-ck248 steps 1240 and 3720, scoring
-  the 248 batches read before each (trec_branch.sbatch, job names trec-br<step>-a|b|c, 8970c90296). wq w671-w676.
+  the 248 batches read before each (trec_branch.sbatch, job names trec-br<step>-a|b|c, 8970c90296; smoke gate eval
+  loss < 6, since the step-1240 checkpoint sits higher). wq w671-w676.
 
 - Public code (owner 2026-10-30, "都要"): marin-pli trec fast-forwarded 2347279 -> 4a20d7cd9c, new branch trec-rsqrt at
   efa55ee76b (tmp/trec_scan2/scrub.sh <branch>; scan: secrets 0, cluster user and group 0; reself and the pli account as
