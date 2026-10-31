@@ -157,7 +157,9 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   more than once. Figure 7 (owner popup 2026-10-28: both x axes): against t the 1.2b TREC repeats every pass (0.417);
   against the last read of each batch's data it is one curve, low 0.81 (prediction 0.80); 520m 0.79 (0.80); tpp200
   0.957 in both seeds (0.92), 0.03 nats deep. At the read-count edge (1.2b 0.833, tpp200 0.769) the loss changes by
-  <= 0.003 nats (within 1.4 SE): an earlier read leaves no measurable trace.
+  <= 0.003 nats (within 1.4 SE; batches last read within 0.01 or 0.02 of training on each side, tools/boundary.py;
+  wider windows pick up the curve's slope; the number check found +0.0041, 2.3 SE, for a linear fit over +-0.1): an earlier read leaves
+  no measurable trace. The page names the windows since 2026-10-31.
 - Figure 7 check (owner question 2026-10-29, "multiepoch你是不是画错了这个图"; tools/multipass_exact.py, outputs
   out/multipass_exact_<run>.npz; edge numbers above from tools/boundary.py): each scored sequence's stream position
   is mapped to its data index exactly as MixtureDataset does (block permutation fold_in(mix_key, block)). Sequences
