@@ -181,6 +181,8 @@ def main():
             if bad:
                 raise SystemExit(f"{r['run']}: job state {states}; fix the record before building")
             row["state"] = "" if all(s == "done" for s in states) else "running" if "running" in states else "queued"
+        if not r.get("external") and not row["segments"]:
+            row["url"] = "none"   # no W&B run until the job starts (controller link check 2026-10-31)
         row["hours"] = round(row["hours"], 2)
         rows.append(row)
     other = [w for w in OTHER if w not in main_jobs]

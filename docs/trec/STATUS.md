@@ -88,6 +88,12 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   never committed). Now the long captions are included and tools/audit.sh copies the page and extracts the text
   itself. Rerun on the full text (28,485 characters, 10 long captions): CLEAN_GIVEN_EVIDENCE, 0 findings.
 
+- Release check (controller, 2026-10-31; owner: release all updated pages): TREC still runs (w727-w729 queued, Fig 10
+  panel 5 a placeholder), so by the template rule the page shows no standfirst and no Takeaways text. Removed both;
+  the meta description stays. The last text (standfirst = Takeaways) is in pretrain-practice fd5fd3c; write it again,
+  extended with the momentum result, when the project is finished. Queued record rows carry url "none" until their
+  job starts (the link check found 404s for W&B runs that do not exist yet).
+
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
 - `experiments/trec/predict.py` (c_i for three readings and the lr-only control, 1 - sqrt(c) t^m, m by Pearson r),
