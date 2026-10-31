@@ -299,7 +299,7 @@ def seed_panel(sfx, word, label):
 SV = dict(ylog=True, yoff=YOFF, xlim=[0, 5100], ylim=[2.9, 16], xticks=[[v, f"{v:,}"] for v in range(0, 5001, 1000)],
           yticks=[[a, f"{a:g}"] for a in (3, 3.5, 4, 5, 6, 8)])
 figs["fig-attnres-seed"] = dict(title={"en": "AttnRes (Full) layer-48 training loss, two seeds, 48 layers", "zh": "AttnRes (Full) 第 48 层训练损失，两个种子，48 层"},
-                                legend=figs["fig-d48"]["legend"], quantity={"en": "Training loss (nats, log scale)", "zh": "训练损失（nats，对数坐标）"},
+                                legend=figs["fig-d48"]["legend"][:2], quantity={"en": "Training loss (nats, log scale)", "zh": "训练损失（nats，对数坐标）"},   # no depth dots here (audit 2026-10-31: the legend listed them)
                                 xlabel={"en": "Step", "zh": "步数"}, height=200, cols=1,
                                 panels=[seed_panel("", None, {"en": "Seed 0", "zh": "种子 0"}), seed_panel("-s1", SEED1_STATUS, {"en": "Seed 1", "zh": "种子 1"})])
 
