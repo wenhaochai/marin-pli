@@ -410,15 +410,18 @@ print("fig-auto10", {k: [round(g, 3) for g in (v[0], v[5])] for k, v in gap10.it
 # checkpoint). Panels: 130m (6 layers) and 48 layers of width 512 (Sandwich-LN); own readouts in the dark tone, the
 # lens in the light tone of the same colour. lens.json (fetch_lens.py) fills it.
 LENS_STATUS = QUEUED
+# lens-48c (15795008, AttnRes (Full), AttnRes (Block), MoDA) failed out of GPU memory on 2026-10-19 and was not rerun;
+# Figure 34 (fig-dm-lens) reads all ten designs on one text (audit 2026-10-31: the panels said Queued)
+LENS_OOM = {"en": "Out of GPU memory; see Figure 34", "zh": "显存不足；见图 34"}
 LENS = json.load(open(HERE / "lens.json")) if (HERE / "lens.json").exists() else {}
 
 
-def lens_panel(key, xs, label):
+def lens_panel(key, xs, label, status=None):
     """One panel of fig-lens: per setup with both runs finished, its own readouts (dark) and the logit lens (light) by
     layer; the status word while none has."""
     P_ = LENS.get(key, {})
     if not P_:
-        return dict(**empty_view(list(xs), 3.6, 9, LENS_STATUS, ys=(4, 5, 6, 7, 8)), label=label)
+        return dict(**empty_view(list(xs), 3.6, 9, status or LENS_STATUS, ys=(4, 5, 6, 7, 8)), label=label)
     marks, ys = [], []
     for setup, dark, light in (("probes", RED, "#F28B82"), ("sep", BLUE7, "#8AB4F8")):
         if setup not in P_:
@@ -467,7 +470,8 @@ figs["fig-lens"]["legend"] += [[n, c, "line"] for _, c, n in DEPTH_COL]
 # "d48-<arch>"; a design whose lens runs have not finished shows the status word (AttnRes, AttnRes block, MoDA: lens-48c)
 figs["fig-lens-arch"] = dict(title={"en": "Logit lens and per-layer readouts, nine more designs", "zh": "logit lens 与每层读出，另外九种结构"},
                              legend=figs["fig-lens"]["legend"][:4], quantity=figs["fig-lens"]["quantity"], xlabel=XL, height=200, cols=1,
-                             panels=[lens_panel(f"d48-{k}", np.asarray(x48(k)), {"en": n, "zh": n}) for k, n in ARCH])
+                             panels=[lens_panel(f"d48-{k}", np.asarray(x48(k)), {"en": n, "zh": n},
+                                                LENS_OOM if k in ("attnres", "attnres_block", "moda") else None) for k, n in ARCH])
 
 # Figure 10: the 300m heads refit on a frozen backbone (launcher HEADS_FROM); held-out loss by layer before
 # (the finished runs' final eval) and after; the earlier values as context in the light tone of each setup's colour
@@ -921,8 +925,8 @@ VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
 v38 = [sep_cost(t) for t, _, _ in VAR38]
 # the query-clip probes run (w79) diverged at step 660 and was stopped (owner popup 2026-10-24): that bar stays empty
 w38 = [lab for (t, lab, _), v in zip(VAR38, v38) if v is None and t != "aattnres-qclip10-vs-d48"]
-lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " queued" if w38 else "") + " · query scale \u2264 10: ordinary model diverged, stopped",
-         "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 排队中" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散，已停止"}
+lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " still training" if w38 else "") + " · query scale \u2264 10: ordinary model diverged, stopped",
+         "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 仍在训练" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散，已停止"}
 figs["fig-arch-var"] = dict(title={"en": "Separate-heads cost of design variants, 48 layers", "zh": "结构变体的独立头代价，48 层"},
                             legend=[[{"en": "Control", "zh": "对照"}, GREY, "box"], [{"en": "Variant", "zh": "变体"}, BLUE7, "box"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"}, height=200, cols=1,
