@@ -20,6 +20,8 @@
 # Arm a also scores the d12-ck248 checkpoints 2232 (before those batches) and 2480 (the branch point) the same way.
 # Branch points 1240 and 3720 (owner popup 2026-10-29: is p the same early and late?): job names trec-br1240-a etc.;
 # the scored batches are the 248 read before the branch point.
+# Momentum 0.98 instead of 0.95 (owner popup 2026-10-31: does the fixed-norm shrink A eta^2 / 2, A 23 -> 73, raise the
+# forgetting exponent p?): job names trec-br<step>m98-a etc. Arm a then does not rescore the base checkpoints.
 set -uo pipefail
 WT=/scratch/gpfs/GROUP/USER/project/marin-trec-rsqrt
 SC=/scratch/gpfs/GROUP/USER/project/marin-trec   # scorer (branch trec)
@@ -27,8 +29,9 @@ PY=/scratch/gpfs/GROUP/USER/project/marin/.venv/bin/python
 cd $WT
 source scripts/della/job_tmpdir.sh
 if [ -n "${FETCHED_JOB_ID:-}" ]; then NAME=${FETCHED_JOB_NAME:-$(sacct -X -n -j "$FETCHED_JOB_ID" -o JobName%80 | head -1 | tr -d ' ')}; else NAME=$SLURM_JOB_NAME; fi
-[[ $NAME =~ ^trec-br([0-9]*)-([abc])$ ]] || { echo "job name '$NAME' must be trec-br[<step>]-a|b|c"; exit 2; }
-B=${BASH_REMATCH[1]:-2480}; ARM=${BASH_REMATCH[2]}
+[[ $NAME =~ ^trec-br([0-9]*)(m([0-9]+))?-([abc])$ ]] || { echo "job name '$NAME' must be trec-br[<step>][m<momentum>]-a|b|c"; exit 2; }
+B=${BASH_REMATCH[1]:-2480}; MOM=${BASH_REMATCH[3]:+0.${BASH_REMATCH[3]}}; ARM=${BASH_REMATCH[4]}
+MT=${MOM:+-mom$MOM}
 case $ARM in a) MUL=0.5; N=500;; b) MUL=0.25; N=1000;; c) MUL=0.125; N=2000;; esac
 P=$((B - 248))
 JID=${FETCHED_JOB_ID:-$SLURM_JOB_ID}
@@ -38,24 +41,25 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_PROJE
 if [ "${WANDB_MODE:-}" != offline ] && ! curl -s -o /dev/null --max-time 20 https://api.wandb.ai/healthz; then
   export WANDB_MODE=offline; echo "W&B not reachable through the proxy: running offline (sync later)"
 fi
-unset VARIANT SMOKE_STEPS TOTAL_STEPS INIT_FROM CPT_TAG RUN_TAG SEED LR_MUL WARMUP PRECISION EMA_BETA DEVICE_TAG LR_SCHEDULE KEEP_EVERY
+unset VARIANT SMOKE_STEPS TOTAL_STEPS INIT_FROM CPT_TAG RUN_TAG SEED LR_MUL WARMUP PRECISION EMA_BETA DEVICE_TAG LR_SCHEDULE KEEP_EVERY MOMENTUM
 BASE=$MARIN_PREFIX/speedrun/muonh-qwen3-130m-della4xh100-d12-ck248/2026.09.13/checkpoints
 [ -d $BASE/step-$B ] && [ -d $BASE/step-$P ] || { echo "NO BRANCH CHECKPOINT $BASE/step-$B or step-$P"; exit 4; }
 export SIZE=130m LAYERS=12 NUM_GPUS=4 LR_SCHEDULE=constant LR_MUL=$MUL KEEP_EVERY=124 INIT_FROM=$BASE/step-$B CPT_TAG=-br$B
+[ -n "$MOM" ] && export MOMENTUM=$MOM
 src() { local p=$1; for d in "$1"/lib/*/src; do p=$p:$d; done; echo "$p"; }
-rid=muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm${MUL}-br$B
+rid=muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm${MUL}$MT-br$B
 out=$MARIN_PREFIX/speedrun/$rid/2026.09.13
 O=/scratch/gpfs/GROUP/USER/project/trec/out/ck/branch
 T1=$((B + N))
 nvidia-smi -L
-echo "arm $NAME lr $(python3 -c "print(0.02*$MUL)") x $N steps, run $rid $(date +%F_%T)"
+echo "arm $NAME lr $(python3 -c "print(0.02*$MUL)") x $N steps, momentum ${MOM:-0.95}, run $rid $(date +%F_%T)"
 
 # 1. smoke: 10 steps from the branch point into a throwaway run; it must resume at step B+1 and its eval loss must be
 #    that of a trained model (4.28 at step 2480; about 10 from scratch). A 10-step run prints no train-loss postfix.
 if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" != SUCCESS ] && [ ! -d "$out/checkpoints" ]; then
   slog=logs/trec_br_${JID}_smoke.log
   rc=0; TOTAL_STEPS=$((B + 10)) KEEP_EVERY=0 RUN_TAG=-j${JID}s PYTHONPATH=$(src $WT) timeout 30m $PY -m experiments.references.della_muonh_qwen3_scaling > $slog 2>&1 || rc=$?
-  for d in $MARIN_PREFIX/speedrun/muonh-qwen3-130m-della4xh100-d12-constant-lrm${MUL}-br$B-j${JID}s; do [ -d "$d" ] && rm -rf -- "$d" "$MARIN_PREFIX/tmp/checkpoints-temp$d"; done
+  for d in $MARIN_PREFIX/speedrun/muonh-qwen3-130m-della4xh100-d12-constant-lrm${MUL}$MT-br$B-j${JID}s; do [ -d "$d" ] && rm -rf -- "$d" "$MARIN_PREFIX/tmp/checkpoints-temp$d"; done
   loss=$(grep -E "^wandb: +eval/loss [0-9.]+$" $slog | tail -1 | awk '{print $3}')
   grep -q "Resuming training from step $((B + 1))" $slog && [ -n "$loss" ] && python3 -c "import sys; sys.exit(0 if float('$loss') < 6 else 1)" || rc=${rc/#0/5}
   [ $rc -eq 0 ] || { echo "SMOKE FAILED rc=$rc loss=${loss:-none} ($slog)"; exit 3; }
@@ -70,9 +74,9 @@ if [ "$(cat "$out/.executor_status" 2>/dev/null || true)" != SUCCESS ]; then
 fi
 
 # 3. scoring: batches P..B-1 and 256 unread ones at every kept checkpoint (arm a: also d12-ck248 steps P and B)
-cd $SC && unset LR_SCHEDULE LAYERS SIZE NUM_GPUS KEEP_EVERY LR_MUL INIT_FROM CPT_TAG
+cd $SC && unset LR_SCHEDULE LAYERS SIZE NUM_GPUS KEEP_EVERY LR_MUL INIT_FROM CPT_TAG MOMENTUM
 cks=$(ls -d $out/checkpoints/step-* | sort -V)
-[ $ARM = a ] && cks="$BASE/step-$P $BASE/step-$B $cks"
+[ $ARM = a ] && [ -z "$MOM" ] && cks="$BASE/step-$P $BASE/step-$B $cks"
 fail=0
 for c in $cks; do
   s=${c##*-}; dst=$O/$rid/step-$s; [[ $c == $BASE/* ]] && dst=$O/base/step-$s

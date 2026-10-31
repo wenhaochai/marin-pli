@@ -171,6 +171,12 @@ STEP_AUTOCORR = {0.95: 23.0, 0.98: 73.0}
 # KEEP_EVERY (default 0: the permanent checkpoint every 10000 steps only) keeps a checkpoint every KEEP_EVERY steps, for
 # TRECs of intermediate checkpoints (how much reading a batch lowers its loss, and how fast that decays). Tag -ck{N}.
 KEEP_EVERY = int(os.environ.get("KEEP_EVERY", "0"))
+# MOMENTUM (default 0: the size's own) sets the MuonH momentum, e.g. 0.98 for a 130m branch continued from a 0.95
+# checkpoint: the fixed-norm shrink A eta^2 / 2 per step grows about 3x (A 23 -> 73) at the same eta (TREC branch test
+# of the forgetting exponent, owner popup 2026-10-31). Run tag -mom{M}.
+MOMENTUM = float(os.environ.get("MOMENTUM", "0"))
+if MOMENTUM and MOMENTUM not in STEP_AUTOCORR:
+    raise ValueError(f"MOMENTUM must be one of {sorted(STEP_AUTOCORR)}, got {MOMENTUM}")
 
 
 @LrSchedule.register_subclass("inv_sqrt_cooldown")
@@ -310,7 +316,7 @@ def _lr_schedule(s):
     if s["warmup"] if WARMUP is None else WARMUP:
         raise ValueError("LR_SCHEDULE starts at the peak learning rate: it takes no warmup")
     T = SMOKE_STEPS or TOTAL_STEPS or s["steps"]   # the schedule spans the run: lr / sqrt(1 + c t / T), c = A eta_max^2 T
-    c = STEP_AUTOCORR[s["momentum"]] * (s["lr"] * LR_MUL) ** 2 * T
+    c = STEP_AUTOCORR[MOMENTUM or s["momentum"]] * (s["lr"] * LR_MUL) ** 2 * T
     return InvSqrtDecayLrSchedule(decay_constant=c) if LR_SCHEDULE == "rsqrt" else InvSqrtCooldownLrSchedule(decay_constant=c)
 
 
@@ -370,6 +376,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-s{SEED}"
     if LR_MUL != 1:
         variant_tags += f"-lrm{LR_MUL:g}"
+    if MOMENTUM:
+        variant_tags += f"-mom{MOMENTUM:g}"
     if WARMUP is not None:
         variant_tags += f"-wu{WARMUP}"
     if HEADS_FROM:
@@ -476,7 +484,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         beta1=0.9,
         beta2=0.98,
         epsilon=s["eps"],
-        momentum=s["momentum"],
+        momentum=MOMENTUM or s["momentum"],
         nesterov=True,
         backend_steps=5,
         muon_epsilon=1e-5,
