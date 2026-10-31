@@ -908,9 +908,13 @@ VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
          ("amhc-mhcid-vs-d48", {"en": "mHC, residual mixing = I", "zh": "mHC，残差混合 = I"}, BLUE7),
          # owner popup 2026-10-27 (wq w510/w511): mHC with HC's signed read / write maps, the mirror of HC's sigmoid variant
          ("amhc-mhcrwlin-vs-d48", {"en": "mHC, read/write = linear", "zh": "mHC，读写 = 线性"}, BLUE7),
+         # owner popup 2026-10-30 (wq w711/w712): mHC with identity mixing and linear read/write, the causal test of Fig 49
+         ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", {"en": "mHC, mixing = I, read/write = linear", "zh": "mHC，混合 = I，读写 = 线性"}, BLUE7),
          # owner popup 2026-10-26 (~16:40; wq w389/w390): HC with mHC's read / write maps, beside HC itself
          ("ahc-vs-d48-g4", {"en": "HC", "zh": "HC"}, GREY),
          ("ahc-hcrwsig-vs-d48", {"en": "HC, read/write = sigmoid", "zh": "HC，读写 = sigmoid"}, BLUE7),
+         # owner popup 2026-10-30 (wq w713/w714): HC whose write is one weight shared by every stream
+         ("ahc-hcwsh-fa4thd-vs-d48", {"en": "HC, one shared write", "zh": "HC，各流共用写入"}, BLUE7),
          ("aattnres-vs-d48-g4", {"en": "AttnRes (Full), seed 0", "zh": "AttnRes (Full)，种子 0"}, GREY),
          ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
          ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
@@ -1034,7 +1038,7 @@ figs["fig-hc-streams"] = dict(title={"en": "Separate-heads cost by residual stre
                               quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
                               xlabel={"en": "Residual streams", "zh": "残差流数"}, height=200, cols=1,
                               panels=[dict(xlim=[-0.4, 3.4], ylim=[-0.05, 0.15], xticks=[[0, "1"], [1, "2"], [2, "4"], [3, "8"]], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"),
-                                           label={"en": "Layer 48" + (" · " + ", ".join(w43) + " stream" + ("s" if w43 != ["1"] else "") + " queued" if w43 else ""), "zh": "第 48 层" + (" · " + "、".join(w43) + " 条流排队中" if w43 else "")},
+                                           label={"en": "Layer 48" + (" · " + ", ".join(w43) + " stream" + ("s" if w43 != ["1"] else "") + " still training" if w43 else ""), "zh": "第 48 层" + (" · " + "、".join(w43) + " 条流仍在训练" if w43 else "")},
                                            marks=[dict(type="dots", color=BLUE7, pts=[[{1: 0, 2: 1, 4: 2, 8: 3}[m], v] for m, v in S43.items() if v is not None])])])
 print("Fig 43 cost by stream count", S43)
 # Figure 44 (queue fill, wq w223/w224; placeholder: owner popup 2026-10-25): AttnRes separate-heads cost by the number of
@@ -1139,6 +1143,47 @@ figs["fig-write-size"] = dict(title={"en": "How much each layer changes what the
                               legend=[[{"en": "Probes model", "zh": "普通模型"}, RED, "line"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "line"]],
                               quantity={"en": "Change over the state before it (log scale)", "zh": "改变量与改变前状态之比（对数坐标）"}, xlabel=LAYER_X, height=170, cols=2, panels=pan48)
 print("Fig 48 late/early relative write", {nm: [None if _ws(f"{m}-{t}") is None else round(sum(_ws(f"{m}-{t}")[40:]) / 8, 3) for m in ("-sep", "-sep-bbfrozen")] for t, nm in WS48})
+# Figure 49 (owner popups 2026-10-30): the separate-heads cost against how much the separate-heads model's last layer
+# depends on the stream differences, the part of the state no readout (the stream sum) sees. x: the layer-48
+# cross-entropy rise when every stream is replaced by the stream mean after layer l, averaged over l = 1, 4, ..., 16
+# (scripts/della/pls_hidden_ablate.py, vis1 CPU, 4 x 1024 Paloma c4_en tokens -> ha/ha-sep-<tag>.json); one-stream designs
+# have no stream differences (x = 0). y: the separate-heads cost (sep_cost). The causal-test designs (wq w711-w714) join
+# once trained and measured.
+def _ha_early(tag):
+    f = HERE / "ha" / f"ha-sep-{tag}.json"
+    if not f.exists():
+        return None
+    d = json.loads(f.read_text())["dce"]
+    v = [x for k, x in d.items() if int(k) <= 16]
+    return round(sum(v) / len(v), 4)
+HA49 = [("ahc-vs-d48-g4", BLUE7, ("HC", "HC"), (7, 4, "start")), ("ahc-vs-d48-s1", BLUE7, ("HC, seed 1", "HC，种子 1"), (7, 12, "start")),
+        ("ahc-hcrwsig-vs-d48", BLUE7, ("HC, sigmoid read/write", "HC，sigmoid 读写"), (-7, 4, "end")), ("ahc-hcs8-vs-d48", BLUE7, ("HC, 8 streams", "HC，8 条流"), (0, -9, "middle")),
+        ("ahc-hcs2-vs-d48", BLUE7, ("HC, 2 streams", "HC，2 条流"), (-7, 4, "end")), ("ahc-hcwsh-fa4thd-vs-d48", BLUE7, ("HC, one shared write", "HC，各流共用写入"), (7, 4, "start")),
+        ("amhc-vs-d48-g4", RED, ("mHC", "mHC"), (-7, 4, "end")), ("amhc-mhcid-vs-d48", RED, ("mHC, mixing = I", "mHC，混合 = I"), (7, -4, "start")),
+        ("amhc-mhcrwlin-vs-d48", RED, ("mHC, linear read/write", "mHC，线性读写"), (7, 4, "start")),
+        ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", RED, ("mHC, mixing = I, linear read/write", "mHC，混合 = I，线性读写"), (7, 4, "start"))]
+ONE49 = [("ahc-hcs1-vs-d48", ("HC, 1 stream", "HC，1 条流")), ("apreln-vs-d48-g4", ("Pre-LN", "Pre-LN"))]
+m49, w49 = [], []
+for col in (BLUE7, RED):
+    pts, labs = [], []
+    for tag, c, (en, zh), (dx, dy, an) in HA49:
+        x, y = _ha_early(tag), sep_cost(tag)
+        if c != col:
+            continue
+        if x is None or y is None:
+            w49.append({"en": en, "zh": zh})
+            continue
+        pts.append([x, y]); labs.append([{"en": en, "zh": zh}, dx, dy, an])
+    m49.append(dict(type="dots", color=col, pts=pts, labels=labs))
+m49.append(dict(type="dots", color=GREY, pts=[[0.0, sep_cost(t)] for t, _ in ONE49], labels=[[{"en": en, "zh": zh}, 7, 4, "start"] for _, (en, zh) in ONE49]))
+figs["fig-workspace"] = dict(title={"en": "Separate-heads cost and the use of the stream differences, 48 layers", "zh": "独立头代价与对各流之差的使用，48 层"},
+                             legend=[[{"en": "Hyper-Connections", "zh": "Hyper-Connections"}, BLUE7, "dot"], [{"en": "mHC", "zh": "mHC"}, RED, "dot"], [{"en": "One stream", "zh": "单流"}, GREY, "dot"]],
+                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"},
+                             xlabel={"en": "Last-layer loss rise when the stream differences are deleted (nats)", "zh": "删掉各流之差后最后一层损失的升高（nats）"}, height=240, cols=1,
+                             panels=[dict(xlim=[-0.1, 2.0], ylim=[0.0, 0.16], xticks=[[v, f"{v:g}"] for v in (0, 0.5, 1, 1.5, 2)], yticks=lin_ticks(0.0, 0.16, 0.04, "{:.2f}"),
+                                          label={"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w49) + " still training" if w49 else ""),
+                                                 "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w49) + " 仍在训练" if w49 else "")}, marks=m49)])
+print("Fig 49 workspace", {t: (_ha_early(t), sep_cost(t)) for t, *_ in HA49})
 figs["fig-mtp-dirs"] = dict(title={"en": "Where each layer writes, read by the two probes, 130m", "zh": "每层写入的方向与两种探针，130m"},
                             legend=[[{"en": "Next-token probe's directions", "zh": "下一个词探针的方向"}, RED, "line"], [{"en": "Probe for the token after next", "zh": "下下个词探针的方向"}, MTPC, "line"]],
                             quantity={"en": "Share of the layer's write", "zh": "占这一层写入的比例"}, xlabel=LAYER_X, height=200,

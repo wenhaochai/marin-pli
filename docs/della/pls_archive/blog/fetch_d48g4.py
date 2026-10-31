@@ -43,21 +43,30 @@ def history(r, last, keys):
 
 # The A3 / E1 arms (pls_arch3_fetchable.sbatch, wq w76-w90) are 4-GPU runs named -vs-d{L} with no -g4:
 # "arch3:<middle>:<L>[@seed]", e.g. arch3:ahc:24 -> -sep-ahc-vs-d24, arch3:apreln:48@s1 -> -sep-apreln-vs-d48-s1.
+# A separate-heads run at another intermediate-loss weight (-pls<w> instead of -pls1; it has no probes run of its own):
+# "plsw<w>:arch3:...", e.g. plsw0.0212766:arch3:apreln:48 -> -pls0.0212766-sep-apreln-vs-d48 (wq w154, Figure 42).
 for arch in archs:
+    pw = None
+    if arch.startswith("plsw"):
+        pw, _, arch = arch.partition(":")
+        pw = pw.removeprefix("plsw")
     arch2 = arch.removeprefix("arch2:") if arch.startswith("arch2:") else None
     arch3 = arch.removeprefix("arch3:") if arch.startswith("arch3:") else None
     nl = int(arch3.split(":")[1].partition("@")[0]) if arch3 else 48
     keys = keys48[:nl]
     sel = sorted({0, nl // 4 - 1, nl // 2 - 1, 3 * nl // 4 - 1, nl - 2, nl - 1})
-    for setup in (("-sep-bbfrozen",) if arch2 else ("-sep", "-sep-bbfrozen")):
+    for setup in (("-sep-bbfrozen",) if arch2 else ("-sep",) if pw else ("-sep", "-sep-bbfrozen")):
         a_, _, seed = arch.partition("@")   # "attnres@s1": the seed-1 copy (-vs-d48-s1-g4; Figure 8)
         if arch3:
             mid, _, rest = arch3.partition(":")
             tag = f"{setup}-{mid}-vs-d{nl}" + (f"-{rest.partition('@')[2]}" if "@" in rest else "")
         else:
             tag = f"{setup}-a{arch2}-vs-d48" if arch2 else setup + (f"-a{a_}" if a_ else "") + "-vs-d48" + (f"-{seed}" if seed else "") + "-g4"
+        name = P.format(ARCH2_GPUS[arch2] if arch2 else 4) + tag
+        if pw:
+            name, tag = name.replace("-pls1-", f"-pls{pw}-"), f"-pls{pw}{tag}"
         try:
-            r = api.run(P.format(ARCH2_GPUS[arch2] if arch2 else 4) + tag)
+            r = api.run(name)
         except Exception as e:
             if "not found" in str(e).lower() or "could not find" in str(e).lower():
                 print(tag, "not on W&B")

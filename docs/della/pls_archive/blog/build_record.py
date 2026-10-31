@@ -134,6 +134,10 @@ RUNS = [
     # owner popup 2026-10-27: mHC with HC's signed read / write maps, the mirror of the sigmoid HC pair
     (S("mHC, read/write = linear: separate heads", "mHC，读写 = 线性：独立头"), "130m", 48, 2.6, 4, ("wq", "w510", "130m-della4xh100-pls1-sep-amhc-mhcrwlin-vs-d48"), "38"),
     (S("mHC, read/write = linear: probes only", "mHC，读写 = 线性：只加探针"), "130m", 48, 2.6, 4, ("wq", "w511", "130m-della4xh100-pls1-sep-bbfrozen-amhc-mhcrwlin-vs-d48"), "38"),
+    (S("mHC, mixing = I, read/write = linear: separate heads", "mHC，混合 = I，读写 = 线性：独立头"), "130m", 48, 2.6, 4, ("wq", "w711", "130m-della4xh100-pls1-sep-amhc-mhcid-mhcrwlin-fa4thd-vs-d48"), "38, 49"),
+    (S("mHC, mixing = I, read/write = linear: probes only", "mHC，混合 = I，读写 = 线性：只加探针"), "130m", 48, 2.6, 4, ("wq", "w712", "130m-della4xh100-pls1-sep-bbfrozen-amhc-mhcid-mhcrwlin-fa4thd-vs-d48"), "38, 49"),
+    (S("Hyper-Connections, one shared write: separate heads", "Hyper-Connections，各流共用写入：独立头"), "130m", 48, 2.6, 4, ("wq", "w713", "130m-della4xh100-pls1-sep-ahc-hcwsh-fa4thd-vs-d48"), "38, 49"),
+    (S("Hyper-Connections, one shared write: probes only", "Hyper-Connections，各流共用写入：只加探针"), "130m", 48, 2.6, 4, ("wq", "w714", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcwsh-fa4thd-vs-d48"), "38, 49"),
     # owner popups 2026-10-27: reruns of the Pre-LN probes model on both attention kernels (Figure 45); separate heads whose
     # intermediate losses stop at 50% / 80% of training (Figure 46)
     (S("Pre-LN, rerun of seed 0 on JAX-flash attention: probes only", "Pre-LN，种子 0 在 JAX flash 注意力上重跑：只加探针"), "130m", 48, 2.6, 4, ("wq", "w500", "130m-della4xh100-pls1-sep-bbfrozen-apreln-vs-d48-rerun"), "45"),

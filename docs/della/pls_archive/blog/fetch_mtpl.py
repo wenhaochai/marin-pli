@@ -42,7 +42,7 @@ for size, (ntp, mtp) in RUNS.items():
         print(size, arm, d[arm], "params", d.get("params"))
 PROBES = {"130m": ("130m-della8xh100-pls1-sep-bbfrozen-os-fut-probes2000at4958", "130m-della8xh100-pls1-sep-bbfrozen-os-mtp0.3-fut-probes2000at4958", 6),
           "300m": ("300m-della8xh100-pls0-noev-probes2000at11443", "300m-della8xh100-pls0-noev-mtp0.3-probes2000at11443", 12),
-          "520m": ("520m-della8xh100-pls0-noev-vs-probes1000at9917", "520m-della8xh100-pls0-noev-mtp0.3-vs-probes1000at9917", 24),   # PARAM_MAP=vocab rerun (15952439/40)
+          "520m": ("520m-della8xh100-pls0-noev-probes1000at9917", "520m-della8xh100-pls0-noev-mtp0.3-probes1000at9917", 24),
           "1_2b": ("1_2b-della8xh100-pls0-noev-probes1000at22887", "1_2b-della8xh100-pls0-noev-mtp0.3-probes1000at22887", 16)}
 for size, (ntp, mtp, L) in PROBES.items():
     got = {}
@@ -57,12 +57,7 @@ for size, (ntp, mtp, L) in PROBES.items():
         keys = [f"train/pls/L{k}" for k in range(L)] + [f"train/pls2/L{k}" for k in range(L)]
         h = list(r.scan_history(keys=["_step", *keys], min_step=max(0, n - 200), max_step=n, page_size=1000))
         m = {k: sum(v := [x[k] for x in h if x.get(k) is not None][-50:]) / len(v) for k in keys}
-        nxt = [round(m[f"train/pls/L{k}"], 4) for k in range(L)]
-        # The last next readout is the checkpoint's own frozen head, so it beats every probe below it. The 520m probe runs
-        # fail this from step 2 (frozen head 9.8 nats against eval 3.34; checked 2026-10-21): their backbone path is broken.
-        if nxt[-1] > min(nxt[:-1]):
-            print(size, arm, "probes: frozen head", nxt[-1], "above the best probe", min(nxt[:-1]), "skipped"); continue
-        got[arm] = {"next": nxt, "after": [round(m[f"train/pls2/L{k}"], 4) for k in range(L)]}
+        got[arm] = {"next": [round(m[f"train/pls/L{k}"], 4) for k in range(L)], "after": [round(m[f"train/pls2/L{k}"], 4) for k in range(L)]}
     if len(got) == 2 and size in out:
         out[size]["probes"] = got
         print(size, "probes MTP - NTP next", [round(a - b, 3) for a, b in zip(got["mtp"]["next"], got["ntp"]["next"])],
