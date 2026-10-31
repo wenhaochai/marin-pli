@@ -580,6 +580,12 @@ HNET_DEC = int(os.environ.get("HNET_DEC", "2"))
 HNET_N = float(os.environ.get("HNET_N", "4.74"))
 OPT = os.environ.get("OPT", "muonh")
 MUON_WD = float(os.environ.get("MUON_WD", "0.1"))
+# MUON_LR_MULT (2026-10-30, stage 2 of the test of Baron et al. 2026, arXiv 2610.37842, whose eta is a multiplier on every
+# group's rate): with OPT=muon, scales the Muon and the AdamW learning rates (0.008, 0.0024); the coupled decay p -= lr * wd * p
+# scales with it. Tag -lrm<m> after -muonwd<wd>.
+MUON_LR_MULT = float(os.environ.get("MUON_LR_MULT", "1"))
+if MUON_LR_MULT != 1 and OPT != "muon":
+    raise ValueError("MUON_LR_MULT needs OPT=muon")
 if OPT not in ("muonh", "muon"):
     raise ValueError(f"OPT={OPT!r}: muonh or muon")
 # CVD_RATE_COUNT=C (survey idea 4, owner popup 2026-10-21): with VARIANT=cvd on the Marin tokenizer at 300m, a rare token
@@ -684,6 +690,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-cyc{LR_CYCLES}"
     if OPT == "muon":
         variant_tags += f"-muonwd{MUON_WD:g}"
+        if MUON_LR_MULT != 1:
+            variant_tags += f"-lrm{MUON_LR_MULT:g}"
     if DTP:
         variant_tags += f"-dtp{DTP:g}-fp{DTP_FROM_PASS}"
     if VARIANT == "inoise":
@@ -1017,8 +1025,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if float(os.environ.get("LEVANTER_NORM_GUARD", "0") or 0) > 0:
             raise ValueError("OPT=muon: set LEVANTER_NORM_GUARD=0 (the guard assumes MuonH's constant norms)")
         optimizer = MuonConfig(
-            learning_rate=0.008,
-            adam_lr=0.0024,
+            learning_rate=0.008 * MUON_LR_MULT,
+            adam_lr=0.0024 * MUON_LR_MULT,
             beta1=0.8,
             beta2=0.98,
             epsilon=1e-15,
