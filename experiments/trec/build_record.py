@@ -4,8 +4,8 @@ window.TREC_RECORD: one row per scored checkpoint, and the page's GPU cost.
 Rows: the training run each final checkpoint comes from (W&B reself/marin-della) and the wq job that scored it. A row's
 state, hours and time segments come from that job's wq record (/scratch/gpfs/GROUP/USER/wq/jobs/<n>/state.json);
 when one job scores several checkpoints, its hours are split by the scoring seconds each checkpoint's chunks recorded.
-Cost: H100-hours = GPUs x the wall time of every run of every wq job of the page; main = the jobs of the rows, other =
-the rest (smoke tests). A job with no record fails the build rather than being guessed.
+Cost: H100-hours = GPUs x the wall time of every run of every wq job of the page; main = the jobs of the rows that have
+run (queued rows count once they start), other = the rest (smoke tests). A job with no record fails the build rather than being guessed.
 
     python experiments/trec/build_record.py <site checkout>     # vis node
 """
@@ -184,7 +184,8 @@ def main():
         row["hours"] = round(row["hours"], 2)
         rows.append(row)
     other = [w for w in OTHER if w not in main_jobs]
-    cost = {"main": {"h100_hours": round(sum(gpu_hours(w) for w in main_jobs), 1), "jobs": len(main_jobs)},
+    ran = [w for w in main_jobs if runs_of(job(w)[1])]   # queued jobs have rows but no cost yet
+    cost = {"main": {"h100_hours": round(sum(gpu_hours(w) for w in ran), 1), "jobs": len(ran)},
             "other": {"h100_hours": round(sum(gpu_hours(w) for w in other), 1), "jobs": len(other)}}
     path = os.path.join(site, "assets/data/trec-record.js")
     with open(path, "w") as f:
