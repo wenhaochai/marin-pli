@@ -73,7 +73,7 @@ def train(k: int, n_docs: int, out: str):
     for f in ("tokenizer_config.json", "special_tokens_map.json"):
         shutil.copy(f"{ref_dir}/{f}", f"{out}/{f}")
     meta = dict(k=k, sample_docs=n_docs, seed=0, source=TRAIN, min_frequency=2, merges=len(m["merges"]),
-                seconds=round(time.time() - t0), **{f"sample_{a}": b for a, b in stats.items()})
+                seconds=round(time.time() - t0), **{f"read_{a}": b for a, b in stats.items()})
     json.dump(meta, open(f"{out}/fresh.json", "w"), indent=1)
     # the assembled tokenizer: specials where v<K> has them, and a lossless round trip on held-out documents
     tok, small = Tokenizer.from_file(f"{out}/tokenizer.json"), Tokenizer.from_file(f"{ref_dir}/tokenizer.json")
