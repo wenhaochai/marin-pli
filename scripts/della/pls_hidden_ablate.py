@@ -7,6 +7,9 @@ the untouched run:
     dCE(l0) = CE(layer 48 | streams collapsed after layer l0) - CE(layer 48),
 with l0 = -1 collapsing the embedding copies (a no-op: they are equal). Also records the share of the state's squared norm
 in the differences after each layer, |H - mean|^2 / |H|^2, averaged over tokens.
+HA_MODE=shuffle keeps the state's statistics instead: after layer l0 each token's stream differences are replaced by
+those of another token (one fixed random permutation of the B T tokens), so the sum is unchanged and every stream keeps
+its typical size, and only the information in the differences is lost. Outputs go to the OUT path as given.
 Text: Paloma c4_en validation tokens [0, B T), causal mask with document segments; CE over every position but the last.
     JAX_PLATFORMS=cpu nice -n 19 $PY pls_hidden_ablate.py CKPT CONFIG.json OUT.json
 """
@@ -49,6 +52,9 @@ x0 = model.embeddings.embed(hax.named(jnp.asarray(tok, jnp.int32), (Batch, Pos))
 m, Embed = cfg.hc_streams, cfg.Embed
 S = Axis("stream", m)
 tgt = jnp.asarray(tok[:, 1:])
+MODE = os.environ.get("HA_MODE", "mean")
+assert MODE in ("mean", "shuffle"), MODE
+perm = jnp.asarray(np.random.default_rng(0).permutation(B * T))
 
 
 def run(model_, x_, l0):
@@ -60,7 +66,12 @@ def run(model_, x_, l0):
         mean = hax.mean(Hf, axis=S)
         d = Hf - mean.broadcast_axis(S)
         share = hax.mean(hax.sum(d * d, axis=(S, Embed)) / (hax.sum(Hf * Hf, axis=(S, Embed)) + 1e-30))
-        H = hax.where(i.array == l0, mean.broadcast_axis(S).rearrange(H.axes).astype(H.dtype), H)
+        if MODE == "mean":
+            new = mean.broadcast_axis(S)
+        else:   # another token's differences on this token's mean
+            dd = d.rearrange((S, Batch, Pos, Embed)).array.reshape(m, B * T, -1)[:, perm].reshape(m, B, T, -1)
+            new = mean.broadcast_axis(S) + hax.named(dd, (S, Batch, Pos, Embed))
+        H = hax.where(i.array == l0, new.rearrange(H.axes).astype(H.dtype), H)
         return H, share.array
 
     H, share = tr.layers.scan_via(step)(hax.stack(S, [x_] * m), hax.arange(cfg.Layers), key=None)
@@ -82,5 +93,5 @@ for l0 in L0:
     ce, _ = f(model, x0, jnp.int32(l0))
     d[l0] = float(ce) - base
     print(f"collapse after layer {l0 + 1}: dCE {d[l0]:+.4f}", flush=True)
-json.dump(dict(ckpt=ckpt, arch=cfg.depth_arch, m=m, detach=cfg.pls_detach_backbone, tokens=B * T, base_ce=base,
+json.dump(dict(ckpt=ckpt, mode=MODE, arch=cfg.depth_arch, m=m, detach=cfg.pls_detach_backbone, tokens=B * T, base_ce=base,
                dce={str(k + 1): v for k, v in d.items()}, diff_share=np.asarray(share).tolist()), open(outp, "w"), indent=1)
