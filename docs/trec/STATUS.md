@@ -172,6 +172,18 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   N^0.43 (1/alpha 2.2-2.5, near a random walk); at the same D the smaller-lr arm keeps less. Next candidate: the part of
   W_s - W_S along the update directions before S, not the total displacement.
 
+- Projection test (2026-10-31, owner popup "CPU 测试 + 动量分叉"; Kaggle worker, tools/branch_proj.py,
+  out/ck/proj/{proj.json,SUMMARY.txt}): r = -<W_s - W_S, u>/<u,u>, u = tangential part of W_S - W_{S-248}. The later
+  movement undoes only R = 0.14-0.26 of u by the end of each arm while 1 - f = 0.74-0.86, and 97-99% of |W_s - W_S| is
+  orthogonal to u. Best R axis (attention-only R_pool) spread 4.2e-3 / 2.2e-3 / 4.4e-3, 2-6x worse than the fitted
+  steps*lr^p; R_mean grows as N^0.41-0.48 lr^0.55-0.64 (q = 1.34/1.27/1.34, does not rise with S as p does). Caveat:
+  u is the whole 248-step displacement, mostly not what those batches taught; a batch-specific u (gradient of their
+  loss at W_S) would be cleaner.
+
+- Momentum test (owner popup 2026-10-31): the 2480 arms at momentum 0.98 (A 23 -> 73: fixed-norm shrink about 3x).
+  If the shrink sets p, p rises toward 2. trec_branch.sbatch job names trec-br2480m98-a|b|c, MOMENTUM env
+  (trec-rsqrt 464b25a824). wq w727-w729. Figure 10 fifth panel (placeholder).
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.
