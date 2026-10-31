@@ -72,11 +72,22 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   rsqrtcd-ck248 3.1429 vs 3.1434, ck572-s1 2.86534 vs s1-rerun 2.86532; Paloma eval/loss 3.8557 vs 3.8519, 3.8852 vs
   3.8828, 3.5909 vs 3.5983. Figures 9 and 10 compare checkpoints of one run only, so the drift does not enter them.
 
+## Number check (2026-10-31, owner: 「整理和核对所有结果」)
+- Kaggle worker, detect-only: every hand-written number of the page against its data (out/verify/numbers.md, recompute
+  scripts in out/verify/work/). 110 numbers: 103 match, 2 rounding (1.3 for 1.32; "a quarter" for 0.239), 3 wrong,
+  2 without a source. Rechecked here: Fig 10 "6 to 25" -> 6 to 24 and "only a little better" -> at most twice as
+  well; Fig 9 peak 0.78 -> 0.79; Fig 6 window 0.034 -> 0.026 (all four fixed in EN and ZH). The two without a source
+  hold: 0.0013 at the 130m edge is tools/boundary.py's largest |diff|; the 6 of "12 layers instead of 6" is SIZES['130m']
+  in della_muonh_qwen3_scaling.py. Worker note, not rechecked: with Figure 2's r0 = 0.004 the first-quarter c under
+  1/sqrt(t) is 0.93-0.94, not 1.0 (the page's own model, without r0, gives 1.0).
+
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
 - `experiments/trec/predict.py` (c_i for three readings and the lr-only control, 1 - sqrt(c) t^m, m by Pearson r),
   `analyze.py`, `init_retention.py`, `init_step.py`, `toy_sphere.py`, `fetch_wandb.py`, `build_site_data.py`,
   `build_record.py`, `setups_svg.py`, `diff_spec.json`.
+- Analysis tools that produce page numbers: `experiments/trec/tools/` (17 scripts, moved 2026-10-31; symlinked from
+  `project/trec/tools/`, so the commands in this file still work).
 - Outputs: `project/trec/out/<run>/<first index>.npz`, `out/init/`, `out/init_step/`; W&B cache
   `project/trec/cache/wandb/`; job records `project/trec/logs/*.yaml`.
 
@@ -134,7 +145,8 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
 - Jobs: w512 smoke 21:50-22:09 (1 GPU; all 26 last batches within 0.0001 nats of W&B), w513 23:23-02:32 and w514
   22:21-02:47 (4 GPUs each), 30.3 GPU-h. Controller 2026-10-27: wq jobs as whole 4-GPU blocks from now on.
 - Low point = minimum of a moving mean over 8 sampled blocks (512 steps). Noise: the 7 other block offsets of the
-  fully scored d12 / s1-rerun move it by sd 0.009 / 0.011; windows of 4 or 16 blocks by up to 0.034. Runs that share a
+  fully scored d12 / s1-rerun move it by sd 0.009 / 0.011; windows of 4 or 16 blocks by up to 0.026 at the figure's blocks (0.039 at any
+  of the 8 choices; recomputed 2026-10-31 with tools/settings_look.py functions: the page's earlier 0.034 had no source). Runs that share a
   data stream share batch difficulty, so seeds agree to 0.001 (128K 0.797 / 0.797, 8K 0.822 / 0.822).
 - Figure 6 (measured / momentum prediction, m 4.2 at momentum 0.95, 3.5 at 0.98): depth 1-36 all 0.898 / 0.898;
   lr x1-x4 0.822, 0.842, 0.867, 0.896 / 0.798, 0.817, 0.832, 0.844; EMA weights 0.999 0.797 / 0.782, 0.9998 0.685 /
@@ -146,6 +158,14 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   against the last read of each batch's data it is one curve, low 0.81 (prediction 0.80); 520m 0.79 (0.80); tpp200
   0.957 in both seeds (0.92), 0.03 nats deep. At the read-count edge (1.2b 0.833, tpp200 0.769) the loss changes by
   <= 0.003 nats (within 1.4 SE): an earlier read leaves no measurable trace.
+- Figure 7 check (owner question 2026-10-29, "multiepoch你是不是画错了这个图"; tools/multipass_exact.py, outputs
+  out/multipass_exact_<run>.npz; edge numbers above from tools/boundary.py): each scored sequence's stream position
+  is mapped to its data index exactly as MixtureDataset does (block permutation fold_in(mix_key, block)). Sequences
+  scored in two passes get identical final-model losses (11,148 / 388,322 / 259,386 pairs in 520m / 1.2b / tpp200,
+  |diff| 0), so the mapping is exact. The batch-level last read the figure uses is within 0.0014 of training of the
+  exact per-sequence one (mean <= 0.0001); its read count is wrong for 0.08-0.13% of sequences. The low batch-level
+  correlation across passes comes from the block permutation scattering a batch's sequences, not from a wrong map.
+  Only fix: the Chinese title of the right panel.
 
 ## 1/sqrt(t) schedule (owner request and popup 2026-10-28)
 - Source: Su, kexue.fm/archives/11459 (EMA view of weight decay): every batch keeps the same weight in the final
@@ -210,20 +230,22 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
 - Results 2026-10-30: branch points (tools/branch_fit.py, branch_curves(b)): p = 1.22 (1.14-1.30) at 1240, 1.32
   (1.26-1.39) at 2480, 1.40 (1.33-1.48) at 3720; half-lives at lr 0.01/0.005/0.0025: 146/383/814, 121/339/784,
   102/235/578 steps (halving lr: x2.1-2.8). 300m (w667, tools/imprint.py run 11444): first quarter 0.092 -> -0.0012
-  (nothing left), 0.75-0.95: 0.072 -> 0.049 (69%); its last checkpoint peaks near 0.78 (cosine to zero). Takeaway:
+  (nothing left), 0.75-0.95: 0.072 -> 0.049 (69%); its last checkpoint peaks near 0.79 (cosine to zero; the plotted
+  3-block mean peaks at 0.794, the unsmoothed blocks at 0.783; the page said 0.78 until 2026-10-31). Takeaway:
   power between 1.2 and 1.4. Record cost: main 143.9 H100-h (17 jobs), other 0.6.
 
 - Displacement test (2026-10-30, Kaggle worker; tools/branch_drift.py, out/ck/drift/drift.json): the mean angle D of the
   85 fixed-norm matrices to the branch point does not line the arms up (spread 5.7e-3 / 7.4e-3 / 2.7e-2 at S = 1240 /
   2480 / 3720, against 9.6e-4 / 7.0e-4 / 1.1e-3 for the fitted p and 7.6e-3 / 1.5e-2 / 2.8e-2 for p = 1). D ~ lr^0.63
-  N^0.43 (1/alpha 2.2-2.5, near a random walk); at the same D the smaller-lr arm keeps less. Next candidate: the part of
+  N^0.43 (1/alpha 2.2-2.5, near a random walk); at the same D the smaller-lr arm keeps less. D's spread is 0.50-0.97 of
+  p = 1's and 5.9 / 10.6 / 23.9 times the fitted p's (the page said "6 to 25" and "a little better" until 2026-10-31). Next candidate: the part of
   W_s - W_S along the update directions before S, not the total displacement.
 
 - Projection test (2026-10-31, owner popup "CPU 测试 + 动量分叉"; Kaggle worker, tools/branch_proj.py,
   out/ck/proj/{proj.json,SUMMARY.txt}): r = -<W_s - W_S, u>/<u,u>, u = tangential part of W_S - W_{S-248}. The later
   movement undoes only R = 0.14-0.26 of u by the end of each arm while 1 - f = 0.74-0.86, and 97-99% of |W_s - W_S| is
-  orthogonal to u. Best R axis (attention-only R_pool) spread 4.2e-3 / 2.2e-3 / 4.4e-3, 2-6x worse than the fitted
-  steps*lr^p; R_mean grows as N^0.41-0.48 lr^0.55-0.64 (q = 1.34/1.27/1.34, does not rise with S as p does). Caveat:
+  orthogonal to u. Best R axis (attention-only R_pool) spread 4.2e-3 / 2.2e-3 / 4.4e-3, 3.2-4.4x worse than the fitted
+  steps*lr^p (R_mean 3.3-7.5x, R_pool 6-53x); R_mean grows as N^0.41-0.48 lr^0.55-0.64 (q = 1.34/1.27/1.34, does not rise with S as p does). Caveat:
   u is the whole 248-step displacement, mostly not what those batches taught; a batch-specific u (gradient of their
   loss at W_S) would be cleaner.
 

@@ -23,7 +23,7 @@ WQ = "/scratch/gpfs/GROUP/USER/wq/jobs"
 OUT = "/scratch/gpfs/GROUP/USER/project/trec/out"
 NY = zoneinfo.ZoneInfo("America/New_York")
 CODE = "https://github.com/wenhaochai/marin-pli/tree/4a20d7cd9c24ba31c8c563a0f72a50f7efad66bd"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-10-30 (Figures 1-10 builders, scorer)
-RSQRT_CODE = "https://github.com/wenhaochai/marin-pli/tree/efa55ee76b865cb1791aa660414c216e49784e3a"   # branch trec-rsqrt (training of the Figure 8-10 runs), scrubbed and scanned 2026-10-30
+RSQRT_CODE = "https://github.com/wenhaochai/marin-pli/tree/c7e79bd2a4f18055e02cbc6a72874f40c738d03c"   # branch trec-rsqrt (training of the Figure 8-10 runs, momentum arms included), scrubbed and scanned 2026-10-31
 ROWS = [
     dict(model="130m-d12", run="muonh-qwen3-130m-della4xh100-d12", setup={"en": "WSD to zero, lr 0.02", "zh": "WSD 降到零，lr 0.02"},
          size="130m", layers=12, steps=4959, batches=4959 + 512, jobs=["w465"], figs="1, 2, 3, 4, 6"),
@@ -121,6 +121,12 @@ ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-
               size="130m", layers=12, steps=n, batches=(n // 124 + 1 + (2 if arm == "a" else 0)) * (248 + 256), jobs=[w], figs="10", code=RSQRT_CODE)
          for bp, ws in [(1240, ["w671", "w672", "w673"]), (3720, ["w674", "w675", "w676"])]
          for (m, lr, n, arm), w in zip([("0.5", 0.01, 500, "a"), ("0.25", 0.005, 1000, "b"), ("0.125", 0.0025, 2000, "c")], ws)]
+# Figure 10 fifth panel (owner popup 2026-10-31): the 2480 arms at momentum 0.98 (trec-rsqrt 464b25a824); arm a does not
+# rescore the base checkpoints
+ROWS += [dict(model=None, run=f"muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-mom0.98-br2480", out=f"ck/branch/muonh-qwen3-130m-della4xh100-d12-constant-ck124-lrm{m}-mom0.98-br2480",
+              setup={"en": f"From step 2480 of the checkpointed WSD run, momentum 0.98, lr {lr} for {n} steps", "zh": f"从每 248 步存 checkpoint 的 WSD run 第 2480 步起，动量 0.98，lr {lr} 训练 {n} 步"},
+              size="130m", layers=12, steps=n, batches=(n // 124 + 1) * (248 + 256), jobs=[w], figs="10", code=RSQRT_CODE)
+         for m, lr, n, w in [("0.5", 0.01, 500, "w727"), ("0.25", 0.005, 1000, "w728"), ("0.125", 0.0025, 2000, "w729")]]
 OTHER = ["w439", "w447", "w512", "w651", "w652", "w653"]   # smokes of trec_score.py (w439: replay without the mixture permutation, failed its check; w447 passed; w512 the trec-runs smoke); w651-w653: Figure 10 branches whose good smokes failed a gate that looked for a loss line a 10-step run does not print (rerun as w658-w660)
 
 
