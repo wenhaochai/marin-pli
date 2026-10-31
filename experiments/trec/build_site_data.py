@@ -518,9 +518,10 @@ def _range_score(d, b=2480):
     return loss[idx >= 4959].mean(), loss[tr][np.argsort(idx[tr])]
 
 
-def branch_curves(b):
+def branch_curves(b, tag=""):
     """[(label, lr, colour, [(steps since b, fraction of the imprint left)])] of the three branches from step b
-    (2480: wq w658-w660; 1240 and 3720: w671-w676), or None until every arm is scored."""
+    (2480: wq w658-w660; 1240 and 3720: w671-w676; tag "-mom0.98": momentum 0.98, 2480 only, w727-w729), or None until
+    every arm is scored. The base checkpoints are the same for every tag."""
     base = os.path.join(OUT, "ck", "branch")
     pre, at = _range_score(os.path.join(base, "base", f"step-{b - 248}"), b), _range_score(os.path.join(base, "base", f"step-{b}"), b)
     if not (pre and at):
@@ -528,7 +529,7 @@ def branch_curves(b):
     e0 = ((at[0] - at[1]) - (pre[0] - pre[1])).mean()
     curves = []
     for run, label, lr, col in BRANCH:
-        run = run.replace("-br2480", f"-br{b}")
+        run = run.replace("-br2480", f"{tag}-br{b}")
         pts = [(0, 1.0)]
         for st in sorted(int(d.split("-")[-1]) for d in glob.glob(os.path.join(base, run, "step-*"))):
             r = _range_score(os.path.join(base, run, f"step-{st}"), b)
@@ -545,15 +546,21 @@ def fig_branch():
     """Figure 10 (owner popup 2026-10-29): d12-ck248 continued from step 2480 at a constant lr for N steps, lr x N = 5
     (wq w651-w653). Fraction of the imprint of the batches read at steps 2232-2479 that is left at each kept checkpoint:
     E_s = mean_b [(U_s - L_s(b)) - (U_2232 - L_2232(b))] over those batches, divided by E at step 2480; against the sum
-    of lr, the number of steps and the sum of lr^2 since step 2480. Queued until every arm is scored."""
+    of lr, the number of steps and the sum of lr^2 since step 2480. Queued until every arm is scored. The fifth panel
+    (owner popup 2026-10-31) is the same three arms at momentum 0.98 instead of 0.95 (wq w727-w729), on the fourth
+    panel's axis: if MuonH's fixed-norm shrink (A lr^2 / 2 per step, A 23 -> 73) sets p, they no longer meet there."""
     curves = branch_curves(2480) or []
+    m98 = branch_curves(2480, "-mom0.98") or []
     axes = [("Sum of lr since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr", lambda a, lr: a * lr, [0, 5.25], [0, 1, 2, 3, 4, 5]),
             ("Steps since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684\u6b65\u6570", lambda a, lr: a, [0, 2100], [0, 500, 1000, 1500, 2000]),
             ("Sum of lr\u00b2 since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b2", lambda a, lr: a * lr * lr, [0, 0.0525], [0, 0.01, 0.02, 0.03, 0.04, 0.05]),
             # owner 2026-10-30: a fourth panel on the axis where the arms meet (p fitted by tools/branch_fit.py, 1.32)
             ("Sum of lr\u00b9\u00b7\u00b3 since step 2480", "\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b9\u00b7\u00b3", lambda a, lr: a * lr ** 1.32, [0, 1.2], [0, 0.25, 0.5, 0.75, 1.0])]
+    axes = [ax + (curves,) for ax in axes]
+    axes.append(("Momentum 0.98: sum of lr\u00b9\u00b7\u00b3 since step 2480", "\u52a8\u91cf 0.98\uff1a\u7b2c 2480 \u6b65\u4ee5\u6765\u7684 \u03a3lr\u00b9\u00b7\u00b3",
+                 lambda a, lr: a * lr ** 1.32, [0, 1.2], [0, 0.25, 0.5, 0.75, 1.0], m98))
     panels = []
-    for en, zh, fx, xlim, xt in axes:
+    for en, zh, fx, xlim, xt, curves in axes:
         p = {"label": {"en": en, "zh": zh}, "xlim": xlim, "xticks": [[v, f"{v:g}"] for v in xt], "ylim": [0, 1.3], "yticks": ticks(0, 1.0, 0.25, 2)}
         if len(curves) < len(BRANCH):
             p.update(empty=QUEUED, marks=[])
