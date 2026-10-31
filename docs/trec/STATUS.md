@@ -81,6 +81,13 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   in della_muonh_qwen3_scaling.py. Worker note, not rechecked: with Figure 2's r0 = 0.004 the first-quarter c under
   1/sqrt(t) is 0.93-0.94, not 1.0 (the page's own model, without r0, gives 1.0).
 
+- Audit text fix (2026-10-31): tools/page_text.py extracted the body and the short captions but not the long
+  captions (data-more-en), where most numbers are, and it reads ./trec.html and writes ./paper.txt in its cwd. Every
+  earlier deterministic audit therefore skipped the long captions, and the three audits of 2026-10-31 before 15:17
+  read the Oct 30 text (page_text.py had run in the site's exps/, leaving stray page.md and paper.txt there, deleted,
+  never committed). Now the long captions are included and tools/audit.sh copies the page and extracts the text
+  itself. Rerun on the full text (28,485 characters, 10 long captions): CLEAN_GIVEN_EVIDENCE, 0 findings.
+
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
 - `experiments/trec/predict.py` (c_i for three readings and the lr-only control, 1 - sqrt(c) t^m, m by Pearson r),
