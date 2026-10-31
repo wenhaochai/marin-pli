@@ -166,6 +166,12 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   (nothing left), 0.75-0.95: 0.072 -> 0.049 (69%); its last checkpoint peaks near 0.78 (cosine to zero). Takeaway:
   power between 1.2 and 1.4. Record cost: main 143.9 H100-h (17 jobs), other 0.6.
 
+- Displacement test (2026-10-30, Kaggle worker; tools/branch_drift.py, out/ck/drift/drift.json): the mean angle D of the
+  85 fixed-norm matrices to the branch point does not line the arms up (spread 5.7e-3 / 7.4e-3 / 2.7e-2 at S = 1240 /
+  2480 / 3720, against 9.6e-4 / 7.0e-4 / 1.1e-3 for the fitted p and 7.6e-3 / 1.5e-2 / 2.8e-2 for p = 1). D ~ lr^0.63
+  N^0.43 (1/alpha 2.2-2.5, near a random walk); at the same D the smaller-lr arm keeps less. Next candidate: the part of
+  W_s - W_S along the update directions before S, not the total displacement.
+
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
   (step 10000-54247): cos(W_t, W_0) and the step overlap per layer over training would show it.
