@@ -12,7 +12,10 @@ r = kappa eta + r0, -ln a = (A/2) eta^2 + r0 eta, A = 2 kappa + 1. The next grad
 Newton-Schulz as in training: float32, "simple" coefficients, 5 steps, eps 1e-5 (tmp/trec/scripts/measure_radial.py).
 
     measure (marin venv, tensorstore):  OMP_NUM_THREADS=7 python branch_radial.py measure
-    analyze (numpy):                    python3 branch_radial.py analyze
+    analyze (numpy):                    python3 branch_radial.py analyze   (the pre-registered rules)
+    model (numpy):                      python3 branch_radial.py model     (added after the run, verification
+                                        2026-11-01: per-step shrink ratio, the measured shrink as a model of the
+                                        0.98 curves, the shrink's share of the 0.95 forgetting)
 Output: /scratch/gpfs/GROUP/USER/project/trec/out/ck/radial/radial.json (per matrix and checkpoint).
 """
 import json
@@ -146,5 +149,69 @@ def analyze():
         print()
 
 
+def model():
+    sys.path.insert(0, "/scratch/gpfs/GROUP/USER/project/marin-trec/experiments/trec")
+    sys.path.insert(0, "/scratch/gpfs/GROUP/USER/project/marin-trec/experiments/trec/tools")
+    import build_site_data as b
+    from branch_fit import spread
+    res = json.load(open(f"{OUT}/radial.json"))
+    names = list(res["base"]["mats"])
+    sel = np.array([not n.startswith("gate") for n in names])
+    c95, c98 = b.branch_curves(2480), b.branch_curves(2480, "-mom0.98")
+
+    def r(label, reading, beta):
+        key = reading if reading == "r_M" else f"r_noise_{beta}"
+        return np.array([res[label]["mats"][n][key] for n in names])
+
+    def steps_to(a, level):
+        s, f = a[:, 0], a[:, 1]
+        for i in range(1, len(f)):
+            if f[i] <= level < f[i - 1]:
+                t = (np.log(f[i - 1]) - np.log(level)) / (np.log(f[i - 1]) - np.log(f[i]))
+                return float(s[i - 1] + t * (s[i] - s[i - 1]))
+        return float("nan")
+
+    def fit_p(arms):
+        ps = np.arange(0.5, 2.51, 0.01)
+        sp = np.array([spread(arms, p) for p in ps])
+        k = int(np.nanargmin(sp)); ok = ps[sp <= 2 * sp[k]]
+        return round(float(ps[k]), 2), round(float(ok.min()), 2), round(float(ok.max()), 2), float(spread(arms, 1.32))
+
+    for reading in ("r_noise", "r_M"):
+        print(f"== {reading}")
+        ratios = []
+        for lrm, lr, last in ARMS:
+            for s in SS + (last - 2480,):
+                q = (lr * r(f"0.98/{lr}/{s}", reading, 0.98) + lr * lr / 2) / (lr * r(f"0.95/{lr}/{s}", reading, 0.95) + lr * lr / 2)
+                ratios.append(float(np.median(q[sel])))
+        print(f"per-step shrink (lr r + lr^2/2), 0.98 over 0.95, median per matrix: {min(ratios):.2f} to {max(ratios):.2f}")
+        # the measured extra shrink as a model of the 0.98 curves: f95(s) exp(-lr dr R(s)), dr = median r98 - r95 (mean of s 248 and last)
+        for ramp in (False, True):
+            pred, ends, t03, shares = [], [], [], []
+            for (lrm, lr, last), (_, _, _, a95), (_, _, _, a98) in zip(ARMS, c95, c98):
+                dr = np.median(((r(f"0.98/{lr}/248", reading, 0.98) - r(f"0.95/{lr}/248", reading, 0.95))
+                                + (r(f"0.98/{lr}/{last - 2480}", reading, 0.98) - r(f"0.95/{lr}/{last - 2480}", reading, 0.95)))[sel] / 2)
+                sv = a95[:, 0]
+                R = sv - 0.98 * (1 - 0.98 ** sv) / 0.02 if ramp else sv
+                q = np.stack([sv, a95[:, 1] * np.exp(-lr * dr * R)], 1)
+                pred.append((lr, q)); ends.append(q[-1, 1] / a95[-1, 1]); t03.append(steps_to(q, 0.3) / steps_to(a95, 0.3))
+            p, lo, hi, g = fit_p(pred)
+            print(f"measured extra shrink{' with build-up' if ramp else ', at once':<15} end ratio {np.round(ends, 3).tolist()}"
+                  f"  steps to 0.3 ratio {np.round(t03, 3).tolist()}  p {p} ({lo}-{hi})  gap at p 1.32 {g:.4f}")
+        for (lrm, lr, last), (_, _, _, a95) in zip(ARMS, c95):
+            r95 = np.median(((r(f"0.95/{lr}/248", reading, 0.95) + r(f"0.95/{lr}/{last - 2480}", reading, 0.95)) / 2)[sel])
+            share = (lr * r95 + lr * lr / 2) * a95[-1, 0] / -np.log(a95[-1, 1])
+            shares.append(round(float(share), 3))
+        print(f"gross shrink of the 0.95 arms over each run / -ln f95 at the end: {shares}")
+        early = []
+        for (lrm, lr, last), (_, _, _, a95), (_, _, _, a98) in zip(ARMS, c95, c98):
+            assert a95[1, 0] == 124
+            dr = np.median((r(f"0.98/{lr}/124", reading, 0.98) - r(f"0.95/{lr}/124", reading, 0.95))[sel])
+            d124 = float(np.log(a95[1, 1] / a98[1, 1]))
+            early.append((round(d124 / (lr * dr * 124), 2), round(d124 / (lr * dr * (124 - 0.98 * (1 - 0.98 ** 124) / 0.02)), 2)))
+        print(f"extra forgetting at s 124 over the measured extra shrink by then (at once, with build-up): {early}")
+        print()
+
+
 if __name__ == "__main__":
-    {"measure": measure, "analyze": analyze}[sys.argv[1]]()
+    {"measure": measure, "analyze": analyze, "model": model}[sys.argv[1]]()

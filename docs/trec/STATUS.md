@@ -1,14 +1,11 @@
 # TREC: training re-evaluation curves of existing MuonH checkpoints
 
-**In one sentence (2026-11-01).** The final weights of MuonH runs fit best the batches read four fifths to nine
-tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
-with p = 1.2-1.4; how much of the final weights its update keeps does not set the fit (equal shares under a
-1/sqrt(t) schedule keep 0.003 nats more of the first quarter), and how far the weights move does not set the rate.
-Open: whether MuonH's fixed-norm shrink sets part of p. Momentum 0.98, which should triple the shrink, raises p only
-from 1.32 to 1.39 (about half or less of the predicted rise), does not forget like a tripled shrink of the whole
-imprint (end ratio 0.76-0.77 at every lr, against 0.29-0.39 at lr 0.01), and adds forgetting that is not a shrink of
-any one strength (the ends need A to rise by 11, 22 and 41); A is not measured on these runs (CPU check asked
-2026-11-01; it can only rule the shrink out or leave the question open).
+**In one sentence (finished 2026-11-01).** The final weights of MuonH runs fit best the batches read four fifths to
+nine tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
+with p = 1.2-1.4; how far the weights move does not set the rate and MuonH's fixed-norm shrink sets at most a small
+part of it (momentum 0.98 makes the measured shrink 2.1-3.0 times as strong, yet after 248 steps the imprint follows it
+only at the smallest lr), and how much of the final weights an update keeps does not set the fit (equal shares under a
+1/sqrt(t) schedule keep 0.003 nats more of the first quarter).
 
 **Result (2026-10-27, extended 2026-10-28).** Re-scored with their final weights, two MuonH runs fit best the batches they read about four
 fifths of the way through training (0.81 at 300m with cosine, 0.89 at 130m with a linear decay; 0.069 and 0.088 nats
@@ -99,13 +96,16 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   job starts (the link check found 404s for W&B runs that do not exist yet). Released to main as 28e23f1 (controller,
   merge of pretrain-practice 507cd8e); exps/trec.html and trec-record.js on main equal cd39362 (checked 2026-10-31).
   The owner kept w727-w729 at the default priority (2026-10-31: no --prio 10 resubmit).
-- Page state (2026-11-01): Figure 10 panel 5 filled; Q8 answer, Figure 10 captions and the Details under it carry the
-  momentum result as an open question (two verification rounds, see Momentum result). Standfirst and Takeaways stay
-  off while the A check is undecided (the text written at 03:05 EST was taken back after round 2); the meta description is
-  the released one. Two Chinese phrases of the fd5fd3c text, for the next standfirst: "完全忘掉" -> "忘掉", "学习率" ->
-  "学习率 schedule". Public code: marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c -> dc38bffae -> f6566174b (each scan:
-  secrets 0, cluster user and group 0); record code links the last one (Figures 1-7) and c7e79bd2a (8-10). Record: 54
-  rows, the momentum rows with their W&B runs (no "none" url left); main 154.3 H100-h (20 jobs), other 0.6.
+- Page state (2026-11-01, finished): Figure 10 panel 5 filled; Q8 answer, Figure 10 captions and the Details under it
+  carry the momentum result and the A check (three verification rounds on the momentum text, one on the A check).
+  Standfirst = Takeaways = meta description written back: the fd5fd3c text with two Chinese fixes ("完全忘掉" -> "忘掉",
+  "学习率" -> "学习率 schedule") plus one sentence: the distance the weights move does not set the power and MuonH's
+  fixed-norm shrink sets at most a small part of it (momentum 0.98 makes the shrink 2.1-3.0 times as strong, yet after the
+  first 248 steps the imprint follows it only at the smallest lr). An earlier version of that sentence (03:05 EST) was
+  taken back after verification round 2. Public code: marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c -> dc38bffae
+  -> f6566174b -> the A-check commit (each scan: secrets 0, cluster user and group 0); record code links the last one
+  (Figures 1-7) and c7e79bd2a (8-10). Record: 54 rows, the momentum rows with their W&B runs (no "none" url left); main
+  154.3 H100-h (20 jobs), other 0.6.
   Site: pretrain-practice 95bc764 (2026-11-01; audit CLEAN_GIVEN_EVIDENCE on the full text); released to main as
   8c2b4eb (controller, owner approval 2026-11-01 ~10:35; record ok 95bc764; trec files on main equal 95bc764).
 
@@ -303,10 +303,10 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   (p 1.45-1.46, rounds 2 and 3, not in branch_m98.py): about half or less; at the smallest lr the end ratio matches the model, at the two larger ones it does not, and at f = 0.3 the
   model is close at the two larger lrs. Conclusion: the joint model (A 23 -> 73 on these runs and the shrink acting on
   the whole imprint) is rejected by the ends of the two larger lrs; which part fails is open. Under the page's own A = 23
-  the shrink is 36% / 21% / 12% of -ln f at the ends of the 0.95 arms, and without it the 0.95 arms meet at p = 1.09
+  the shrink is 34% / 20% / 11% of -ln f at the ends of the 0.95 arms (36 / 21 / 12% before the A-check verification, which double-counted eta^2/2), and without it the 0.95 arms meet at p = 1.09
   (round 2), so these runs do not show that the shrink leaves p alone. Checks that need no value of A (branch_m98.py):
   no single shrink fits the three arms (the ends need dA = 11.0 / 22.3 / 41.2 at once, 12.2 / 23.4 / 42.3 with the
-  build-up), and D after 124 steps grows x2.15 and x2.36 per doubling of lr, where a shrink acting at once gives x4
+  build-up), and D after 124 steps grows x2.15 and x2.36 per doubling of lr, where a shrink acting at once gives x4 (x3.3-3.6 with the r measured in the A check)
   (x3.1-3.4 with the Nesterov-noise build-up, round 3). So most of the extra forgetting at the two smaller lrs is not
   the shrink, whatever A did.
   Retracted after verification: round 1 (wf_75bdd60c-957) "the largest lr speeds up least" (only the lr-0.01
@@ -320,19 +320,7 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   momentum also lengthens the averaging window (about 50 instead of 20 steps); MOMENTUM changes only the 84 MuonH
   matrices (about 46M parameters), not the AdamH lm_head or the Adam embeddings (about 66M each), so a share of the
   imprint held there would also make the extra forgetting level off; one training run per arm.
-  Next (asked 2026-11-01, owner approval needed). CPU check (round 3 design): the radial fraction r of the next step
-  per MuonH matrix on 13 checkpoints (the base step-2480, and per arm and momentum s = 248 and the last kept step),
-  from NS(M) and from the pure-noise next step NS(beta^2 M + (1 + beta) g_hat) (levanter's Nesterov form; NS(M) alone
-  reads A95 about 20% high, dA only +3%), gate_proj reported apart; dA(lr) = 2 (r98 - r95) / lr at equal s, A95(lr),
-  and the predicted extra forgetting from s = 248 to the end against the caps the data allow (dA <= 0 / 9 / 28 at
-  lr 0.01 / 0.005 / 0.0025). About 2-3 min on della-vis1 with the marin venv (tensorstore) and OMP_NUM_THREADS=7;
-  measure_radial.py needs a branch analysis (analyze_radial.py hard-codes the 300m schedule). It sees A only from 124
-  steps after the branch on (the smoke checkpoints are deleted), so the build-up stays a model. Outcomes: dA about 3 or
-  less at every lr -> momentum did not change the shrink on these runs, question open; dA above the caps, near 50 ->
-  the imprint does not follow the extra shrink or something cancels it, the shrink sets at most a small part of p;
-  A95 well below 23 -> the shrink is a small share of the 0.95 forgetting. It cannot answer "yes". GPU option: a direct
-  shrink arm at momentum 0.95 (each MuonH matrix pulled toward zero by an extra 25 lr^2 per step before the norm is
-  restored), three lrs from step 2480, about 10 H100-h like w727-w729.
+  Next (asked 2026-11-01): the owner chose the CPU check of A (popup 「CPU 检查 A」); done, see "A check".
 - A check (owner popup 2026-11-01 「CPU 检查 A」; tools/branch_radial.py; rules written and committed before the run):
   the radial fraction r = -<NS(u), W> / (|NS(u)| |W|) of the next step for the 84 MuonH matrices on 19 checkpoints
   (base step-2480; per arm and momentum s = 124, 248 and the last kept step), from u = M and from the pure-noise next
@@ -346,6 +334,34 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   the predicted growth of D, the sum of lr (r98 - r95) over the steps from s = 248 to the end, with the measured
   -0.041 / +0.082 / +0.154 and report. A95 from r = kappa lr + r0 over the three 0.95 arms at s = 248 (A = 2 kappa + 1):
   below 12 means the shrink is a smaller share of the 0.95 forgetting than the modeled 12-36%.
+  Result (2026-11-01 10:18-10:22 EST on della-vis1, 19 checkpoints; out/ck/radial/radial.json; analyze and model of
+  branch_radial.py). r_noise: dA = 28.3 / 28.7 / 27.8 (lr 0.01, s 124 / 248 / 496), 32.9 / 34.1 / 35.0 (lr 0.005),
+  39.3 / 38.9 / 39.0 (lr 0.0025); r_M: 29.5-32.0 / 35.8-38.9 / 42.5-43.3. Fits at s 248: A95 15.0 and A98 40.9 (r_M 27.8
+  and 55.3), r0 0.0046 -> 0.0256 (r_M 0.0068 -> 0.0307); dA = (A98 - A95) + 2 dr0 / lr = 25.9 (27.5) + 4-17, since r
+  grows as lr^0.8-0.9. Base step-2480: A 14.8 (27.8). Per-step shrink (lr r + lr^2/2) 0.98 over 0.95: 2.64-3.00 (r_M
+  2.07-2.34). Predicted growth of D from s 248 to the end +0.355 / +0.324 / +0.213 (r_M +0.399 / +0.361 / +0.235),
+  measured -0.041 / +0.082 / +0.154 (batch bootstrap sd 0.004-0.005). Outcome: rule (2) (dA >= 27.8 at lr 0.01 and
+  0.005, above the caps 0 and 9): the shrink grew on these runs and after s = 248 the imprint does not follow it at the
+  two larger lrs, or something cancels it; the shrink sets at most a small part of p. At lr 0.0025 the growth is 66-72%
+  of the prediction and the end needs dA 41, measured 39-43: there the imprint follows. The A95 rule does not fire
+  (15.0 and 27.8 are not below 12).
+  Verification (wf_0401f2db-9df): an independent code re-measured all 19 checkpoints (r_M equal to 4.3e-7; r_noise
+  within draw noise, 1-draw sd 0.0003-0.0010) and reproduced every analysis number; the levanter next step, the
+  renormalization a = (1 + 2 eta r + eta^2)^(-1/2) and the sign are right; eta equals the stored learning_rate on every
+  checkpoint. u = M is the upper reading (72 of the 84 matrices are scale-invariant, so the next gradient is tangent):
+  it reads A95 85% high (27.8 against 15.0) and dA 9-11% high. a is the gross shrink: content that later steps do not
+  touch decays by a.
+  Added after the run (model of branch_radial.py; branch_cos.py, out/ck/radial/cos.json), labeled post hoc on the page:
+  the measured extra shrink applied to the 0.95 curves gives p 1.45-1.46 at once and 1.40-1.41 with a 1 - 0.98^k
+  build-up, about the measured 1.39, so p does not separate the readings; it gives end ratios 0.45-0.53 / 0.62-0.67 /
+  0.77-0.79 against the measured 0.76 / 0.76 / 0.77, and by s = 124 the measured extra forgetting is 1.35-3.2 (at once)
+  or 2.1-5.0 (with build-up) times the extra shrink. The gross shrink of the 0.95 arms over each run is 24 / 15 / 9% of
+  -ln f at the end (r_M 44 / 28 / 16%). Each MuonH matrix's log cosine to its step-2480 value falls from s 248 to the
+  last kept step by only 0.25 / 0.45 / 0.83 (r_noise; r_M 0.16 / 0.29 / 0.53) of the gross shrink at 0.95 and 0.13 /
+  0.23 / 0.43 at 0.98; the extra at 0.98 is +0.024 / +0.046 / +0.055 against +0.351 / +0.320 / +0.210 predicted
+  (6-26%): later steps put back most of what the projection removes, at both momenta. Scope: the 84 MuonH matrices
+  (the AdamH lm_head, also fixed-norm, and the Adam embeddings are not tested), the 130m branches from step 2480, after
+  248 steps, one run per arm.
 - Window offset (verification 2026-11-01): checkpoint step-k already holds the update of batch k (the branches resume
   at step 2481; batch b-248 is 0.149 / 0.125 / 0.119 nats below unread at the step-(b-248) checkpoint, z 5-6), so the
   Figure 10 window b-248..b-1 includes one batch read before the pre checkpoint and leaves out batch b (inside the
