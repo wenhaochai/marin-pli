@@ -1,10 +1,10 @@
 # TREC: training re-evaluation curves of existing MuonH checkpoints
 
-**In one sentence (2026-10-31).** The final weights of MuonH runs fit best the batches read four fifths to nine
-tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
-with p = 1.2-1.4; how much of the final weights its update keeps does not set the fit (equal shares under a
-1/sqrt(t) schedule keep 0.003 nats more of the first quarter), and how far the weights move does not set the rate.
-Open: whether MuonH's fixed-norm shrink sets p (momentum-0.98 branches w727-w729, queued).
+**In one sentence (finished 2026-11-01).** The final weights of MuonH runs fit best the batches read four fifths to
+nine tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
+with p = 1.2-1.4, which neither how far the weights move nor MuonH's fixed-norm shrink sets (momentum 0.98, about
+three times the shrink, moves p only from 1.32 to 1.39), and how much of the final weights an update keeps does not
+set the fit (equal shares under a 1/sqrt(t) schedule keep 0.003 nats more of the first quarter).
 
 **Result (2026-10-27, extended 2026-10-28).** Re-scored with their final weights, two MuonH runs fit best the batches they read about four
 fifths of the way through training (0.81 at 300m with cosine, 0.89 at 130m with a linear decay; 0.069 and 0.088 nats
@@ -95,6 +95,11 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   job starts (the link check found 404s for W&B runs that do not exist yet). Released to main as 28e23f1 (controller,
   merge of pretrain-practice 507cd8e); exps/trec.html and trec-record.js on main equal cd39362 (checked 2026-10-31).
   The owner kept w727-w729 at the default priority (2026-10-31: no --prio 10 resubmit).
+- Finished (2026-11-01): Figure 10 panel 5 filled, Q8 answer, Figure 10 captions and the Details under it extended
+  with the momentum result; standfirst = Takeaways = meta description written back (the fd5fd3c text plus one
+  sentence: neither the distance the weights move nor the fixed-norm shrink sets the power, momentum 0.98 moves it only
+  from 1.32 to 1.39). Record: 54 rows, the momentum rows now with their W&B runs (no "none" url left); main 154.3 H100-h
+  (20 jobs), other 0.6.
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
@@ -133,11 +138,11 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
 | w674 | trec-br3720-a | Branch 3720, lr 0.01 x 500 (Q8 text) | done | 2.08 | trec-branch.yaml |
 | w675 | trec-br3720-b | Branch 3720, lr 0.005 x 1000 (Q8 text) | done | 3.04 | trec-branch.yaml |
 | w676 | trec-br3720-c | Branch 3720, lr 0.0025 x 2000 (Q8 text) | done | 5.76 | trec-branch.yaml |
-| w727 | trec-br2480m98-a | Branch 2480 at momentum 0.98, lr 0.01 x 500 (Fig 10 panel 5) | queued | 0.00 | trec-branch-m98.yaml |
-| w728 | trec-br2480m98-b | Branch 2480 at momentum 0.98, lr 0.005 x 1000 (Fig 10 panel 5) | queued | 0.00 | trec-branch-m98.yaml |
-| w729 | trec-br2480m98-c | Branch 2480 at momentum 0.98, lr 0.0025 x 2000 (Fig 10 panel 5) | queued | 0.00 | trec-branch-m98.yaml |
+| w727 | trec-br2480m98-a | Branch 2480 at momentum 0.98, lr 0.01 x 500 (Fig 10 panel 5) | done | 1.70 | trec-branch-m98.yaml |
+| w728 | trec-br2480m98-b | Branch 2480 at momentum 0.98, lr 0.005 x 1000 (Fig 10 panel 5) | done | 3.02 | trec-branch-m98.yaml |
+| w729 | trec-br2480m98-c | Branch 2480 at momentum 0.98, lr 0.0025 x 2000 (Fig 10 panel 5) | done | 5.69 | trec-branch-m98.yaml |
 
-Total 144.5 H100-h. Record table: main 143.9 (17 jobs), other 0.6 (6 smokes and failed gates); w441 never ran.
+Total 154.9 H100-h. Record table: main 154.3 (20 jobs), other 0.6 (6 smokes and failed gates); w441 never ran.
 The vocab session's w438 and w457 scored the Figure 5 runs; their cost is on that page.
 Every training run logged to W&B live (reself/marin-della); all 14 TREC training runs are finished there (2026-10-31).
 
@@ -269,6 +274,17 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
 - Momentum test (owner popup 2026-10-31): the 2480 arms at momentum 0.98 (A 23 -> 73: fixed-norm shrink about 3x).
   If the shrink sets p, p rises toward 2. trec_branch.sbatch job names trec-br2480m98-a|b|c, MOMENTUM env
   (trec-rsqrt 464b25a824). wq w727-w729. Figure 10 fifth panel (placeholder).
+- Momentum result (2026-11-01; w727 01:03-01:29, w728 01:29-02:14, w729 01:30-02:55 on pilot 16541491, exit 0, smoke
+  eval loss 4.25-4.28, 10.4 H100-h; W&B config optimizer.momentum 0.98 in all three and 0.95 in w658-w660, same lr and
+  steps; tools/branch_fit.py, tools/branch_m98.py): p = 1.39 (1.30-1.47) against 1.32 (1.26-1.39) at momentum 0.95.
+  Mean squared log gap: 1.2e-3 at the best p, 1.9e-3 on the fourth panel's axis (p = 1.32), 2.4e-2 at p = 1, 6.9e-2 at
+  p = 2, 0.20 for steps. Every arm forgets faster: left after 248 steps 0.24 / 0.47 / 0.70 (0.33 / 0.57 / 0.77 at 0.95),
+  at the end 0.143 / 0.177 / 0.202 (0.189 / 0.233 / 0.261); half-lives 100 / 227 / 559 steps (121 / 339 / 784), ratio
+  0.83 / 0.67 / 0.71, so the largest lr speeds up least. Two-term check: rate = 1/half-life = 0.398 lr + 41.7 lr^2 fits
+  the 0.95 half-lives (123 / 330 / 797); the lr^2 part multiplied by 73/23 predicts 58 / 189 / 549 steps at 0.98, measured
+  100 / 227 / 559 (1.7x the prediction at lr 0.01). Halving lr at 0.98: x2.27 and x2.46 (inside 2.1-2.8). Conclusion:
+  the fixed-norm shrink does not set p. Caveat: A = 23 (toy, momentum 0.95) and 73 (300m checkpoints, momentum 0.98)
+  come from the model and other runs, not from these branches; a check on these checkpoints is not approved.
 
 ## Open (not approved)
 - When does layer 0 keep its initialization? Only the vocab session's bytes-s1 run has intermediate checkpoints
