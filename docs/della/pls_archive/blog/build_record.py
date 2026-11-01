@@ -41,7 +41,7 @@ RUNS = [
     (PROBE, "300m", 12, 6.0, 4, ("wandb", "300m-della4xh100-pls1-sep-bbfrozen"), "5"),
     # 48 layers (-vs-d48-g4): each design's pair-job chain; the earlier 8-GPU FSDP runs (-d48) are superseded, so other
     *[(n if tag == "" else S(f"{a}: {n['en'].lower()}", f"{a}：{n['zh']}"), "130m", 48, 2.6, 4,
-       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6, 9, 10, 11, 16" if tag == "" else ("7, 8, 17, 44" if tag == "attnres" else ("7, 9, 10, 17, 44" if tag == "attnres_block" else ("7, 9, 10, 17" if tag == "moda" else ("7, 9, 10, 11, 17, 43, 48" if tag == "hc" else ("7, 9, 10, 11, 17, 48" if tag in ("preln", "mhc") else "7, 9, 10, 11, 17"))))))
+       ("chain", jobs, f"130m-della4xh100-pls1-sep{bb}{'-a' + tag if tag else ''}-vs-d48-g4"), "6, 9, 10, 11, 16" if tag == "" else ("7, 8, 17, 44" if tag == "attnres" else ("7, 9, 10, 17, 44" if tag == "attnres_block" else ("7, 9, 10, 17" if tag == "moda" else ("7, 9, 10, 11, 17, 43, 48, 50" if tag == "hc" else ("7, 9, 10, 11, 17, 48, 50" if tag in ("preln", "mhc") else "7, 9, 10, 11, 17"))))))
       for a, tag, jobs in [("Sandwich-LN", "", [15266143, 15266144, 15273924]), ("Pre-LN", "preln", [15266145, 15266146, 15273925]),
                            ("LayerNorm Scaling", "lns", [15266147, 15266148]), ("DeepNorm", "deepnorm", [15266149, 15266150]), ("KEEL", "keel", [15266151, 15266152]),
                            ("Hyper-Connections", "hc", [15266153, 15266154, 15341053, 15341054]), ("mHC", "mhc", [15266155, 15266156, 15341055, 15341056]),
@@ -87,12 +87,12 @@ RUNS = [
         ("Pre-LN, pre-norm scales start at 1/\u221al: probes only", "Pre-LN，pre-norm 增益初始化为 1/\u221al：只加探针", 8, "w15", "apreln-gilns", "36"),
         ("Pre-LN with LNS's start, step size and clip: probes only", "Pre-LN，取 LNS 的初始值、步长和裁剪：只加探针", 8, "w61", "apreln-gilnsbf-slns", "36"),
         ("Pre-LN with LNS's step size and clip, scales start at 1: probes only", "Pre-LN，取 LNS 的步长和裁剪，增益初始化为 1：只加探针", 8, "w62", "apreln-slns", "36"),
-        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", 4, "w27", "ahc-rstatic", "37"),
+        ("Hyper-Connections, static routing: probes only", "Hyper-Connections，静态路由：只加探针", 4, "w27", "ahc-rstatic", "37, 50"),
         ("AttnRes (Full), static routing: probes only", "AttnRes (Full)，静态路由：只加探针", 4, "w28", "aattnres-rstatic", "37")]],
     # owner popups 2026-10-22: design variants (Figure 38) and the HC depth sweep (Figure 39), pls_arch3_fetchable.sbatch
     *[(S(en + (": separate heads" if bb == "" else ": probes only"), zh + ("：独立头" if bb == "" else "：只加探针")), "130m", L, 2.6, 4,
        ("wq", jid, f"130m-della4xh100-pls1-sep{bb}-{tag}-vs-d{L}"), fig) for en, zh, L, tag, fig, pair in [
-        ("mHC, residual mixing fixed to I", "mHC，残差混合固定为 I", 48, "amhc-mhcid", "38, 47", ("w76", "w77")),
+        ("mHC, residual mixing fixed to I", "mHC，残差混合固定为 I", 48, "amhc-mhcid", "38, 47, 50", ("w76", "w77")),
         ("AttnRes (Full), pseudo-query scale clipped to 10", "AttnRes (Full)，伪查询尺度裁剪到 10", 48, "aattnres-qclip10", "38", ("w78", "w79")),
         ("Hyper-Connections, 24 layers", "Hyper-Connections，24 层", 24, "ahc", "39", ("w80", "w81")),
         ("Hyper-Connections, 12 layers", "Hyper-Connections，12 层", 12, "ahc", "39", ("w82", "w83")),
@@ -102,42 +102,45 @@ RUNS = [
         ("Pre-LN, 12 layers", "Pre-LN，12 层", 12, "apreln", "39", ("w147", "w148")),
         ("Pre-LN, 24 layers", "Pre-LN，24 层", 24, "apreln", "39", ("w149", "w150"))] for bb, jid in (("", pair[0]), ("-bbfrozen", pair[1]))],
     # owner popup 2026-10-25: separate heads with static routing; their probes runs are w27 / w28 (Figure 37)
-    *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep-{tag}-vs-d48"), "37") for en, zh, jid, tag in [
+    *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep-{tag}-vs-d48"), "37, 50" if tag == "ahc-rstatic" else "37") for en, zh, jid, tag in [
         ("Hyper-Connections, static routing: separate heads", "Hyper-Connections，静态路由：独立头", "w151", "ahc-rstatic"),
         ("AttnRes (Full), static routing: separate heads", "AttnRes (Full)，静态路由：独立头", "w152", "aattnres-rstatic")]],
     # owner popup 2026-10-25: every intermediate loss at weight 1/47 (Figure 42); control: the Pre-LN probes run
     (S("Pre-LN, separate heads, intermediate weight 1/47", "Pre-LN，独立头，中间层权重 1/47"), "130m", 48, 2.6, 4, ("wq", "w154", "130m-della4xh100-pls0.0212766-sep-apreln-vs-d48"), "42"),
     # owner popup 2026-10-25 (13:40): HC 48 layers seed 1 (Figure 39) and Pre-LN readouts that see 1/8 (Figure 40)
-    (S("Hyper-Connections, seed 1: separate heads", "Hyper-Connections，种子 1：独立头"), "130m", 48, 2.6, 4, ("wq", "w178", "130m-della4xh100-pls1-sep-ahc-vs-d48-s1"), "39"),
-    (S("Hyper-Connections, seed 1: probes only", "Hyper-Connections，种子 1：只加探针"), "130m", 48, 2.6, 4, ("wq", "w179", "130m-della4xh100-pls1-sep-bbfrozen-ahc-vs-d48-s1"), "39"),
+    (S("Hyper-Connections, seed 1: separate heads", "Hyper-Connections，种子 1：独立头"), "130m", 48, 2.6, 4, ("wq", "w178", "130m-della4xh100-pls1-sep-ahc-vs-d48-s1"), "39, 50"),
+    (S("Hyper-Connections, seed 1: probes only", "Hyper-Connections，种子 1：只加探针"), "130m", 48, 2.6, 4, ("wq", "w179", "130m-della4xh100-pls1-sep-bbfrozen-ahc-vs-d48-s1"), "39, 50"),
     (S("Pre-LN, separate heads; intermediate readouts see 1/8 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/8 的坐标"), "130m", 48, 2.6, 4, ("wq", "w180", "130m-della4xh100-pls1-sep-apreln-vis0.125-vs-d48"), "40"),
     # owner popup 2026-10-25 (16:30): HC 48 layers with 1 / 2 residual streams instead of 4 (Figure 43)
-    (S("Hyper-Connections, 1 residual stream: separate heads", "Hyper-Connections，1 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w194", "130m-della4xh100-pls1-sep-ahc-hcs1-vs-d48"), "43"),
-    (S("Hyper-Connections, 1 residual stream: probes only", "Hyper-Connections，1 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w195", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs1-vs-d48"), "43"),
-    (S("Hyper-Connections, 2 residual streams: separate heads", "Hyper-Connections，2 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w196", "130m-della4xh100-pls1-sep-ahc-hcs2-vs-d48"), "43"),
-    (S("Hyper-Connections, 2 residual streams: probes only", "Hyper-Connections，2 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w197", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs2-vs-d48"), "43"),
+    (S("Hyper-Connections, 1 residual stream: separate heads", "Hyper-Connections，1 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w194", "130m-della4xh100-pls1-sep-ahc-hcs1-vs-d48"), "43, 50"),
+    (S("Hyper-Connections, 1 residual stream: probes only", "Hyper-Connections，1 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w195", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs1-vs-d48"), "43, 50"),
+    (S("Hyper-Connections, 2 residual streams: separate heads", "Hyper-Connections，2 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w196", "130m-della4xh100-pls1-sep-ahc-hcs2-vs-d48"), "43, 50"),
+    (S("Hyper-Connections, 2 residual streams: probes only", "Hyper-Connections，2 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w197", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs2-vs-d48"), "43, 50"),
     # queue fill (owner 2026-10-25 via terminal, no popup for these four; placeholders: owner popup 2026-10-25): HC with 8
     # streams (Figure 43) and AttnRes Block with 24 blocks (Figure 44), each against its own probes run
-    (S("Hyper-Connections, 8 residual streams: separate heads", "Hyper-Connections，8 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w221", "130m-della4xh100-pls1-sep-ahc-hcs8-vs-d48"), "43"),
-    (S("Hyper-Connections, 8 residual streams: probes only", "Hyper-Connections，8 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w222", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs8-vs-d48"), "43"),
+    (S("Hyper-Connections, 8 residual streams: separate heads", "Hyper-Connections，8 条残差流：独立头"), "130m", 48, 2.6, 4, ("wq", "w221", "130m-della4xh100-pls1-sep-ahc-hcs8-vs-d48"), "43, 50"),
+    (S("Hyper-Connections, 8 residual streams: probes only", "Hyper-Connections，8 条残差流：只加探针"), "130m", 48, 2.6, 4, ("wq", "w222", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcs8-vs-d48"), "43, 50"),
     (S("AttnRes (Block), 24 blocks: separate heads", "AttnRes (Block)，24 个块：独立头"), "130m", 48, 2.6, 4, ("wq", "w223", "130m-della4xh100-pls1-sep-aattnres_block-arb24-vs-d48"), "44"),
     (S("AttnRes (Block), 24 blocks: probes only", "AttnRes (Block)，24 个块：只加探针"), "130m", 48, 2.6, 4, ("wq", "w224", "130m-della4xh100-pls1-sep-bbfrozen-aattnres_block-arb24-vs-d48"), "44"),
     # owner popup 2026-10-26 (~06:40): the speed stack (FA4 THD attention, lse kernel) checked on Pre-LN 48 layers before new
     # pairs use it; its cost must match the JAX-flash 0.089 / 0.092 within seed noise (replaces the fa4 pair w261/w262)
-    (S("Pre-LN, new speed stack (FA4 attention, fused CE kernel): separate heads", "Pre-LN，新加速组合（FA4 attention、融合 CE kernel）：独立头"), "130m", 48, 2.6, 4, ("wq", "w333", "130m-della4xh100-pls1-sep-apreln-fa4thd-vs-d48"), ""),
-    (S("Pre-LN, new speed stack (FA4 attention, fused CE kernel): probes only", "Pre-LN，新加速组合（FA4 attention、融合 CE kernel）：只加探针"), "130m", 48, 2.6, 4, ("wq", "w334", "130m-della4xh100-pls1-sep-bbfrozen-apreln-fa4thd-vs-d48"), ""),
+    (S("Pre-LN, new speed stack (FA4 attention, fused CE kernel): separate heads", "Pre-LN，新加速组合（FA4 attention、融合 CE kernel）：独立头"), "130m", 48, 2.6, 4, ("wq", "w333", "130m-della4xh100-pls1-sep-apreln-fa4thd-vs-d48"), "50"),
+    (S("Pre-LN, new speed stack (FA4 attention, fused CE kernel): probes only", "Pre-LN，新加速组合（FA4 attention、融合 CE kernel）：只加探针"), "130m", 48, 2.6, 4, ("wq", "w334", "130m-della4xh100-pls1-sep-bbfrozen-apreln-fa4thd-vs-d48"), "50"),
     # owner popup 2026-10-26 (~16:40): HC on the new CE path (Figure 39) and HC with mHC's read / write maps (Figure 38)
-    (S("Hyper-Connections, new CE path: separate heads", "Hyper-Connections，新 CE 路径：独立头"), "130m", 48, 2.6, 4, ("wq", "w387", "130m-della4xh100-pls1-sep-ahc-fa4thd-vs-d48"), "39"),
-    (S("Hyper-Connections, new CE path: probes only", "Hyper-Connections，新 CE 路径：只加探针"), "130m", 48, 2.6, 4, ("wq", "w388", "130m-della4xh100-pls1-sep-bbfrozen-ahc-fa4thd-vs-d48"), "39"),
-    (S("Hyper-Connections, read/write = sigmoid: separate heads", "Hyper-Connections，读写 = sigmoid：独立头"), "130m", 48, 2.6, 4, ("wq", "w389", "130m-della4xh100-pls1-sep-ahc-hcrwsig-vs-d48"), "38"),
-    (S("Hyper-Connections, read/write = sigmoid: probes only", "Hyper-Connections，读写 = sigmoid：只加探针"), "130m", 48, 2.6, 4, ("wq", "w390", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcrwsig-vs-d48"), "38"),
+    (S("Hyper-Connections, new CE path: separate heads", "Hyper-Connections，新 CE 路径：独立头"), "130m", 48, 2.6, 4, ("wq", "w387", "130m-della4xh100-pls1-sep-ahc-fa4thd-vs-d48"), "39, 50"),
+    (S("Hyper-Connections, new CE path: probes only", "Hyper-Connections，新 CE 路径：只加探针"), "130m", 48, 2.6, 4, ("wq", "w388", "130m-della4xh100-pls1-sep-bbfrozen-ahc-fa4thd-vs-d48"), "39, 50"),
+    (S("Hyper-Connections, read/write = sigmoid: separate heads", "Hyper-Connections，读写 = sigmoid：独立头"), "130m", 48, 2.6, 4, ("wq", "w389", "130m-della4xh100-pls1-sep-ahc-hcrwsig-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, read/write = sigmoid: probes only", "Hyper-Connections，读写 = sigmoid：只加探针"), "130m", 48, 2.6, 4, ("wq", "w390", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcrwsig-vs-d48"), "38, 50"),
     # owner popup 2026-10-27: mHC with HC's signed read / write maps, the mirror of the sigmoid HC pair
-    (S("mHC, read/write = linear: separate heads", "mHC，读写 = 线性：独立头"), "130m", 48, 2.6, 4, ("wq", "w510", "130m-della4xh100-pls1-sep-amhc-mhcrwlin-vs-d48"), "38"),
-    (S("mHC, read/write = linear: probes only", "mHC，读写 = 线性：只加探针"), "130m", 48, 2.6, 4, ("wq", "w511", "130m-della4xh100-pls1-sep-bbfrozen-amhc-mhcrwlin-vs-d48"), "38"),
-    (S("mHC, mixing = I, read/write = linear: separate heads", "mHC，混合 = I，读写 = 线性：独立头"), "130m", 48, 2.6, 4, ("wq", "w711", "130m-della4xh100-pls1-sep-amhc-mhcid-mhcrwlin-fa4thd-vs-d48"), "38, 49"),
-    (S("mHC, mixing = I, read/write = linear: probes only", "mHC，混合 = I，读写 = 线性：只加探针"), "130m", 48, 2.6, 4, ("wq", "w712", "130m-della4xh100-pls1-sep-bbfrozen-amhc-mhcid-mhcrwlin-fa4thd-vs-d48"), "38, 49"),
-    (S("Hyper-Connections, one shared write: separate heads", "Hyper-Connections，各流共用写入：独立头"), "130m", 48, 2.6, 4, ("wq", "w713", "130m-della4xh100-pls1-sep-ahc-hcwsh-fa4thd-vs-d48"), "38, 49"),
-    (S("Hyper-Connections, one shared write: probes only", "Hyper-Connections，各流共用写入：只加探针"), "130m", 48, 2.6, 4, ("wq", "w714", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcwsh-fa4thd-vs-d48"), "38, 49"),
+    (S("mHC, read/write = linear: separate heads", "mHC，读写 = 线性：独立头"), "130m", 48, 2.6, 4, ("wq", "w510", "130m-della4xh100-pls1-sep-amhc-mhcrwlin-vs-d48"), "38, 50"),
+    (S("mHC, read/write = linear: probes only", "mHC，读写 = 线性：只加探针"), "130m", 48, 2.6, 4, ("wq", "w511", "130m-della4xh100-pls1-sep-bbfrozen-amhc-mhcrwlin-vs-d48"), "38, 50"),
+    (S("mHC, mixing = I, read/write = linear: separate heads", "mHC，混合 = I，读写 = 线性：独立头"), "130m", 48, 2.6, 4, ("wq", "w711", "130m-della4xh100-pls1-sep-amhc-mhcid-mhcrwlin-fa4thd-vs-d48"), "38, 49, 50"),
+    (S("mHC, mixing = I, read/write = linear: probes only", "mHC，混合 = I，读写 = 线性：只加探针"), "130m", 48, 2.6, 4, ("wq", "w712", "130m-della4xh100-pls1-sep-bbfrozen-amhc-mhcid-mhcrwlin-fa4thd-vs-d48"), "38, 49, 50"),
+    (S("Hyper-Connections, one shared write: separate heads", "Hyper-Connections，各流共用写入：独立头"), "130m", 48, 2.6, 4, ("wq", "w713", "130m-della4xh100-pls1-sep-ahc-hcwsh-fa4thd-vs-d48"), "38, 49, 50"),
+    (S("Hyper-Connections, one shared write: probes only", "Hyper-Connections，各流共用写入：只加探针"), "130m", 48, 2.6, 4, ("wq", "w714", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcwsh-fa4thd-vs-d48"), "38, 49, 50"),
+    # owner popup 2026-11-01: HC with the residual mixing fixed to I (does HC's learned mixing cost its ordinary model?)
+    (S("Hyper-Connections, mixing = I: separate heads", "Hyper-Connections，混合 = I：独立头"), "130m", 48, 2.6, 4, ("wq", "w810", "130m-della4xh100-pls1-sep-ahc-hcid-fa4thd-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, mixing = I: probes only", "Hyper-Connections，混合 = I：只加探针"), "130m", 48, 2.6, 4, ("wq", "w811", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48"), "38, 50"),
     # owner popups 2026-10-27: reruns of the Pre-LN probes model on both attention kernels (Figure 45); separate heads whose
     # intermediate losses stop at 50% / 80% of training (Figure 46)
     (S("Pre-LN, rerun of seed 0 on JAX-flash attention: probes only", "Pre-LN，种子 0 在 JAX flash 注意力上重跑：只加探针"), "130m", 48, 2.6, 4, ("wq", "w500", "130m-della4xh100-pls1-sep-bbfrozen-apreln-vs-d48-rerun"), "45"),
@@ -146,7 +149,7 @@ RUNS = [
     (S("Pre-LN, separate heads stopped at 80% of training", "Pre-LN，独立头损失在训练 80% 处停掉"), "130m", 48, 2.6, 4, ("wq", "w504", "130m-della4xh100-pls1-sep-off3967-apreln-vs-d48"), "46"),
     (S("Hyper-Connections, separate heads stopped at 80% of training", "Hyper-Connections，独立头损失在训练 80% 处停掉"), "130m", 48, 2.6, 4, ("wq", "w505", "130m-della4xh100-pls1-sep-off3967-ahc-vs-d48"), "46"),
     # owner popups 2026-10-23: readouts that see part of the state, and Pre-LN seed 1 (Figure 40)
-    *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40") for en, zh, jid, rid in [
+    *[(S(en, zh), "130m", 48, 2.6, 4, ("wq", jid, f"130m-della4xh100-pls1-sep{rid}"), "40, 50" if rid.endswith("apreln-vs-d48-s1") else "40") for en, zh, jid, rid in [
         ("Pre-LN, separate heads; intermediate readouts see 1/2 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/2 的坐标", "w87", "-apreln-vis0.5-vs-d48"),
         ("Pre-LN, separate heads; intermediate readouts see 1/4 of the coordinates", "Pre-LN，独立头；中间层读出只看 1/4 的坐标", "w88", "-apreln-vis0.25-vs-d48"),
         ("Pre-LN, seed 1: separate heads", "Pre-LN，种子 1：独立头", "w89", "-apreln-vs-d48-s1"),

@@ -919,6 +919,8 @@ VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
          ("ahc-hcrwsig-vs-d48", {"en": "HC, read/write = sigmoid", "zh": "HC，读写 = sigmoid"}, BLUE7),
          # owner popup 2026-10-30 (wq w713/w714): HC whose write is one weight shared by every stream
          ("ahc-hcwsh-fa4thd-vs-d48", {"en": "HC, one shared write", "zh": "HC，各流共用写入"}, BLUE7),
+         # owner popup 2026-11-01 (wq w810/w811): HC with the residual mixing fixed to I; does HC's learned mixing cost its ordinary model?
+         ("ahc-hcid-fa4thd-vs-d48", {"en": "HC, mixing = I", "zh": "HC，混合 = I"}, BLUE7),
          ("aattnres-vs-d48-g4", {"en": "AttnRes (Full), seed 0", "zh": "AttnRes (Full)，种子 0"}, GREY),
          ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
          ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
@@ -1188,6 +1190,51 @@ figs["fig-workspace"] = dict(title={"en": "Separate-heads cost and the use of th
                                           label={"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w49) + " still training" if w49 else ""),
                                                  "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w49) + " 仍在训练" if w49 else "")}, marks=m49)])
 print("Fig 49 workspace", {t: (_ha_early(t), sep_cost(t)) for t, *_ in HA49})
+# Figure 50 (owner popup 2026-11-01, after the causal test of Figure 49): the two terms of the separate-heads cost, design
+# by design. Light dot: the layer-48 final training loss of the ordinary model with probes (its backbone trains on the last
+# layer's loss only); dark dot: the separate-heads model's; the grey segment between them is the separate-heads cost
+# (sep_cost). Final = mean of the last 50 logged steps (d48g4.npz "final"; the separate-heads run of mHC with identity
+# mixing and linear read/write lost its step-4958 train row, so its mean is over steps 4908-4957). "new code": the reruns
+# on the newer attention and cross-entropy code (wq w333/w334, w387/w388); the causal-test pairs (wq w711-w714) ran on it too.
+SP50 = [[("apreln-vs-d48-g4", ("Pre-LN", "Pre-LN")), ("apreln-vs-d48-s1", ("Pre-LN, seed 1", "Pre-LN，种子 1")),
+         ("apreln-fa4thd-vs-d48", ("Pre-LN, new code", "Pre-LN，新代码")), ("ahc-hcs1-vs-d48", ("HC, 1 stream", "HC，1 条流"))],
+        [("ahc-vs-d48-g4", ("HC", "HC")), ("ahc-vs-d48-s1", ("HC, seed 1", "HC，种子 1")), ("ahc-fa4thd-vs-d48", ("HC, new code", "HC，新代码")),
+         ("ahc-hcrwsig-vs-d48", ("HC, sigmoid read/write", "HC，sigmoid 读写")), ("ahc-hcs8-vs-d48", ("HC, 8 streams", "HC，8 条流")),
+         ("ahc-hcs2-vs-d48", ("HC, 2 streams", "HC，2 条流")), ("ahc-rstatic-vs-d48", ("HC, static routing", "HC，静态路由")),
+         ("ahc-hcwsh-fa4thd-vs-d48", ("HC, one shared write", "HC，各流共用写入")), ("ahc-hcid-fa4thd-vs-d48", ("HC, mixing = I", "HC，混合 = I"))],
+        [("amhc-vs-d48-g4", ("mHC", "mHC")), ("amhc-mhcid-vs-d48", ("mHC, mixing = I", "mHC，混合 = I")),
+         ("amhc-mhcrwlin-vs-d48", ("mHC, linear read/write", "mHC，线性读写")),
+         ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", ("mHC, mixing = I, linear read/write", "mHC，混合 = I，线性读写"))]]
+SEG50, NAME50, LABX50 = "#BDC1C6", "var(--ink-2)", 2.888   # GM2 grey 400 segments; the names end just left of the 2.90 grid line
+_y, _rows50, _seg50, _names50, _p50, _s50, w50 = 0.0, [], [], [], [], [], []
+for _g in SP50:
+    for _t, (_en, _zh) in _g:
+        _a, _b = G4.get(f"-sep-{_t}/final"), G4.get(f"-sep-bbfrozen-{_t}/final")
+        _pv = None if _b is None else round(float(_b[47]), 4)
+        _sv = None if _a is None else round(float(_a[47]), 4)
+        _names50.append(([LABX50, -_y], {"en": _en, "zh": _zh}))
+        if _pv is not None and _sv is not None:
+            _seg50.append(dict(type="line", color=SEG50, width=1.8, alpha=1, pts=[[_pv, -_y], [_sv, -_y]]))
+        if _pv is not None:
+            _p50.append([_pv, -_y])
+        if _sv is not None:
+            _s50.append([_sv, -_y])
+        if _pv is None or _sv is None:
+            w50.append({"en": _en, "zh": _zh})
+        _rows50.append(dict(y=-_y, name={"en": _en, "zh": _zh}, pts=[q for q in ([_pv, BLUE3], [_sv, BLUE7]) if q[0] is not None]))
+        _y += 1
+    _y += 0.7
+_n50 = _y - 0.7
+figs["fig-sep-probes"] = dict(title={"en": "Last-layer loss of the ordinary and the separate-heads model, 48 layers", "zh": "普通模型与独立头模型的最后一层损失，48 层"},
+                              legend=[[{"en": "Ordinary model with probes", "zh": "普通模型加探针"}, BLUE3, "dot"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "dot"]],
+                              quantity={"en": "Last-layer final training loss (nats)", "zh": "最后一层最终训练损失（nats）"}, height=round(18 * (_n50 + 2.3)), cols=1,
+                              panels=[dict(xlim=[2.74, 3.115], ylim=[-(_n50 - 1) - 0.6, 2.4], xticks=[[v, f"{v:.2f}"] for v in (2.90, 2.95, 3.00, 3.05, 3.10)], yticks=[],
+                                           label={"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w50) + " still training" if w50 else ""),
+                                                  "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w50) + " 仍在训练" if w50 else "")},
+                                           rows=_rows50,
+                                           marks=_seg50 + [dict(type="text", color=NAME50, anchor="end", pts=[q for q, _ in _names50], labels=[l for _, l in _names50]),
+                                                           dict(type="dots", color=BLUE3, pts=_p50), dict(type="dots", color=BLUE7, pts=_s50)])])
+print("Fig 50 sep vs probes", [(r["name"]["en"], [q[0] for q in r["pts"]]) for r in _rows50])
 # Figure 22 (Lean L5, owner popups 2026-10-21 and 2026-10-31): how much each layer's write changes each probe's prediction,
 # relative to a random direction (1 = like a random direction). Fisher metric of the kept 130m probes at their input, on the
 # tangential part of the write (the part their RMSNorm passes on). write_dirs.json from
