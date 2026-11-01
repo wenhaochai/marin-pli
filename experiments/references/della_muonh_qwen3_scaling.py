@@ -70,7 +70,7 @@ from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
-from experiments.references.hnet_qwen3 import HNetQwen3Config
+from experiments.references.hnet_qwen3 import HNetQwen3Config, HNetRoute
 from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
 from experiments.references.selfkd_qwen3 import SelfKDMuonHConfig, SelfKDQwen3Config
 from experiments.references.cvd_flood_qwen3 import CvdFloodQwen3Config
@@ -577,10 +577,14 @@ if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO 
 # VARIANT=hnet (owner 2026-10-28, after Cartesia's "From Tokens to Bytes I/II"; popup "再加一个 H-Net 实验"): a one-stage H-Net on
 # the bytes (experiments/references/hnet_qwen3.py): HNET_ENC encoder and HNET_DEC decoder layers at every byte, the size's layers
 # as the main network on learned chunks of HNET_N target bytes. Needs VOCAB_K=256 and the segmented attention (fa4 or
-# jax_flash: the main network's chunk mask has no THD metadata). Tag -hnet<enc>x<dec>n<N>.
+# jax_flash: the main network's chunk mask has no THD metadata). Tag -hnet<enc>x<dec>n<N>. HNET_ROUTE=causal (2026-11-01, popup
+# "排队"; Cartesia's no-lookahead remark): byte t's boundary reads only the encoder states before t (HNetRoute); tag -rcausal.
 HNET_ENC = int(os.environ.get("HNET_ENC", "2"))
 HNET_DEC = int(os.environ.get("HNET_DEC", "2"))
 HNET_N = float(os.environ.get("HNET_N", "4.74"))
+HNET_ROUTE = HNetRoute(os.environ.get("HNET_ROUTE", "start"))
+if HNET_ROUTE != HNetRoute.START and VARIANT != "hnet":
+    raise ValueError("HNET_ROUTE needs VARIANT=hnet")
 OPT = os.environ.get("OPT", "muonh")
 MUON_WD = float(os.environ.get("MUON_WD", "0.1"))
 # MUON_LR_MULT (2026-10-30, stage 2 of the test of Baron et al. 2026, arXiv 2610.37842, whose eta is a multiplier on every
@@ -700,7 +704,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "inoise":
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-r{INOISE_RAND_MAX // 1000}k" if INOISE_RAND_MAX else "") + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "hnet":
-        variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}"
+        variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}" + ("-rcausal" if HNET_ROUTE == HNetRoute.CAUSAL else "")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
@@ -859,7 +863,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "hnet":
         if VOCAB_K != 256 or ATTN_BACKEND == "fa4thd" or TIE:
             raise ValueError("VARIANT=hnet: VOCAB_K=256, ATTN_BACKEND fa4 or jax_flash, untied tables")
-        model_cls, model_extra = HNetQwen3Config, dict(enc_layers=HNET_ENC, dec_layers=HNET_DEC, chunk_ratio=HNET_N)
+        model_cls, model_extra = HNetQwen3Config, dict(enc_layers=HNET_ENC, dec_layers=HNET_DEC, chunk_ratio=HNET_N, route=HNET_ROUTE)
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)

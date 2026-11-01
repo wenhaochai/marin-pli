@@ -1,0 +1,3 @@
+# owner 2026-11-01 (popup "排队"): GPU smoke of the no-lookahead H-Net (VARIANT=hnet HNET_ROUTE=causal: byte t's boundary reads only the encoder states of bytes before t, p_t = (1 - cos(q_{t-2}, k_{t-1})) / 2; Cartesia "From Tokens to Bytes I/II") before the pair in hnet-causal.txt: the hnet-smoke setup (bytes, window 19456, PDP=8, segmented FA4) with the causal route. wq --prio 10 (test).
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=hnet+HNET_ROUTE=causal+VOCAB_K=256+SEQ_LEN=19456+PDP=8+ATTN_BACKEND=fa4+DATA_EPOCHS=8
+wait
