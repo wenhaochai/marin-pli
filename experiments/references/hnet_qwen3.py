@@ -9,6 +9,14 @@ full-attention Qwen3 layers within each document. The pieces follow hnet/models/
 1. Byte embedding, then the encoder (``enc_layers`` layers and a final RMS norm) at every byte position.
 2. Routing: q = W_q h, k = W_k h (both start as the identity); the boundary probability of byte t is
    p_t = (1 - cos(q_{t-1}, k_t)) / 2, forced to 1 at the first byte of every document; byte t opens a chunk when p_t > 0.5.
+   ``route="causal"`` (2026-11-01) removes the lookahead: Cartesia ("From Tokens to Bytes I/II") note that the original
+   H-Net "places each chunk boundary only after seeing the start of the next chunk", since p_t reads h_t, the state of the
+   byte that opens the chunk, and say this hurts next-byte prediction and deeper hierarchies. Their mechanism is
+   unpublished; ours is the same rule one byte earlier, p_t = (1 - cos(q_{t-2}, k_{t-1})) / 2, so the decision on byte t
+   reads only the states of bytes before t, with the same projections and identity start (the step-0 boundary rate stays
+   near the default's). p is 1 at a document's first byte, as before, and 0 at its second byte, which has no earlier pair
+   inside the document (it joins the first byte's chunk). The rest (chunk vector = the opening byte's encoder state, EMA,
+   STE, residual, ratio loss) is unchanged.
 3. Chunking: the opening bytes' encoder states, in order, fill ``chunk_slots`` slots (JAX needs a static length; a row
    with more boundaries than slots keeps its first ``chunk_slots``, and the later bytes join the last chunk).
 4. The main network (``num_layers`` layers and a final norm) on the chunks, causal within each document.
@@ -25,6 +33,7 @@ the paper). Evaluation (no key or no train step) returns the byte states alone, 
 import dataclasses
 import math
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Optional
 
 import equinox as eqx
@@ -42,6 +51,13 @@ from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.trainer import current_train_step
 
 
+class HNetRoute(StrEnum):
+    """Which encoder states decide whether byte t opens a chunk."""
+
+    START = "start"     # (h_{t-1}, h_t): the original H-Net, which reads the opening byte itself
+    CAUSAL = "causal"   # (h_{t-2}, h_{t-1}): bytes before t only
+
+
 @LmConfig.register_subclass("qwen3_hnet")
 @dataclass(frozen=True)
 class HNetQwen3Config(Qwen3Config):
@@ -53,9 +69,11 @@ class HNetQwen3Config(Qwen3Config):
     chunk_slots: int = 0           # main-network positions per row; 0: max_seq_len / chunk_ratio x slot_margin, rounded up to 128
     slot_margin: float = 1.25
     ratio_loss_weight: float = 0.03
+    route: HNetRoute = HNetRoute.START
 
     def __post_init__(self):
         super().__post_init__()
+        HNetRoute(self.route)   # fails fast on an unknown route
         if self.enc_layers < 1 or self.dec_layers < 1:
             raise ValueError(f"enc_layers={self.enc_layers}, dec_layers={self.dec_layers}: at least one each")
         if not self.chunk_ratio > 1:
@@ -134,12 +152,18 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
         q = q / jnp.maximum(jnp.linalg.norm(q, axis=-1, keepdims=True), 1e-12)
         k = k / jnp.maximum(jnp.linalg.norm(k, axis=-1, keepdims=True), 1e-12)
         cos = jnp.sum(q[..., :-1, :] * k[..., 1:, :], axis=-1)
-        p = jnp.clip((1.0 - cos) / 2.0, 0.0, 1.0)
-        p = jnp.concatenate([jnp.ones_like(p[..., :1]), p], axis=-1)   # (batch..., L)
+        p = jnp.clip((1.0 - cos) / 2.0, 0.0, 1.0)   # p[i]: the pair (i, i + 1)
+        if cfg.route == HNetRoute.CAUSAL:   # byte t reads the pair (t - 2, t - 1); byte 1 has none
+            p = jnp.concatenate([jnp.ones_like(p[..., :1]), jnp.zeros_like(p[..., :1]), p[..., :-1]], axis=-1)
+        else:
+            p = jnp.concatenate([jnp.ones_like(p[..., :1]), p], axis=-1)   # (batch..., L)
         seg = None
         if isinstance(attn_mask, AttentionMask) and attn_mask.segment_ids is not None:
             seg = attn_mask.segment_ids[0].broadcast_to((*batch_axes, Pos)).rearrange((*batch_axes, Pos)).array
             start = jnp.concatenate([jnp.ones_like(seg[..., :1], dtype=bool), seg[..., 1:] != seg[..., :-1]], axis=-1)
+            if cfg.route == HNetRoute.CAUSAL:
+                second = jnp.concatenate([jnp.zeros_like(start[..., :1]), start[..., :-1]], axis=-1) & ~start
+                p = jnp.where(second, 0.0, p)
             p = jnp.where(start, 1.0, p)
         b_raw = p > 0.5
         b = b_raw & (jnp.cumsum(b_raw, axis=-1) <= M)   # chunks past the slots join the last one
