@@ -1,4 +1,4 @@
-"""Separate-heads cost so far for the two causal-test pairs (wq w711-w714, still training), against finished references (HC: the fa4thd run on the same attention stack).
+"""Separate-heads cost so far for the two causal-test pairs (wq w711-w714, still training), against finished references (HC and Pre-LN: the fa4thd runs on the same attention stack).
 
 y: layer-48 train cross-entropy (W&B train/pls/L47) of the separate-heads run minus its probes run (PLS_DETACH_BB=1),
    each smoothed with a 250-step running mean, at the steps both runs have logged. Live runs: W&B reself/marin-della
@@ -17,8 +17,8 @@ RED, GREEN = tone("red", 600), tone("green", 600)
 P = "reself/marin-della/muonh-qwen3-130m-della4xh100-pls1"
 LIVE = [("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", "mHC, identity mixing + linear read/write", RED, "line"),
         ("ahc-hcwsh-fa4thd-vs-d48", "HC, one shared write", BLUE, "line")]
-REF = [("ahc-fa4thd-vs-d48", "HC", BLUE, "dash"), ("amhc-mhcid-vs-d48", "mHC, identity mixing", RED, "dash"),
-       ("ahc-hcs1-vs-d48", "HC, 1 stream", GREY, "dash")]
+REF = [("ahc-fa4thd-vs-d48", "HC", BLUE, "dash"), ("amhc-mhcrwlin-vs-d48", "mHC, linear read/write", RED, "dash"),
+       ("apreln-fa4thd-vs-d48", "Pre-LN", GREY, "dash")]   # 2026-10-31 22:4x: the two observed matches and Pre-LN, the hcwsh prediction
 W = 250
 api = wandb.Api(timeout=300)
 
@@ -58,6 +58,6 @@ for tag, lab, col, kind in LIVE:
     ax.plot(x, y, color=col, lw=1.8)
     print(f"{lab}: last common step {x[-1]}, smoothed gap {y[-1]:+.3f}", flush=True)
 ax.set_xlim(0, 5000)
-nice_y(ax, -0.01, 0.14, fmt="{:.2f}")
+nice_y(ax, -0.03, 0.15, fmt="{:.2f}")
 room(ax)
 save(fig, HERE / "causal_gap_live")

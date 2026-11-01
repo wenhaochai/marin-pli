@@ -31,7 +31,11 @@ errors = 0
 # 15266160 saved checkpoint step-4595 at its training limit and stopped before W&B took that step's row; 15266161 loaded
 # step-4595 and went on from 4596 (2026-10-13). The final value (last 50 steps) does not touch it.
 # 4631: the same for the seed-1 probes run (15520126 saved step-4631 at its limit; 15538869 loaded it, 2026-10-17).
-LOGGING_GAPS = {"-sep-aattnres-vs-d48-g4": {4595}, "-sep-bbfrozen-aattnres-vs-d48-s1-g4": {4631}}
+# 4958, the last step: wq w711's third run (host 16465683) saved step-4958 at its checkpoint deadline (00:16:23, rc 124
+# at 00:18:54) before W&B took that step's train row; the fourth run (host 16541491) loaded step-4958, had no step left
+# and logged only the final eval at step 4958 (2026-11-01). Its final value is the mean over steps 4908-4957.
+LOGGING_GAPS = {"-sep-aattnres-vs-d48-g4": {4595}, "-sep-bbfrozen-aattnres-vs-d48-s1-g4": {4631},
+                "-sep-amhc-mhcid-mhcrwlin-fa4thd-vs-d48": {4958}}
 
 def history(r, last, keys):
     by = {}
@@ -82,9 +86,10 @@ for arch in archs:
             print(tag, r.state, "no rows"); continue
         st = np.array(sorted(by)); ce = np.array([[by[s][k] for k in keys] for s in st])
         allowed = LOGGING_GAPS.get(tag, set())
+        end = max(set(range(n)) - allowed)   # the last step that must have a train row (a listed lost last row moves it back)
         missing = set(range(int(st[0]), int(st[-1]) + 1)) - set(st.tolist())
         gaps = len(missing - allowed)
-        complete = r.state == "finished" and st[-1] == n - 1 and last == n - 1 and gaps == 0
+        complete = r.state == "finished" and st[-1] == end and last == n - 1 and gaps == 0
         fin = ce[-50:].mean(0)
         ev = np.array([r.summary.get(f"eval/L{k}/loss", np.nan) for k in range(nl)], float)
         print(f"{tag} {r.state} step {st[-1]} of {n - 1} unique {len(st)} gaps {gaps} (allowed {sorted(missing & allowed)}) nonfinite {int((~np.isfinite(ce)).sum())} complete {complete}\n"

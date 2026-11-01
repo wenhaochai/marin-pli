@@ -1161,11 +1161,11 @@ def _ha_early(tag):
     v = [x for k, x in d.items() if int(k) <= 16]
     return round(sum(v) / len(v), 4)
 HA49 = [("ahc-vs-d48-g4", BLUE7, ("HC", "HC"), (7, 4, "start")), ("ahc-vs-d48-s1", BLUE7, ("HC, seed 1", "HC，种子 1"), (7, 12, "start")),
-        ("ahc-hcrwsig-vs-d48", BLUE7, ("HC, sigmoid read/write", "HC，sigmoid 读写"), (-7, 4, "end")), ("ahc-hcs8-vs-d48", BLUE7, ("HC, 8 streams", "HC，8 条流"), (0, -9, "middle")),
-        ("ahc-hcs2-vs-d48", BLUE7, ("HC, 2 streams", "HC，2 条流"), (-7, 4, "end")), ("ahc-hcwsh-fa4thd-vs-d48", BLUE7, ("HC, one shared write", "HC，各流共用写入"), (7, 4, "start")),
+        ("ahc-hcrwsig-vs-d48", BLUE7, ("HC, sigmoid read/write", "HC，sigmoid 读写"), (-7, -4, "end")), ("ahc-hcs8-vs-d48", BLUE7, ("HC, 8 streams", "HC，8 条流"), (0, -9, "middle")),
+        ("ahc-hcs2-vs-d48", BLUE7, ("HC, 2 streams", "HC，2 条流"), (-7, 4, "end")), ("ahc-hcwsh-fa4thd-vs-d48", BLUE7, ("HC, one shared write", "HC，各流共用写入"), (-7, 14, "end")),
         ("amhc-vs-d48-g4", RED, ("mHC", "mHC"), (-7, 4, "end")), ("amhc-mhcid-vs-d48", RED, ("mHC, mixing = I", "mHC，混合 = I"), (7, -4, "start")),
-        ("amhc-mhcrwlin-vs-d48", RED, ("mHC, linear read/write", "mHC，线性读写"), (7, 4, "start")),
-        ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", RED, ("mHC, mixing = I, linear read/write", "mHC，混合 = I，线性读写"), (7, 4, "start"))]
+        ("amhc-mhcrwlin-vs-d48", RED, ("mHC, linear read/write", "mHC，线性读写"), (7, 13, "start")),
+        ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", RED, ("mHC, mixing = I, linear read/write", "mHC，混合 = I，线性读写"), (7, -4, "start"))]
 ONE49 = [("ahc-hcs1-vs-d48", ("HC, 1 stream", "HC，1 条流")), ("apreln-vs-d48-g4", ("Pre-LN", "Pre-LN"))]
 m49, w49 = [], []
 for col in (BLUE7, RED):

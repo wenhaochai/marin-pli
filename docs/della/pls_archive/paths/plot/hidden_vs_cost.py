@@ -5,6 +5,10 @@ x: the layer-48 cross-entropy rise (nats, Paloma c4_en, 4 x 1024 tokens) when ev
    checkpoint; ../ha-sep-<tag>.json). One-stream designs have no stream differences: x = 0.
 y: separate-heads cost, layer-48 final training loss of the separate-heads model minus the probes model (mean of the last
    50 logged steps; docs/della/pls.md).
+2026-11-01: the first causal-test design (wq w711/w712, mHC with identity mixing + linear read/write) joins, final cost
+0.085 (tmp/pls_audit2/cmp48.py; its separate-heads run lost the step-4958 train row, so its final value is the mean over
+steps 4908-4957). HC with one shared write (wq w713/w714) joins the same day, final cost 0.042 (separate heads 3.021,
+probes 2.979; both runs complete, no logging gap).
 Output: hidden_vs_cost.{pdf,png}.
 """
 import json
@@ -20,12 +24,15 @@ PTS = [  # tag, label, cost, family colour
     ("ahc-hcs2-vs-d48", "HC, 2 streams", 0.074, BLUE),
     ("amhc-vs-d48-g4", "mHC", 0.102, RED), ("amhc-mhcid-vs-d48", "mHC, identity mixing", 0.100, RED),
     ("amhc-mhcrwlin-vs-d48", "mHC, linear read/write", 0.080, RED),
-    (None, "HC, 1 stream", 0.125, GREY), (None, "Pre-LN", 0.089, GREY)]
+    (None, "HC, 1 stream", 0.125, GREY), (None, "Pre-LN", 0.089, GREY),
+    ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", "mHC, identity mixing\n+ linear read/write", 0.085, RED)]
+NEW = [("ahc-hcwsh-fa4thd-vs-d48", "HC, one shared write", 0.042, BLUE)]   # wq w713/w714, done 2026-11-01
 
 
-OFF = {"HC": (6, 0, "left"), "HC, 8 streams": (0, 9, "center"), "HC, sigmoid read/write": (-6, 0, "right"),
-       "HC seed 1": (6, -2, "left"), "HC, 2 streams": (-6, -2, "right"), "mHC, linear read/write": (6, 3, "left"),
-       "mHC": (-6, 0, "right"), "mHC, identity mixing": (6, 4, "left"), "HC, 1 stream": (6, 0, "left"), "Pre-LN": (6, 0, "left")}
+OFF = {"HC": (6, 0, "left"), "HC, 8 streams": (0, 9, "center"), "HC, sigmoid read/write": (-6, 4, "right"), "HC, one shared write": (-6, -8, "right"),
+       "HC seed 1": (6, -2, "left"), "HC, 2 streams": (-6, -2, "right"), "mHC, linear read/write": (6, -6, "left"),
+       "mHC": (-6, 0, "right"), "mHC, identity mixing": (6, 4, "left"), "HC, 1 stream": (6, 0, "left"), "Pre-LN": (6, 0, "left"),
+       "mHC, identity mixing\n+ linear read/write": (6, 6, "left")}
 
 
 def early(tag):
@@ -41,7 +48,7 @@ fig, axes = canvas(1, 1, width=WIDTH_POST, panel_height=2.6, title=None,
                    quantity="Separate-heads cost (nats)", xlabel="Last-layer loss rise when the stream differences are deleted (nats)",
                    title_pt=9.2, tick_pt=TEXT_PT)
 ax = axes[0][0] if hasattr(axes[0], "__len__") else axes[0]
-for tag, lab, c, col in PTS:
+for tag, lab, c, col in PTS + NEW:
     x = early(tag)
     dots(ax, [x], [c], col, size=26)
     dx, dy, ha = OFF.get(lab, (5, 3, "left"))
