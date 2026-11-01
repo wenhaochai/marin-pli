@@ -106,7 +106,8 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   "学习率 schedule". Public code: marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c -> dc38bffae -> f6566174b (each scan:
   secrets 0, cluster user and group 0); record code links the last one (Figures 1-7) and c7e79bd2a (8-10). Record: 54
   rows, the momentum rows with their W&B runs (no "none" url left); main 154.3 H100-h (20 jobs), other 0.6.
-  Site: pretrain-practice 95bc764 (2026-11-01; audit CLEAN_GIVEN_EVIDENCE on the full text); no main release asked yet.
+  Site: pretrain-practice 95bc764 (2026-11-01; audit CLEAN_GIVEN_EVIDENCE on the full text); released to main as
+  8c2b4eb (controller, owner approval 2026-11-01 ~10:35; record ok 95bc764; trec files on main equal 95bc764).
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
