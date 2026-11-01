@@ -13,7 +13,7 @@ more steps (+0.081) do not move the cost. Q5's first head (mean of pieces) cappe
 | Q | Question | Runs (300m unless noted) | Plan / job |
 |---|---|---|---|
 | Q1 | Does a smaller vocabulary make repeated data hurt less? | 128K, 64K, 32K, 16K, 8K x (full, 2.4, 8 passes), done | sampled-softmax project |
-| Q2 | Other sizes? | 130m: 64K-8K pairs + 128K 8 passes; 520m: 128K 8 passes, 8K pair (done 2026-10-10, cost +0.0390 vs +0.0951) | logs/plans/vo130.txt, vo520-v8k-seg{1,2}.txt, 15162227 |
+| Q2 | Other sizes? | 130m: 64K-8K pairs + 128K 8 passes; 520m: 128K 8 passes, 8K pair (done 2026-10-10, cost +0.0390 vs +0.0951); 520m 32K pair queued 2026-11-01 in the queue emergency (v32k-520m, w809) | logs/plans/vo130.txt, vo520-v8k-seg{1,2}.txt, 15162227 |
 | Q3 | Is the trend real? | byte check (done: 8K/128K bytes 1.0004); seed 1 for 128K (-s1-rerun, -rep8-s1) and 8K; seed 1 of the 16K, 32K and 64K pairs on the current code (w795-w797, queued 2026-11-01 in the queue emergency) | why-seed128k, why-seed8k |
 | Q4 | Input rows of rare tokens? | grouped analysis by input-token frequency; 128K with input rows = mean of 8K pieces (-cvin8k) | why-cvin |
 | Q5 | Output rows of rare tokens? | grouped by target frequency (the answer); -cvout8k (mean) and -cvout8k-sum (gate failed, cancelled): composed heads cannot fit the data | why-cvout, why-cvoutsum |
