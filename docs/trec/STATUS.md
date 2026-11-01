@@ -101,7 +101,7 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   sentence: neither the distance the weights move nor the fixed-norm shrink sets the power; a momentum of 0.98, which
   should make the shrink about three times as strong, leaves it between 1.3 and 1.4). The verification workflow also
   fixed two Chinese phrases of the fd5fd3c text ("完全忘掉" -> "忘掉", "学习率" -> "学习率 schedule"). Public code:
-  marin-pli trec 939368d7b -> cca92237b (scan: secrets 0, cluster user and group 0) -> the commit with these fixes. Record: 54 rows, the momentum rows now with their W&B runs (no "none" url left); main 154.3 H100-h
+  marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c (each scan: secrets 0, cluster user and group 0); record code links 6ae040d0c (Figures 1-7) and c7e79bd2a (8-10). Record: 54 rows, the momentum rows now with their W&B runs (no "none" url left); main 154.3 H100-h
   (20 jobs), other 0.6.
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
