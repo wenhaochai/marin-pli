@@ -92,7 +92,9 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   panel 5 a placeholder), so by the template rule the page shows no standfirst and no Takeaways text. Removed both;
   the meta description stays. The last text (standfirst = Takeaways) is in pretrain-practice fd5fd3c; write it again,
   extended with the momentum result, when the project is finished. Queued record rows carry url "none" until their
-  job starts (the link check found 404s for W&B runs that do not exist yet).
+  job starts (the link check found 404s for W&B runs that do not exist yet). Released to main as 28e23f1 (controller,
+  merge of pretrain-practice 507cd8e); exps/trec.html and trec-record.js on main equal cd39362 (checked 2026-10-31).
+  The owner kept w727-w729 at the default priority (2026-10-31: no --prio 10 resubmit).
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
