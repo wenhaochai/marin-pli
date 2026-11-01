@@ -313,6 +313,11 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
   Adam state (~20 GiB per device at 300m), so the step keeps two copies. The 300m smoke on 4 GPUs ran step 0, then
   failed at step 1 on all 4 devices: a 20.99 GiB temp did not fit (the October 4-GPU run used 32.8 GiB in all, largest
   temp 13.3 GiB). OV jobs set LEVANTER_ASYNC_STEP=0, which changes speed only, not the computation.
+  With that switch the smoke passed, but both runs then died of fragmentation, as 1.2B did in October: each step
+  needs one contiguous 30.52 GiB temp beside 19.6 GiB in use, and the largest free block was 30.56 GiB until a small
+  block landed in it (run a at step ~1,300, the retries at step 1). The temp grew with the current 300m code paths: a
+  300m run without the tables (w756, 512 tokens) also takes a 29.0 GiB temp, against 13.3 GiB for October OV. So 300m
+  OV now also takes the 1.2B allocator, cuda_async with a pool preallocated at 0.8 (w755 plan, RUN_TAG -r1101).
 * Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
   (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
   96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
