@@ -5,7 +5,7 @@ Rows: the training run each final checkpoint comes from (W&B reself/marin-della)
 state, hours and time segments come from that job's wq record (/scratch/gpfs/GROUP/USER/wq/jobs/<n>/state.json);
 when one job scores several checkpoints, its hours are split by the scoring seconds each checkpoint's chunks recorded.
 Cost: H100-hours = GPUs x the wall time of every run of every wq job of the page; main = the jobs of the rows that have
-run (queued rows count once they start), other = the rest (smoke tests). A job with no record fails the build rather than being guessed.
+run (queued rows count once they start), other = the jobs in OTHER that have no row (the smokes and the three branch jobs that failed their gate; w441 never ran). A job with no record fails the build rather than being guessed.
 
     python experiments/trec/build_record.py <site checkout>     # vis node
 """
