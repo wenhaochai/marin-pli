@@ -308,6 +308,11 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
   0.8 for ov (30.2 GiB temp; 63.3 GiB pool), 0.75 for ovss (25.1 GiB temp; 59.4 GiB pool). The cuda_async process
   can abort at exit (rc 134 after the step succeeded); the run itself is unaffected. Runs: ovss 14824631 -> 14824632
   (started 10-01 16:43); ov's queued second segment 14812270 resumes from step 678 and picks the allocator up at start.
+* **300m OV runs out of memory with the async step (2026-11-01, wq w755).** LEVANTER_ASYNC_STEP=1, a default since
+  2026-10-26, stops the train step from donating its input state. For OV that state holds the n-gram tables and their
+  Adam state (~20 GiB per device at 300m), so the step keeps two copies. The 300m smoke on 4 GPUs ran step 0, then
+  failed at step 1 on all 4 devices: a 20.99 GiB temp did not fit (the October 4-GPU run used 32.8 GiB in all, largest
+  temp 13.3 GiB). OV jobs set LEVANTER_ASYNC_STEP=0, which changes speed only, not the computation.
 * Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
   (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
   96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
