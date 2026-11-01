@@ -103,8 +103,8 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   momentum result as an open question (two verification rounds, see Momentum result). Standfirst and Takeaways stay
   off while the A check is undecided (the text written at 03:05 EST was taken back after round 2); the meta description is
   the released one. Two Chinese phrases of the fd5fd3c text, for the next standfirst: "完全忘掉" -> "忘掉", "学习率" ->
-  "学习率 schedule". Public code: marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c -> dc38bffae (each scan:
-  secrets 0, cluster user and group 0); record code links that commit (Figures 1-7) and c7e79bd2a (8-10). Record: 54
+  "学习率 schedule". Public code: marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c -> dc38bffae -> f6566174b (each scan:
+  secrets 0, cluster user and group 0); record code links the last one (Figures 1-7) and c7e79bd2a (8-10). Record: 54
   rows, the momentum rows with their W&B runs (no "none" url left); main 154.3 H100-h (20 jobs), other 0.6.
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)

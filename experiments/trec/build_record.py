@@ -22,7 +22,7 @@ import numpy as np
 WQ = "/scratch/gpfs/GROUP/USER/wq/jobs"
 OUT = "/scratch/gpfs/GROUP/USER/project/trec/out"
 NY = zoneinfo.ZoneInfo("America/New_York")
-CODE = "https://github.com/wenhaochai/marin-pli/tree/dc38bffae41d7b5517d40e392a172d215f074d83"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-11-01 (Figures 1-10 builders, scorer, analysis tools, momentum test after two verification rounds)
+CODE = "https://github.com/wenhaochai/marin-pli/tree/f6566174bb4c522bbbeb61e6cdf509cab3ac6a26"   # the public commit (wenhaochai/marin-pli, branch trec), scrubbed and scanned 2026-11-01 (Figures 1-10 builders, scorer, analysis tools, momentum test after three verification rounds)
 RSQRT_CODE = "https://github.com/wenhaochai/marin-pli/tree/c7e79bd2a4f18055e02cbc6a72874f40c738d03c"   # branch trec-rsqrt (training of the Figure 8-10 runs, momentum arms included), scrubbed and scanned 2026-10-31
 ROWS = [
     dict(model="130m-d12", run="muonh-qwen3-130m-della4xh100-d12", setup={"en": "WSD to zero, lr 0.02", "zh": "WSD 降到零，lr 0.02"},
