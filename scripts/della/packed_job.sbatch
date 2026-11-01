@@ -78,7 +78,19 @@ retry_once() {   # a par or lane task: one more attempt after a failure that is 
 while read -r mode task run kind gpus limit script vars; do
   { [ -z "$mode" ] || [ "${mode:0:1}" = "#" ]; } && continue
   [ "$mode" = wait ] && { waitall; continue; }
-  args=(); for v in $vars; do args+=("${v//+/ }"); done
+  # GPU ids in a plan are indices into this job's own GPUs (controller 2026-11-01): a 4-GPU wq guest that a host gives
+  # GPUs 4-7 gets CUDA_VISIBLE_DEVICES=4,5,6,7 (physical ids; ConstrainDevices=no), and a plan's CUDA_VISIBLE_DEVICES=0,1,2,3
+  # must map onto those, not onto the other guest's GPUs 0-3. A whole node maps 0..7 onto itself; no job list, no mapping.
+  IFS=, read -r -a JOBDEV <<<"${CUDA_VISIBLE_DEVICES:-}"
+  args=(); for v in $vars; do v=${v//+/ }
+    if [[ $v == CUDA_VISIBLE_DEVICES=* && ${#JOBDEV[@]} -gt 0 ]]; then
+      m=(); IFS=, read -r -a ids <<<"${v#*=}"
+      for i in "${ids[@]}"; do
+        [[ $i =~ ^[0-9]+$ && $i -lt ${#JOBDEV[@]} ]] || { echo "task $task: plan GPU id '$i' is not an index into this job's GPUs (${JOBDEV[*]})"; exit 2; }
+        m+=("${JOBDEV[$i]}"); done
+      v="CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${m[*]}")"
+    fi
+    args+=("$v"); done
   echo "TASK $task ($mode, $run, $kind, $gpus GPUs, limit $limit) START $(date +%H:%M:%S): $script [${args[*]}]"
   log=logs/slurm/${PACKED_NAME:-${SLURM_JOB_NAME:-packed}}_${FETCHED_JOB_ID:-${SLURM_JOB_ID:-nojob}}-$task.log   # a fetched job logs under its own name and id
   if [ "$run" != "-" ]; then inner=(scripts/della/run_checked.sh "$run" "$script" PAIR_LOG_TAG="-$task" "${args[@]}")
