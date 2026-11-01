@@ -71,6 +71,9 @@
 #                                give mHC HC's stream-difference space; prediction: cost near HC's 0.048, from 0.08-0.10)
 #   arch3-hcwsh-{sep,probes}     HC whose write is one weight shared by every stream (HC_WRITE=shared; same popup: no
 #                                sublayer writes into the stream differences; prediction: cost rises toward Pre-LN's 0.089)
+#   arch3-hcid-{sep,probes}      HC with the residual mixing fixed to the identity (HC_RES=identity; owner popup 2026-11-01:
+#                                every mHC variant's ordinary model beats every HC run; does HC's learned mixing cost its
+#                                ordinary model? prediction: probes L48 near mHC's 2.92, separate heads near 3.00, cost ~0.08)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -113,6 +116,7 @@ case $DESIGN in
   arch3-mhcrwlin) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RW=linear";;
   arch3-mhcidlin) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity MHC_RW=linear";;
   arch3-hcwsh) S="$base LAYERS=48 PDP=4 ARCH=hc HC_WRITE=shared";;
+  arch3-hcid) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=identity";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40

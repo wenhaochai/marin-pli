@@ -69,6 +69,11 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            write w (owner popup 2026-10-30): a sublayer adds the same w_bar F to every stream, so it never
                            writes into the stream differences, the part of the state no readout (the stream sum) sees.
                            Read and mixing stay hc's. At init w = 1 on every stream, hc's function.
+    depth_hc_res="identity"  hc with the residual mixing fixed to the identity, H <- H + w (x) F(RN(x)) (owner popup
+                           2026-11-01: every mHC variant's ordinary model, Sinkhorn or identity mixing, sigmoid or linear
+                           read/write, beats every hc run; does hc's learned, input-dependent mixing cost its ordinary
+                           model?). Read and write stay hc's; the res offsets and w_res get no gradient. At init hc's res
+                           is I, so this is hc's function.
     DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
                            after each step, so that its logit scale s = ||q * g|| sqrt(d) stays <= tau: q <- q min(1, tau / s)
                            (the key gain g is not clipped). A source's logit is s cos(v, q * g), so tau bounds every logit.
@@ -332,6 +337,9 @@ class DepthArchLayer(eqx.Module):
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
+            if _hc_res_identity(self.config):  # the residual mixing fixed to the identity: every stream keeps itself
+                H = H + upd.rename({"stream_out": "stream"})
+                continue
             H = (hax.dot(res.astype(H.dtype), H, axis="stream") + upd).rename({"stream_out": "stream"})
         return H
 
@@ -422,6 +430,13 @@ def _hc_rw_sigmoid(config) -> bool:
     if rw not in ("linear", "sigmoid"):
         raise ValueError(f"depth_hc_rw must be 'linear' or 'sigmoid', got {rw!r}")
     return rw == "sigmoid"
+
+
+def _hc_res_identity(config) -> bool:
+    res = getattr(config, "depth_hc_res", "learned")
+    if res not in ("learned", "identity"):
+        raise ValueError(f"depth_hc_res must be 'learned' or 'identity', got {res!r}")
+    return res == "identity"
 
 
 def _hc_write_shared(config) -> bool:
@@ -549,6 +564,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_mhc_rw='linear' needs mhc, got {arch!r}")
         if _hc_write_shared(config) and arch != "hc":
             raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
+        if _hc_res_identity(config) and arch != "hc":
+            raise ValueError(f"depth_hc_res='identity' needs hc, got {arch!r}")
         if static and arch != "attnres":
             raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
         if _static(config) and arch not in ("hc", "attnres"):
