@@ -318,6 +318,11 @@ baselines (same data, steps and global batch; only the data-parallel layout diff
   block landed in it (run a at step ~1,300, the retries at step 1). The temp grew with the current 300m code paths: a
   300m run without the tables (w756, 512 tokens) also takes a 29.0 GiB temp, against 13.3 GiB for October OV. So 300m
   OV now also takes the 1.2B allocator, cuda_async with a pool preallocated at 0.8 (w755 plan, RUN_TAG -r1101).
+* **300m OT-H at 8 passes (w755, 2026-11-01, exact Paloma macro bpb, seed 0, fixed text as in vocab-overfitting.md):**
+  unique 1.3679, 8 passes 2.0802, cost 0.712; the 128K baseline on the same code generation is 1.3822 / 1.4704 (cost
+  0.088). The n-gram tables help unique text (-0.014) and multiply the cost of repetition by 8. The 8-pass run's eval
+  rises steadily after repetition starts (1.604 at step 2000, 1.730 at 4000, 1.875 at 6000, 2.030 at 8000, 2.080 at the
+  end). Runs muonh-qwen3-300m-della4xh100-ov12.8m-r1101 and -ov12.8m-rep8-r1101.
 * Checkpoint policy for OV variants (50dfe21fc9): an OV checkpoint carries the n-gram tables with their Adam state
   (79 GB at 300m, 112 GB at 520m, ~227 GB at 1.2B). No step-interval permanent checkpoints (the GROUP fileset was
   96% full), and the resume checkpoint is saved hourly instead of every 10 minutes, because a save stalls training
