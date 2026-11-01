@@ -332,6 +332,19 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   A95 well below 23 -> the shrink is a small share of the 0.95 forgetting. It cannot answer "yes". GPU option: a direct
   shrink arm at momentum 0.95 (each MuonH matrix pulled toward zero by an extra 25 lr^2 per step before the norm is
   restored), three lrs from step 2480, about 10 H100-h like w727-w729.
+- A check (owner popup 2026-11-01 「CPU 检查 A」; tools/branch_radial.py; rules written and committed before the run):
+  the radial fraction r = -<NS(u), W> / (|NS(u)| |W|) of the next step for the 84 MuonH matrices on 19 checkpoints
+  (base step-2480; per arm and momentum s = 124, 248 and the last kept step), from u = M and from the pure-noise next
+  step u = beta^2 M + (1 + beta) g_hat (levanter muonh.py: buf <- beta buf + g, Nesterov u = beta buf + g; g_hat random,
+  tangent to W, |g_hat| = sqrt(1 - beta^2) |M|). Primary reading: r_noise, median over the 72 matrices without
+  gate_proj (not scale-invariant), paired per matrix. Rules: (1) median dA = 2 (r98 - r95) / lr < 5 at all three lrs
+  at s = 248 and at the end: momentum 0.98 did not raise the shrink on these runs, the momentum test says nothing about
+  the shrink, and the question stays open (a direct shrink arm would be needed). (2) median dA >= 15 at lr 0.01 and
+  0.005, above the caps 0 and 9 that the measured growth of D after s = 248 allows: the shrink grew and the imprint
+  does not follow it, or something cancels it, so the shrink sets at most a small part of p. (3) Otherwise: compare
+  the predicted growth of D, the sum of lr (r98 - r95) over the steps from s = 248 to the end, with the measured
+  -0.041 / +0.082 / +0.154 and report. A95 from r = kappa lr + r0 over the three 0.95 arms at s = 248 (A = 2 kappa + 1):
+  below 12 means the shrink is a smaller share of the 0.95 forgetting than the modeled 12-36%.
 - Window offset (verification 2026-11-01): checkpoint step-k already holds the update of batch k (the branches resume
   at step 2481; batch b-248 is 0.149 / 0.125 / 0.119 nats below unread at the step-(b-248) checkpoint, z 5-6), so the
   Figure 10 window b-248..b-1 includes one batch read before the pre checkpoint and leaves out batch b (inside the
