@@ -10,7 +10,8 @@ whole imprint, f98(s) = f95(s) exp(-(dA/2) lr^2 R(s)) with R(s) = s, or R(s) = s
 builds up with the momentum buffer carried over from 0.95 (a rough stand-in for its 50-step time constant). dA = 73 - 23
 (A at 0.98 from 300m checkpoints, at 0.95 from the simulation) or 65 - 23 (both from the simulation; STATUS Facts). Prints
 each variant's end ratios, steps-to-0.3 ratios, best p and range (branch_fit.spread, within twice the best) and gap on
-the p = 1.32 axis, next to the measured ones.
+the p = 1.32 axis, next to the measured ones. Two checks that need no value of A: the dA each arm's end would need
+(D_end = (dA/2) lr^2 R(s_end)), and how D after 124 steps grows per doubling of lr (a shrink acting at once: 4x).
 Run on a vis node: python3 experiments/trec/tools/branch_m98.py"""
 import sys
 import numpy as np
@@ -71,3 +72,10 @@ for dA in (50.0, 42.0):
             pred.append((lr, np.stack([s, a95[:, 1] * np.exp(-dA / 2 * lr ** 2 * R)], 1)))
         summary(f"shrink dA {dA:g}{', buffer ramp' if ramp else ''}", pred)
         print(f"{'':<34} extra at the ends " + str([round(float(np.log(a95[-1, 1] / q[-1, 1])), 3) for (_, _, _, a95), (_, q) in zip(c95, pred)]))
+
+print("\nNo single shrink: dA that each arm's end would need, at once / with the build-up: "
+      + str([round(float(2 * np.log(a95[-1, 1] / a98[-1, 1]) / (lr ** 2 * a95[-1, 0])), 1) for (_, lr, _, a95), (_, a98) in zip(c95, arms98)]) + " / "
+      + str([round(float(2 * np.log(a95[-1, 1] / a98[-1, 1]) / (lr ** 2 * (a95[-1, 0] - 0.98 * (1 - 0.98 ** a95[-1, 0]) / 0.02))), 1) for (_, lr, _, a95), (_, a98) in zip(c95, arms98)]))
+d124 = [float(np.log(a95[1, 1] / a98[1, 1])) for (_, _, _, a95), (_, a98) in zip(c95, arms98)]
+assert all(a95[1, 0] == 124 for _, _, _, a95 in c95)
+print(f"D at 124 steps {np.round(d124, 3).tolist()}; per doubling of lr x{d124[0] / d124[1]:.2f} and x{d124[1] / d124[2]:.2f} (a shrink acting at once: x4)")

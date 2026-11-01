@@ -5,14 +5,10 @@ tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten
 with p = 1.2-1.4; how much of the final weights its update keeps does not set the fit (equal shares under a
 1/sqrt(t) schedule keep 0.003 nats more of the first quarter), and how far the weights move does not set the rate.
 Open: whether MuonH's fixed-norm shrink sets part of p. Momentum 0.98, which should triple the shrink, raises p only
-from 1.32 to 1.39 (0.3 to 0.5 of the predicted rise) and does not forget like a tripled shrink of the whole
-imprint (end ratio 0.76-0.77 at every lr, against 0.29-0.39 at lr 0.01); A is not measured on these runs (CPU check
-asked 2026-11-01).
-nine tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
-with p = 1.2-1.4, which neither how far the weights move nor MuonH's fixed-norm shrink sets (momentum 0.98, which
-should triple the shrink, leaves p between 1.3 and 1.4 and speeds up forgetting by about the same factor at every lr,
-not as lr^2), and how much of the final weights an update keeps does not set the fit (equal shares under a 1/sqrt(t)
-schedule keep 0.003 nats more of the first quarter).
+from 1.32 to 1.39 (about half or less of the predicted rise), does not forget like a tripled shrink of the whole
+imprint (end ratio 0.76-0.77 at every lr, against 0.29-0.39 at lr 0.01), and adds forgetting that is not a shrink of
+any one strength (the ends need A to rise by 11, 22 and 41); A is not measured on these runs (CPU check asked
+2026-11-01; it can only rule the shrink out or leave the question open).
 
 **Result (2026-10-27, extended 2026-10-28).** Re-scored with their final weights, two MuonH runs fit best the batches they read about four
 fifths of the way through training (0.81 at 300m with cosine, 0.89 at 130m with a linear decay; 0.069 and 0.088 nats
@@ -282,14 +278,17 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   loss at W_S) would be cleaner.
 
 - Momentum test (owner popup 2026-10-31): the 2480 arms at momentum 0.98 (A 23 -> 73: fixed-norm shrink about 3x).
-  Pre-registered: if the shrink sets p, p rises toward 2 (the computed model gives 1.47-1.57). trec_branch.sbatch job names trec-br2480m98-a|b|c, MOMENTUM env
+  Pre-registered: if the shrink sets p, p rises toward 2. (Computed after the runs, verification round 2,
+  branch_m98.py: the shrink model gives 1.47-1.57.) trec_branch.sbatch job names trec-br2480m98-a|b|c, MOMENTUM env
   (trec-rsqrt 464b25a824). wq w727-w729. Figure 10 fifth panel (placeholder).
 - Momentum result (2026-11-01; w727 01:03-01:29 EST, w728 01:29-02:14, w729 01:30-02:55 on pilot 16541491, exit 0,
   smoke eval loss 4.25-4.28, 10.4 H100-h; W&B config optimizer.momentum 0.98 in all three and 0.95 in w658-w660, same lr
   and steps; tools/branch_fit.py, tools/branch_m98.py). Measured: every arm forgets faster at every kept checkpoint;
   p = 1.39 (1.30-1.47) against 1.32 (1.26-1.39) at 0.95 (batch bootstrap of the rise +0.05 to +0.07, verification round
-  2; steps to f = 0.4 and 0.3 give 1.31 -> 1.40 and 1.29 -> 1.37; only the half-life exponent, whose lr-0.01 half-lives
-  fall before the first checkpoint, goes down, 1.35 -> 1.24); gap on the fourth panel's axis (p = 1.32) 1.9e-3 against
+  2; steps to f = 0.3, resolved at both momenta, give 1.29 -> 1.36; f = 0.4 gives 1.31 -> 1.40, but its lr-0.01 crossing
+  at 0.98 (118 steps) falls just before the first checkpoint; only the half-life exponent, whose lr-0.01 half-lives lie
+  well inside the first 124 steps and move with the interpolation, goes down, 1.35 -> 1.24, or 1.32 log-linear; on a
+  0.0005 grid the rise is 0.06, 1.325 -> 1.3865, round 3); gap on the fourth panel's axis (p = 1.32) 1.9e-3 against
   7.0e-4 at 0.95, best 1.2e-3; f98/f95 at the end 0.759 / 0.757 / 0.773 (f 0.143 / 0.177 / 0.202 against 0.189 /
   0.233 / 0.261); steps to f = 0.3 (log-linear between checkpoints) 187 / 525 / 1242 against 285 / 727 / 1707, ratio
   0.66 / 0.72 / 0.73; extra forgetting D(s) = ln f95 - ln f98 at the ends 0.275 / 0.278 / 0.258, and at lr 0.01
@@ -297,25 +296,41 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   Shrink model (branch_m98.py): the 0.95 curves times exp(-(dA/2) lr^2 R(s)), dA 50 (73 - 23) or 42 (65 - 23, both
   from the simulation), R = s or with a 1 - 0.98^k build-up from the carried-over buffer: p 1.47-1.57, gap on the
   p = 1.32 axis 0.0075-0.022, end ratios 0.29-0.39 / 0.54-0.61 / 0.73-0.77, steps-to-0.3 ratios 0.54-0.65 / 0.66-0.72 /
-  0.76-0.79, extra at the ends 0.95-1.25 / 0.50-0.62 / 0.26-0.31. So the measured rise of p (0.07) is 0.3 to 0.5 of the
-  model's (0.15 to 0.25); at the smallest lr the end ratio matches the model, at the two larger ones it does not, and at f = 0.3 the
+  0.76-0.79, extra at the ends 0.95-1.25 / 0.50-0.62 / 0.26-0.31. So the measured rise of p (0.07 on the 0.01 grid) is 0.3 to 0.5 of
+  the model's (0.15 to 0.25), and 0.45-0.50 against the Nesterov-noise build-up that counts the steps before the branch
+  (p 1.45-1.46, rounds 2 and 3, not in branch_m98.py): about half or less; at the smallest lr the end ratio matches the model, at the two larger ones it does not, and at f = 0.3 the
   model is close at the two larger lrs. Conclusion: the joint model (A 23 -> 73 on these runs and the shrink acting on
   the whole imprint) is rejected by the ends of the two larger lrs; which part fails is open. Under the page's own A = 23
   the shrink is 36% / 21% / 12% of -ln f at the ends of the 0.95 arms, and without it the 0.95 arms meet at p = 1.09
-  (round 2), so these runs do not show that the shrink leaves p alone.
+  (round 2), so these runs do not show that the shrink leaves p alone. Checks that need no value of A (branch_m98.py):
+  no single shrink fits the three arms (the ends need dA = 11.0 / 22.3 / 41.2 at once, 12.2 / 23.4 / 42.3 with the
+  build-up), and D after 124 steps grows x2.15 and x2.36 per doubling of lr, where a shrink acting at once gives x4
+  (x3.1-3.4 with the Nesterov-noise build-up, round 3). So most of the extra forgetting at the two smaller lrs is not
+  the shrink, whatever A did.
   Retracted after verification: round 1 (wf_75bdd60c-957) "the largest lr speeds up least" (only the lr-0.01
   half-life, inside the first 124 steps) and a two-term check (the fitted lr^2 term, c ln2 = 28.9, is 2.5x the shrink's
   own A/2 = 11.5); round 2 (wf_22573690-59c) "the fixed-norm shrink does not set p", "every run forgets faster by about
   the same factor" against a model that predicts a different order (the steps-to-0.3 order is the model's), and
-  "moves p only from 1.32 to 1.39" read as no change.
+  "moves p only from 1.32 to 1.39" read as no change; round 3 (wf_642aac63-651) found the old lead's tail left in
+  this file (removed) and "less than half" at the edge of the Nesterov-noise build-up (now "about half or less").
   Caveats: A = 73 (300m bytes-s1 checkpoints at 0.98) and 23 (simulation at 0.95, output not stored; the stored
   simulation at 0.98 gives 65) are not measured on these branches; each 0.98 arm starts from the buffer built at 0.95;
   momentum also lengthens the averaging window (about 50 instead of 20 steps); MOMENTUM changes only the 84 MuonH
   matrices (about 46M parameters), not the AdamH lm_head or the Adam embeddings (about 66M each), so a share of the
   imprint held there would also make the extra forgetting level off; one training run per arm.
-  Next (asked 2026-11-01, CPU, owner approval needed): measure the step correlation r of NS(momentum buffer) with W
-  on the kept branch checkpoints of both momenta (tmp/trec/scripts/measure_radial.py), which gives A and its build-up
-  on these runs.
+  Next (asked 2026-11-01, owner approval needed). CPU check (round 3 design): the radial fraction r of the next step
+  per MuonH matrix on 13 checkpoints (the base step-2480, and per arm and momentum s = 248 and the last kept step),
+  from NS(M) and from the pure-noise next step NS(beta^2 M + (1 + beta) g_hat) (levanter's Nesterov form; NS(M) alone
+  reads A95 about 20% high, dA only +3%), gate_proj reported apart; dA(lr) = 2 (r98 - r95) / lr at equal s, A95(lr),
+  and the predicted extra forgetting from s = 248 to the end against the caps the data allow (dA <= 0 / 9 / 28 at
+  lr 0.01 / 0.005 / 0.0025). About 2-3 min on della-vis1 with the marin venv (tensorstore) and OMP_NUM_THREADS=7;
+  measure_radial.py needs a branch analysis (analyze_radial.py hard-codes the 300m schedule). It sees A only from 124
+  steps after the branch on (the smoke checkpoints are deleted), so the build-up stays a model. Outcomes: dA about 3 or
+  less at every lr -> momentum did not change the shrink on these runs, question open; dA above the caps, near 50 ->
+  the imprint does not follow the extra shrink or something cancels it, the shrink sets at most a small part of p;
+  A95 well below 23 -> the shrink is a small share of the 0.95 forgetting. It cannot answer "yes". GPU option: a direct
+  shrink arm at momentum 0.95 (each MuonH matrix pulled toward zero by an extra 25 lr^2 per step before the norm is
+  restored), three lrs from step 2480, about 10 H100-h like w727-w729.
 - Window offset (verification 2026-11-01): checkpoint step-k already holds the update of batch k (the branches resume
   at step 2481; batch b-248 is 0.149 / 0.125 / 0.119 nats below unread at the step-(b-248) checkpoint, z 5-6), so the
   Figure 10 window b-248..b-1 includes one batch read before the pre checkpoint and leaves out batch b (inside the
