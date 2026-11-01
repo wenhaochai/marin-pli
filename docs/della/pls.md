@@ -1217,7 +1217,12 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
    5. 最后一个 MLP 对正确 token 的直接贡献（`mlp_dla_w`）。普通模型：Pre-LN −1.93、LNS −1.57、KEEL −2.79、mHC −2.44、MoDA −1.66 logits。这五种的独立头在 ±0.04 logits 内（J:depthmed/*.json[layers][47].mlp_dla_w）。
    6. 第 24 层：普通模型的 lens 是 5.05（HC）到 10.18（AttnRes (Full)）nats，自身探针 3.81–5.16 nats；独立头的 lens 是 3.61–4.32 nats（J:depthmed/*.json[layers][23].lens_ce、own_ce；F:fig-dm-lens/文字）。
    7. 第 48 层的有效秩：多数模型 330–400；HC 独立头 63.6（J:depthmed/*.json[layers][47].eff_rank）。HC 独立头的最终损失 3.299 nats，是十个独立头模型中最低的（J:depthmed/hc-sep.json[base_ce]）。最大的单个激活在 AttnRes (Block) 普通模型第 44 层，是 RMS 的 637 倍（F:fig-dm-shape/文字）。
-4. 页面图：fig-dm-skip、fig-dm-write、fig-dm-dla、fig-dm-lens、fig-dm-shape。数据：`tmp/pls_blog/depthmed/<结构>-{ord,sep}.json`。
+   8. 同一层里不同 token 状态之间的平均余弦（`aniso`；与有效秩用同一组 2,048 个 token，不减均值）。这就是信号传播研究判断秩崩溃用的同层特征相关 ρ_ℓ。它在 10 月 19 日已经算出，11 月 1 日才放上页面：图 35 下面一组面板，所有者弹窗「加进图 35」，起因是 Mufan Li 的推文（要看的是同一层内的特征相关）。结果（J:depthmed/*.json[layers][k].aniso）：
+      - 普通模型：除 AttnRes (Full) 外每层都低于 0.5（最小 0.079，AttnRes (Block) 第 15 层；最大 0.498，Sandwich 第 1 层）。普通 AttnRes (Full) 在第 32、40、43、47 层是 0.99–1.0，这四层的有效秩是 4.0、1.0、1.1、1.1；第 17、18、30、33、34、41 层是 0.71–0.89，有效秩仍有 40–138。
+      - 独立头：十种结构都在 0.10–0.41；同一结构内随深度最多变化 0.14（mHC）。
+      - 与独立头代价（第 48 层最终训练损失，独立头减探针，`d48g4.npz` 的 g4 运行；AttnRes (Full) 是种子 0，代价 −0.021）的 Spearman：普通模型层平均 −0.19，独立头层平均 −0.12，普通模型第 48 层 +0.03，独立头第 48 层 −0.28，两者层平均之差 +0.05（`tmp/pls_paths/plot/token_corr.py`；图 `tmp/pls_corr/token_corr.png`）。
+      - 结论：训练完的 48 层模型没有秩崩溃（普通 AttnRes (Full) 的几层除外），这个相关解释不了独立头代价。没有测初始化：初始化时独立头模型和普通模型的骨干相同，初始化的曲线只能比较结构。
+4. 页面图：fig-dm-skip、fig-dm-write、fig-dm-dla、fig-dm-lens、fig-dm-shape（2026-11-01 起有两组面板：有效秩和 token 相关）。数据：`tmp/pls_blog/depthmed/<结构>-{ord,sep}.json`。
 
 ### hc_pos 检查点的 CPU 分析（2026-10-17，作业 15536267 之后）
 

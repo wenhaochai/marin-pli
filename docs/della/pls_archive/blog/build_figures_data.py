@@ -789,6 +789,21 @@ dm_fig("fig-dm-lens", {"en": "Logit lens on the same text, 48 layers", "zh": "�
 dm_fig("fig-dm-shape", {"en": "Shape of the per-layer state, 48 layers", "zh": "每层状态的形状，48 层"},
        {"en": "Effective rank over 2,048 tokens (log scale)", "zh": "2,048 个 token 上的有效秩（对数坐标）"}, 1, 5000, (1, 10, 100, 1000), True,
        [("ord", "eff_rank", RED), ("sep", "eff_rank", BLUE7)], DM_LEG)
+# fig-dm-shape, second block (owner popup 2026-11-01 「加进图 35」, after Mufan Li's note that rank collapse is read from the
+# same-layer feature correlation): the mean cosine between the states of different tokens in the same layer, over the same
+# 2,048 tokens, uncentred (depthmed.py `aniso`); its first panel's quantity opens the block (article-charts.js epochFig)
+for k, (a, name) in enumerate(DM_ARCH):
+    q = dict(xlog=False, ylog=False, xlim=[0.5, 48.5], ylim=[0, 1.4], xticks=DMX, yticks=[[t, f"{t:g}"] for t in (0, 0.5, 1)],
+             marks=[], label={"en": name, "zh": name})
+    if k == 0:
+        q["quantity"] = {"en": "Mean cosine between the states of different tokens", "zh": "不同 token 的状态之间的平均余弦"}
+    for st, col in (("ord", RED), ("sep", BLUE7)):
+        d = DMD.get((a, st))
+        if d is not None:
+            q["marks"].append(dict(type="line", color=col, pts=[[r["layer"], round(float(r["aniso"]), 4)] for r in d["layers"]]))
+    if not q["marks"]:
+        q["empty"] = DM_STATUS
+    figs["fig-dm-shape"]["panels"].append(q)
 # fig-dm-skip: the increase over the model's own loss, floored at 1e-3 for the log axis
 for i, (a, _) in enumerate(DM_ARCH):
     q = figs["fig-dm-skip"]["panels"][i]
