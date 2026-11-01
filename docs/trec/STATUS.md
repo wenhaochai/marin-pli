@@ -1,6 +1,13 @@
 # TREC: training re-evaluation curves of existing MuonH checkpoints
 
-**In one sentence (finished 2026-11-01).** The final weights of MuonH runs fit best the batches read four fifths to
+**In one sentence (2026-11-01).** The final weights of MuonH runs fit best the batches read four fifths to nine
+tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
+with p = 1.2-1.4; how much of the final weights its update keeps does not set the fit (equal shares under a
+1/sqrt(t) schedule keep 0.003 nats more of the first quarter), and how far the weights move does not set the rate.
+Open: whether MuonH's fixed-norm shrink sets part of p. Momentum 0.98, which should triple the shrink, raises p only
+from 1.32 to 1.39 (0.3 to 0.5 of the predicted rise) and does not forget like a tripled shrink of the whole
+imprint (end ratio 0.76-0.77 at every lr, against 0.29-0.39 at lr 0.01); A is not measured on these runs (CPU check
+asked 2026-11-01).
 nine tenths into training: every batch is learned (0.07-0.12 nats) and then forgotten at a rate set by the sum of lr^p
 with p = 1.2-1.4, which neither how far the weights move nor MuonH's fixed-norm shrink sets (momentum 0.98, which
 should triple the shrink, leaves p between 1.3 and 1.4 and speeds up forgetting by about the same factor at every lr,
@@ -96,13 +103,13 @@ our finished pretraining checkpoints. Page: `exps/trec.html` on the website bran
   job starts (the link check found 404s for W&B runs that do not exist yet). Released to main as 28e23f1 (controller,
   merge of pretrain-practice 507cd8e); exps/trec.html and trec-record.js on main equal cd39362 (checked 2026-10-31).
   The owner kept w727-w729 at the default priority (2026-10-31: no --prio 10 resubmit).
-- Finished (2026-11-01): Figure 10 panel 5 filled, Q8 answer, Figure 10 captions and the Details under it extended
-  with the momentum result; standfirst = Takeaways = meta description written back (the fd5fd3c text plus one
-  sentence: neither the distance the weights move nor the fixed-norm shrink sets the power; a momentum of 0.98, which
-  should make the shrink about three times as strong, leaves it between 1.3 and 1.4). The verification workflow also
-  fixed two Chinese phrases of the fd5fd3c text ("完全忘掉" -> "忘掉", "学习率" -> "学习率 schedule"). Public code:
-  marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c (each scan: secrets 0, cluster user and group 0); record code links 6ae040d0c (Figures 1-7) and c7e79bd2a (8-10). Record: 54 rows, the momentum rows now with their W&B runs (no "none" url left); main 154.3 H100-h
-  (20 jobs), other 0.6.
+- Page state (2026-11-01): Figure 10 panel 5 filled; Q8 answer, Figure 10 captions and the Details under it carry the
+  momentum result as an open question (two verification rounds, see Momentum result). Standfirst and Takeaways stay
+  off while the A check is undecided (the text written at 03:05 EST was taken back after round 2); the meta description is
+  the released one. Two Chinese phrases of the fd5fd3c text, for the next standfirst: "完全忘掉" -> "忘掉", "学习率" ->
+  "学习率 schedule". Public code: marin-pli trec 939368d7b -> cca92237b -> 6ae040d0c -> the round-2 commit (each scan:
+  secrets 0, cluster user and group 0); record code links that commit (Figures 1-7) and c7e79bd2a (8-10). Record: 54
+  rows, the momentum rows with their W&B runs (no "none" url left); main 154.3 H100-h (20 jobs), other 0.6.
 
 ## Code (branch `trec`, worktree `project/marin-trec`, private remote `archive`, public `marin-pli` branch `trec`)
 - `experiments/references/trec_score.py`: chunked, resumable scoring; `scripts/della/trec{,-smoke}.sbatch`.
@@ -275,39 +282,48 @@ Every training run logged to W&B live (reself/marin-della); all 14 TREC training
   loss at W_S) would be cleaner.
 
 - Momentum test (owner popup 2026-10-31): the 2480 arms at momentum 0.98 (A 23 -> 73: fixed-norm shrink about 3x).
-  If the shrink sets p, p rises toward 2. trec_branch.sbatch job names trec-br2480m98-a|b|c, MOMENTUM env
+  Pre-registered: if the shrink sets p, p rises toward 2 (the computed model gives 1.47-1.57). trec_branch.sbatch job names trec-br2480m98-a|b|c, MOMENTUM env
   (trec-rsqrt 464b25a824). wq w727-w729. Figure 10 fifth panel (placeholder).
 - Momentum result (2026-11-01; w727 01:03-01:29 EST, w728 01:29-02:14, w729 01:30-02:55 on pilot 16541491, exit 0,
   smoke eval loss 4.25-4.28, 10.4 H100-h; W&B config optimizer.momentum 0.98 in all three and 0.95 in w658-w660, same lr
-  and steps; tools/branch_fit.py, tools/branch_m98.py): p = 1.39 (1.30-1.47) against 1.32 (1.26-1.39) at 0.95. The
-  ranges overlap and other estimators move p the other way (half-life exponent 1.35 -> 1.24), so the page says: between
-  1.3 and 1.4 at both. Mean squared log gap of the 0.98 arms: 1.2e-3 at the best p, 1.9e-3 on the fourth panel's axis
-  (p = 1.32; the 0.95 arms 7.0e-4), 2.4e-2 at p = 1, 0.20 for steps. Every arm forgets faster at every kept checkpoint,
-  by about the same factor: f98/f95 at the end 0.759 / 0.757 / 0.773 (f 0.143 / 0.177 / 0.202 against 0.189 / 0.233 /
-  0.261); steps to f = 0.3 (log-linear between checkpoints) 187 / 525 / 1242 against 285 / 727 / 1707, ratio 0.66 /
-  0.72 / 0.73. Shrink check: if momentum acted through the shrink (-ln a = A lr^2 / 2 per step, A 23 -> 73), the extra
-  forgetting D(s) = ln f95 - ln f98 would be 25 lr^2 s: 1.25 / 0.62 / 0.31 at the ends, growing linearly. Measured
-  0.275 / 0.278 / 0.258, and at lr 0.01 D = 0.248 / 0.316 / 0.314 / 0.293 at s = 124 / 248 / 372 / 496: it stops
-  growing. Conclusion: the extra forgetting at momentum 0.98 is not a shrink effect, and the fixed-norm shrink does not
-  set p. Retracted the same morning after the verification workflow (wf_75bdd60c-957; 3 agents: independent recompute,
-  page-number check, refutation): "the largest lr speeds up least" (true only for the lr-0.01 half-life, which falls
-  before the first checkpoint at 124 steps; at f = 0.4 and 0.3 the order reverses) and a two-term check (rate = a lr +
-  c lr^2 fitted to the 0.95 half-lives, c x 73/23: the fitted lr^2 term, c ln2 = 28.9, is 2.5x the shrink's own A/2 =
-  11.5, so scaling it overstated the prediction). Caveats on the page: A = 73 (300m bytes-s1 checkpoints at 0.98) and
-  23 (simulation at 0.95) are not measured on these branches; each 0.98 arm starts from the buffer built at 0.95;
-  momentum also lengthens the averaging window (about 50 instead of 20 steps), so it changes more than the shrink.
-  Caveats here only: the 0.95 simulation output is not stored, and the stored simulation at 0.98 gives A = 65, so the
-  factor is 2.8-3.2; the step correlation reaches its 0.98 level about 100-200 steps after the branch; MOMENTUM changes
-  only the MuonH matrices (AdamH lm_head and Adam embeddings unchanged); one training run per arm. A check of A on these
-  checkpoints is not approved.
+  and steps; tools/branch_fit.py, tools/branch_m98.py). Measured: every arm forgets faster at every kept checkpoint;
+  p = 1.39 (1.30-1.47) against 1.32 (1.26-1.39) at 0.95 (batch bootstrap of the rise +0.05 to +0.07, verification round
+  2; steps to f = 0.4 and 0.3 give 1.31 -> 1.40 and 1.29 -> 1.37; only the half-life exponent, whose lr-0.01 half-lives
+  fall before the first checkpoint, goes down, 1.35 -> 1.24); gap on the fourth panel's axis (p = 1.32) 1.9e-3 against
+  7.0e-4 at 0.95, best 1.2e-3; f98/f95 at the end 0.759 / 0.757 / 0.773 (f 0.143 / 0.177 / 0.202 against 0.189 /
+  0.233 / 0.261); steps to f = 0.3 (log-linear between checkpoints) 187 / 525 / 1242 against 285 / 727 / 1707, ratio
+  0.66 / 0.72 / 0.73; extra forgetting D(s) = ln f95 - ln f98 at the ends 0.275 / 0.278 / 0.258, and at lr 0.01
+  0.248 / 0.316 / 0.314 / 0.293 at s = 124 / 248 / 372 / 496 (it stops growing).
+  Shrink model (branch_m98.py): the 0.95 curves times exp(-(dA/2) lr^2 R(s)), dA 50 (73 - 23) or 42 (65 - 23, both
+  from the simulation), R = s or with a 1 - 0.98^k build-up from the carried-over buffer: p 1.47-1.57, gap on the
+  p = 1.32 axis 0.0075-0.022, end ratios 0.29-0.39 / 0.54-0.61 / 0.73-0.77, steps-to-0.3 ratios 0.54-0.65 / 0.66-0.72 /
+  0.76-0.79, extra at the ends 0.95-1.25 / 0.50-0.62 / 0.26-0.31. So the measured rise of p (0.07) is 0.3 to 0.5 of the
+  model's (0.15 to 0.25); at the smallest lr the end ratio matches the model, at the two larger ones it does not, and at f = 0.3 the
+  model is close at the two larger lrs. Conclusion: the joint model (A 23 -> 73 on these runs and the shrink acting on
+  the whole imprint) is rejected by the ends of the two larger lrs; which part fails is open. Under the page's own A = 23
+  the shrink is 36% / 21% / 12% of -ln f at the ends of the 0.95 arms, and without it the 0.95 arms meet at p = 1.09
+  (round 2), so these runs do not show that the shrink leaves p alone.
+  Retracted after verification: round 1 (wf_75bdd60c-957) "the largest lr speeds up least" (only the lr-0.01
+  half-life, inside the first 124 steps) and a two-term check (the fitted lr^2 term, c ln2 = 28.9, is 2.5x the shrink's
+  own A/2 = 11.5); round 2 (wf_22573690-59c) "the fixed-norm shrink does not set p", "every run forgets faster by about
+  the same factor" against a model that predicts a different order (the steps-to-0.3 order is the model's), and
+  "moves p only from 1.32 to 1.39" read as no change.
+  Caveats: A = 73 (300m bytes-s1 checkpoints at 0.98) and 23 (simulation at 0.95, output not stored; the stored
+  simulation at 0.98 gives 65) are not measured on these branches; each 0.98 arm starts from the buffer built at 0.95;
+  momentum also lengthens the averaging window (about 50 instead of 20 steps); MOMENTUM changes only the 84 MuonH
+  matrices (about 46M parameters), not the AdamH lm_head or the Adam embeddings (about 66M each), so a share of the
+  imprint held there would also make the extra forgetting level off; one training run per arm.
+  Next (asked 2026-11-01, CPU, owner approval needed): measure the step correlation r of NS(momentum buffer) with W
+  on the kept branch checkpoints of both momenta (tmp/trec/scripts/measure_radial.py), which gives A and its build-up
+  on these runs.
 - Window offset (verification 2026-11-01): checkpoint step-k already holds the update of batch k (the branches resume
-  at step 2481; batch b-248 is 0.150 / 0.125 / 0.120 nats below unread at the step-(b-248) checkpoint, z 5-6), so the
+  at step 2481; batch b-248 is 0.149 / 0.125 / 0.119 nats below unread at the step-(b-248) checkpoint, z 5-6), so the
   Figure 10 window b-248..b-1 includes one batch read before the pre checkpoint and leaves out batch b (inside the
   branch checkpoint, not scored); the arms run 499 / 999 / 1999 steps (sums of lr 4.99-4.9975). With b-247..b-1
   (tools/branch_window.py): E0 0.158 (page 0.157); 2480 p 1.33 (1.26-1.39), gaps 6.9e-4 / 1.4e-2 / 6.6e-2 / 0.13,
-  half-lives 122 / 340 / 789, end 0.191 / 0.236 / 0.263; 1240 p 1.22, half-lives 148 / 386 / 820; 3720 p 1.40,
+  half-lives 121 / 340 / 789, end 0.191 / 0.236 / 0.263; 1240 p 1.22, half-lives 148 / 386 / 820; 3720 p 1.40,
   half-lives 102 / 235 / 580; momentum 0.98 p 1.39 (1.30-1.47). No conclusion changes. The page keeps the b-248..b-1
-  numbers and now says the imprint starts from the level at step 2232, not "before the read". At p = 2 the arms share
+  numbers and now says the imprint is measured from the level at step 2232, not "before the read". At p = 2 the arms share
   only one point of the sum-of-lr^2 axis; the page says so, and branch_fit.py returns nan where they share none.
 
 ## Open (not approved)
