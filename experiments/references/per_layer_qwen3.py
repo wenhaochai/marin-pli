@@ -254,6 +254,7 @@ class PerLayerQwen3Config(Qwen3Config):
     depth_mhc_rw: str = "sigmoid"  # "linear": mhc's read and write through hc's signed maps r = e_k + ..., w = 1 + ... (docstring)
     depth_hc_write: str = "stream"  # "shared": hc's write is one weight shared by every stream (depth_arch_qwen3 docstring)
     depth_hc_res: str = "learned"  # "identity": hc's residual mixing fixed to I (depth_arch_qwen3 docstring)
+    depth_hc_rwdyn: str = "stream"  # "joint": hc's read / write dynamic terms from mhc's joint projection (depth_arch_qwen3 docstring)
     depth_attnres_vnorm: bool = False  # attnres: every source enters the mix at unit RMS (depth_arch_qwen3 docstring)
 
     def __post_init__(self):
@@ -284,6 +285,8 @@ class PerLayerQwen3Config(Qwen3Config):
             raise ValueError(f"depth_hc_write={self.depth_hc_write!r} needs 'stream', or 'shared' with depth_arch hc (got {self.depth_arch!r})")
         if self.depth_hc_res not in ("learned", "identity") or (self.depth_hc_res != "learned" and self.depth_arch != "hc"):
             raise ValueError(f"depth_hc_res={self.depth_hc_res!r} needs 'learned', or 'identity' with depth_arch hc (got {self.depth_arch!r})")
+        if self.depth_hc_rwdyn not in ("stream", "joint") or (self.depth_hc_rwdyn != "stream" and self.depth_arch != "hc"):
+            raise ValueError(f"depth_hc_rwdyn={self.depth_hc_rwdyn!r} needs 'stream', or 'joint' with depth_arch hc (got {self.depth_arch!r})")
         if self.depth_attnres_vnorm and (self.depth_arch != "attnres" or self.depth_route != "dynamic"):
             raise ValueError(f"depth_attnres_vnorm needs depth_arch attnres with dynamic routing, got {self.depth_arch!r} {self.depth_route!r}")
         if self.pls_separate_heads and self.pls_weight <= 0:

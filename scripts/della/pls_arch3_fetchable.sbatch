@@ -74,6 +74,12 @@
 #   arch3-hcid-{sep,probes}      HC with the residual mixing fixed to the identity (HC_RES=identity; owner popup 2026-11-01:
 #                                every mHC variant's ordinary model beats every HC run; does HC's learned mixing cost its
 #                                ordinary model? prediction: probes L48 near mHC's 2.92, separate heads near 3.00, cost ~0.08)
+#   arch3-hcrwj-{sep,probes}     HC whose read / write dynamic terms come from mHC's joint projection, mixing kept (HC_RWDYN=
+#                                joint; owner popup 2026-11-02: hcid closes about half of HC's ordinary-model gap to mHC; is the
+#                                other half the read / write computation? With mixing I this design is mHC identity + linear)
+#   arch3-hc-s1-probes, arch3-hcid-s1-probes, arch3-mhcidlin-s1-probes  seed 1 of the three ordinary models on today's stack
+#                                (fa4thd; owner popup 2026-11-02: the two halves, 0.021 and 0.015 nats, are below HC's seed
+#                                spread 0.023); arch3-hcid-s1-sep (same popup: does hcid's late separate-heads rise repeat?)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -117,6 +123,9 @@ case $DESIGN in
   arch3-mhcidlin) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity MHC_RW=linear";;
   arch3-hcwsh) S="$base LAYERS=48 PDP=4 ARCH=hc HC_WRITE=shared";;
   arch3-hcid) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=identity";;
+  arch3-hcrwj) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RWDYN=joint";;
+  arch3-hcid-s1) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=identity SEED=1";;
+  arch3-mhcidlin-s1) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity MHC_RW=linear SEED=1";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40

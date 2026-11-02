@@ -74,6 +74,16 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            read/write, beats every hc run; does hc's learned, input-dependent mixing cost its ordinary
                            model?). Read and write stay hc's; the res offsets and w_res get no gradient. At init hc's res
                            is I, so this is hc's function.
+    depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
+                           with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
+                           other half how the read / write dynamic terms are computed?): one projection rw_phi of the
+                           RMS-normalised concatenated streams (stream, embed -> 2m, init 0) gives the read and write terms,
+                           linear, each times its gain (rw_gain, init 0.01): read = e_k + read offset + g_r (rw_phi H)_r,
+                           write = 1 + write offset + g_w (rw_phi H)_w. The mixing stays hc's (static plus s tanh per
+                           stream); w_read and w_write get no gradient. At init this is hc's function. With
+                           depth_hc_res="identity" it computes mhc with depth_mhc_res="identity", depth_mhc_rw="linear"
+                           when rw_phi, rw_gain and the offsets equal mhc's read / write columns, gains and bias offsets
+                           (tests: scripts/della/depth_arch_hcrwj_test.py).
     DepthArchMuonHConfig.attnres_query_clip = tau > 0   attnres: Post Clip (kexue.fm/archives/11729) of every pseudo-query
                            after each step, so that its logit scale s = ||q * g|| sqrt(d) stays <= tau: q <- q min(1, tau / s)
                            (the key gain g is not clipped). A source's logit is s cos(v, q * g), so tau bounds every logit.
@@ -146,12 +156,15 @@ class HyperParams(eqx.Module):
     w_res: NamedArray  # (embed, stream_out)
     w_write: NamedArray  # (embed,)
     scale: NamedArray  # (hp_scale=2,): dynamic scales of read/mixing and of write
+    rw_phi: Optional[NamedArray] = None  # depth_hc_rwdyn="joint" only: (stream, embed, hcrw=2m), read then write columns
+    rw_gain: Optional[NamedArray] = None  # depth_hc_rwdyn="joint" only: (hp_scale=2,): read and write gains
 
     @staticmethod
-    def init(Embed: Axis, m: int) -> "HyperParams":
+    def init(Embed: Axis, m: int, joint: bool = False) -> "HyperParams":
         S, So = Axis("stream", m), Axis("stream_out", m)
         z = hax.zeros
-        return HyperParams(z(S), z((S, So)), z(So), z(Embed), z((Embed, So)), z(Embed), hax.full(Axis("hp_scale", 2), 0.01))
+        rw = (z((S, Embed, Axis("hcrw", 2 * m))), hax.full(Axis("hp_scale", 2), 0.01)) if joint else (None, None)
+        return HyperParams(z(S), z((S, So)), z(So), z(Embed), z((Embed, So)), z(Embed), hax.full(Axis("hp_scale", 2), 0.01), *rw)
 
 
 class MhcParams(eqx.Module):
@@ -246,7 +259,7 @@ class DepthArchLayer(eqx.Module):
             b = 1.0 / math.sqrt(m)
             attn = eqx.tree_at(lambda a: a.o_proj, attn, scale(attn.o_proj, b))
             mlp = eqx.tree_at(lambda f: f.down_proj, mlp, scale(mlp.down_proj, b))
-            hyper = tuple((HyperParams if arch == "hc" else MhcParams).init(config.Embed, m) for _ in range(2))
+            hyper = tuple((HyperParams.init(config.Embed, m, _hc_rw_joint(config)) if arch == "hc" else MhcParams.init(config.Embed, m)) for _ in range(2))
         if arch == "deepnorm":
             post = tuple(hnn.LayerNorm.init(config.Embed, eps=config.layer_norm_epsilon, use_weight=True, use_bias=False) for _ in range(2))
         elif arch in _POST:
@@ -328,6 +341,14 @@ class DepthArchLayer(eqx.Module):
                 read = c_read + f32(p.read) + s_rr * hax.tanh(d_read)
                 res = c_res + f32(p.res) + s_rr * hax.tanh(d_res)
                 write = c_write + f32(p.write) + s_w * hax.tanh(d_write)
+            if _hc_rw_joint(self.config):  # read's and write's dynamic terms from mhc's joint projection; the mixing stays hc's
+                S = H.resolve_axis("stream")
+                Hf = f32(H)
+                inv = hax.rsqrt(hax.mean(Hf * Hf, axis=(S, Embed)) + 1e-6)  # RMS over the concatenated streams
+                mix = hax.dot(H, cast(NamedArray, p.rw_phi).astype(H.dtype), axis=(S, Embed), preferred_element_type=jnp.float32) * inv
+                g = f32(cast(NamedArray, p.rw_gain))
+                read = c_read + f32(p.read) + g["hp_scale", 0] * mix["hcrw", 0:m].rename({"hcrw": "stream"})
+                write = c_write + f32(p.write) + g["hp_scale", 1] * mix["hcrw", m : 2 * m].rename({"hcrw": "stream_out"})
             if _hc_rw_sigmoid(self.config):  # mHC's maps on hc's logits: the learned offsets and dynamic terms of read and write
                 read = hax.nn.sigmoid(MHC_READ_BIAS * (2.0 * c_read - 1.0) + (read - c_read))
                 write = 2.0 * hax.nn.sigmoid(write - c_write)
@@ -437,6 +458,13 @@ def _hc_res_identity(config) -> bool:
     if res not in ("learned", "identity"):
         raise ValueError(f"depth_hc_res must be 'learned' or 'identity', got {res!r}")
     return res == "identity"
+
+
+def _hc_rw_joint(config) -> bool:
+    d = getattr(config, "depth_hc_rwdyn", "stream")
+    if d not in ("stream", "joint"):
+        raise ValueError(f"depth_hc_rwdyn must be 'stream' or 'joint', got {d!r}")
+    return d == "joint"
 
 
 def _hc_write_shared(config) -> bool:
@@ -566,6 +594,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
         if _hc_res_identity(config) and arch != "hc":
             raise ValueError(f"depth_hc_res='identity' needs hc, got {arch!r}")
+        if _hc_rw_joint(config) and (arch != "hc" or _static(config) or _hc_rw_sigmoid(config) or _hc_write_shared(config)):
+            raise ValueError(f"depth_hc_rwdyn='joint' needs hc with dynamic routing, linear read/write and per-stream writes, got {arch!r}")
         if static and arch != "attnres":
             raise ValueError("depth_route='static' is implemented for hc and attnres (full), not attnres_block")
         if _static(config) and arch not in ("hc", "attnres"):
