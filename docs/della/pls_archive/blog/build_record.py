@@ -141,6 +141,8 @@ RUNS = [
     # owner popup 2026-11-01: HC with the residual mixing fixed to I (does HC's learned mixing cost its ordinary model?)
     (S("Hyper-Connections, mixing = I: separate heads", "Hyper-Connections，混合 = I：独立头"), "130m", 48, 2.6, 4, ("wq", "w810", "130m-della4xh100-pls1-sep-ahc-hcid-fa4thd-vs-d48"), "38, 50"),
     (S("Hyper-Connections, mixing = I: probes only", "Hyper-Connections，混合 = I：只加探针"), "130m", 48, 2.6, 4, ("wq", "w811", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, joint read/write: separate heads", "Hyper-Connections，读写 = 联合投影：独立头"), "130m", 48, 2.6, 4, ("wq", "w888", "130m-della4xh100-pls1-sep-ahc-hcrwj-fa4thd-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, joint read/write: probes only", "Hyper-Connections，读写 = 联合投影：只加探针"), "130m", 48, 2.6, 4, ("wq", "w889", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcrwj-fa4thd-vs-d48"), "38, 50"),
     # owner popups 2026-10-27: reruns of the Pre-LN probes model on both attention kernels (Figure 45); separate heads whose
     # intermediate losses stop at 50% / 80% of training (Figure 46)
     (S("Pre-LN, rerun of seed 0 on JAX-flash attention: probes only", "Pre-LN，种子 0 在 JAX flash 注意力上重跑：只加探针"), "130m", 48, 2.6, 4, ("wq", "w500", "130m-della4xh100-pls1-sep-bbfrozen-apreln-vs-d48-rerun"), "45"),

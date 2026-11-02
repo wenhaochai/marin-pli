@@ -936,14 +936,16 @@ VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
          ("ahc-hcwsh-fa4thd-vs-d48", {"en": "HC, one shared write", "zh": "HC，各流共用写入"}, BLUE7),
          # owner popup 2026-11-01 (wq w810/w811): HC with the residual mixing fixed to I; does HC's learned mixing cost its ordinary model?
          ("ahc-hcid-fa4thd-vs-d48", {"en": "HC, mixing = I", "zh": "HC，混合 = I"}, BLUE7),
+         # owner popup 2026-11-02 (wq w888/w889): HC with mHC's joint read / write computation, mixing kept
+         ("ahc-hcrwj-fa4thd-vs-d48", {"en": "HC, joint read/write", "zh": "HC，读写 = 联合投影"}, BLUE7),
          ("aattnres-vs-d48-g4", {"en": "AttnRes (Full), seed 0", "zh": "AttnRes (Full)，种子 0"}, GREY),
          ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
          ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
 v38 = [sep_cost(t) for t, _, _ in VAR38]
 # the query-clip probes run (w79) diverged at step 660 and was stopped (owner popup 2026-10-24): that bar stays empty
 w38 = [lab for (t, lab, _), v in zip(VAR38, v38) if v is None and t != "aattnres-qclip10-vs-d48"]
-lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " still training" if w38 else "") + " · query scale \u2264 10: ordinary model diverged, stopped",
-         "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 仍在训练" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散，已停止"}
+lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " still training" if w38 else "") + " · query scale \u2264 10: ordinary model diverged",   # ", stopped" dropped 2026-11-02: the line clipped at 1280 px with two runs training
+         "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 仍在训练" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散"}
 figs["fig-arch-var"] = dict(title={"en": "Separate-heads cost of design variants, 48 layers", "zh": "结构变体的独立头代价，48 层"},
                             legend=[[{"en": "Control", "zh": "对照"}, GREY, "box"], [{"en": "Variant", "zh": "变体"}, BLUE7, "box"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"}, height=200, cols=1,
@@ -1216,7 +1218,8 @@ SP50 = [[("apreln-vs-d48-g4", ("Pre-LN", "Pre-LN")), ("apreln-vs-d48-s1", ("Pre-
         [("ahc-vs-d48-g4", ("HC", "HC")), ("ahc-vs-d48-s1", ("HC, seed 1", "HC，种子 1")), ("ahc-fa4thd-vs-d48", ("HC, new code", "HC，新代码")),
          ("ahc-hcrwsig-vs-d48", ("HC, sigmoid read/write", "HC，sigmoid 读写")), ("ahc-hcs8-vs-d48", ("HC, 8 streams", "HC，8 条流")),
          ("ahc-hcs2-vs-d48", ("HC, 2 streams", "HC，2 条流")), ("ahc-rstatic-vs-d48", ("HC, static routing", "HC，静态路由")),
-         ("ahc-hcwsh-fa4thd-vs-d48", ("HC, one shared write", "HC，各流共用写入")), ("ahc-hcid-fa4thd-vs-d48", ("HC, mixing = I", "HC，混合 = I"))],
+         ("ahc-hcwsh-fa4thd-vs-d48", ("HC, one shared write", "HC，各流共用写入")), ("ahc-hcid-fa4thd-vs-d48", ("HC, mixing = I", "HC，混合 = I")),
+         ("ahc-hcrwj-fa4thd-vs-d48", ("HC, joint read/write", "HC，读写 = 联合投影"))],
         [("amhc-vs-d48-g4", ("mHC", "mHC")), ("amhc-mhcid-vs-d48", ("mHC, mixing = I", "mHC，混合 = I")),
          ("amhc-mhcrwlin-vs-d48", ("mHC, linear read/write", "mHC，线性读写")),
          ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", ("mHC, mixing = I, linear read/write", "mHC，混合 = I，线性读写"))]]

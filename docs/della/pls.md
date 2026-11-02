@@ -986,6 +986,22 @@ token（求均值）。输出：`tmp/pls_status/attnres_massive/{full,full-s1,fu
    - 网页（pretrain-practice 7062a1b）：图 50 画每个结构的普通模型和独立头模型（哑铃图，线段是代价）；图 38 加空柱、图 50 加空行作为 w810/w811 的占位（所有者弹窗批准）；记录表加 w810/w811 两行，图 50 的 16 个结构 32 个运行都标上图 50。`article-charts.js` 加了 text 标记和按行悬停（只增不改）。
    - 推送时遇到 `mmap failed: Permission denied`：两个新写的松散对象（69/3c67fa…、70/bde794…）能读不能 mmap。按原内容复制成新 inode 后正常（内容哈希不变）。
 
+## HC 单位混合的中途结果与新增的 6 个运行（2026-11-02）
+
+1. w810/w811 的第一段（主机 16541496，della-k14g3）在 11-02 05:42–05:43 到主机结束时停止（exit 124），回到队列等下一个主机。最后的检查点：w810 step-3649，w811 step-4567。
+2. 中途结果（`tmp/pls_paths/plot/hcid_gap_live.py`，第 48 层训练交叉熵，每个运行先做 250 步平均，再减去同一步的 HC（ahc-fa4thd-vs-d48））：
+   - 普通模型（w811，第 4,574 步）：HC 单位混合 −0.021 nats。同一步 mHC（混合 = I，线性读写）−0.036，Pre-LN +0.038。到第 1,269 步时它还是 −0.001，之后逐步向 mHC 移动。单位混合约解释 HC 与 mHC 普通模型差距的一半。
+   - 独立头（w810，第 3,654 步）：HC 单位混合 +0.075 nats，同一步 mHC（混合 = I，线性读写）+0.002，Pre-LN +0.082。每 250 步的差（`tmp/pls_hcid/compare_sep.py`）：第 1,750–2,749 步 +0.019 到 +0.025，之后 +0.034、+0.051、+0.070、+0.074。
+   - 同一时段 w810 的梯度范数中位数从 16.2 升到 19.7，HC 从 11.7 降到 10.0。第 3,250–3,499 步 w810 的梯度范数最大值是 279（HC 11.7）。学习率在第 1,000 步后线性下降（第 3,500–3,749 步为 0.007，峰值 0.02）。探针运行 w811 的梯度范数与 HC 相近，没有尖峰。
+3. 所有者弹窗（2026-11-02，队列剩 0.66 天时控制会话请各项目加实验）：三项全部批准。
+   - 种子 1 的三个普通模型（检验两半是否真实；单位混合这一半 0.021、读写这一半 0.015，都小于 HC 两个种子之差 0.023）：w890 arch3-hc-s1-probes、w891 arch3-hcid-s1-probes、w892 arch3-mhcidlin-s1-probes。都在 fa4thd 栈上，run id 以 -fa4thd-vs-d48-s1 结尾。不上页面（页面不谈随机种子）。
+   - 种子 1 的 HC 单位混合独立头（检验第 2,750 步后的变差能否重现）：w893 arch3-hcid-s1-sep。不上页面。
+   - 新结构一对：HC 保留学到的混合，读写的动态项改用 mHC 的联合投影（HC_RWDYN=joint，tag -hcrwj）：w888 arch3-hcrwj-sep、w889 arch3-hcrwj-probes。它单独检验读写这一半。
+4. 代码 fcc792c1e4：depth_hc_rwdyn="joint"。读写的动态项来自所有流拼接、按整体 RMS 归一化后的一个线性投影 rw_phi（stream, embed → 2m，初始 0），各乘一个增益 rw_gain（初始 0.01）：read = e_k + 读偏移 + g_r (rw_phi H)_r，write = 1 + 写偏移 + g_w (rw_phi H)_w。混合保持 HC 的（静态部分加每条流的 s·tanh）；w_read、w_write 梯度为 0。默认 HC 没有新参数（rw_phi、rw_gain 为 None），所以旧检查点照常加载。
+   - CPU 测试 `scripts/della/depth_arch_hcrwj_test.py` 全部通过：初始化时与 HC 完全相同（相对误差 0）；混合固定为 I 时，在参数对应的条件下它与 mHC（混合 = I，线性读写）计算相同（相对误差 1.7e-5，来自 mHC 线性读取先加后减 ±8 偏置的 float32 舍入；每条流各自算的 HC 相差 0.97）。所以 HC 单位混合与 mHC 单位混合 + 线性读写之间只差读写动态项的算法。hcres、hcwrite、hcrw、variant3、variant 测试不变，全部通过。
+   - 六个运行的 dry run 打印预期的 run id（`tmp/pls_hcid/dryrun_new.sh`）。都用 4 GPU、--partial、20 h、`-x della-k16g1,della-k17g3`。每个结束的运行留约 38 GB。
+5. 网页（pretrain-practice e185c26）：图 38 加空柱、图 50 加空行「HC, joint read/write」（中文「HC，读写 = 联合投影」），面板标签写明仍在训练；图 38 的 AttnRes 注释删去「, stopped」，使标签在 1280 px 不被截断。记录表加 w888/w889，更新 w810/w811 的时长。plc-figures v=133，plc-record v=105。渲染检查：50 张图都画出，无错误，中英文短图注不超过 2 行，400 px 无溢出。
+
 ## 2026-10-31 审计补录：三个漏记的结果
 
 所有者 2026-10-31：「我们现在开始整理和核对所有结果确保都已记录」。审计脚本在 `tmp/pls_audit2/`（`inventory.py`、`gaps.py`）。
