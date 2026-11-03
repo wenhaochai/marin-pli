@@ -85,6 +85,9 @@
 #                                on the stream sum what makes HC differ? Compare with hcid and HC. Shrinking the sum: hcsum like
 #                                hcid, hcscalar like HC. Moving between streams: both like hcid. Another property: hcsum like
 #                                HC, hcscalar like hcid (probes at layer 24: HC 3.12-3.36, hcid 4.43; layer 48 too)
+#   arch3-hcshrink-{sep,probes}  HC whose mixing only shrinks the stream sum (HC_RES=sumshrink), fixed gains; owner popup 2026-11-03: is
+#                                shrinking alone enough for HC's advantage in the middle layers and for its low cost? At layer 12 and
+#                                step 2,200: HC 3.92, hcid 5.23. Cost: HC 0.047, hcid 0.169
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -133,6 +136,7 @@ case $DESIGN in
   arch3-mhcidlin-s1) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity MHC_RW=linear SEED=1";;
   arch3-hcsum) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sum";;
   arch3-hcscalar) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=scalar";;
+  arch3-hcshrink) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40

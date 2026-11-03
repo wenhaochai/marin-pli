@@ -83,6 +83,12 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            diagonal of I + res (same popup: the mixing shrinks or grows the state and moves nothing between
                            streams). Off-diagonal res offsets and w_res get no gradient. Mixed in float32. At init g = 1, hc's
                            function. Tests for both: scripts/della/depth_arch_hcsum_test.py.
+    depth_hc_res="sumshrink"  hc whose mixing only shrinks the stream sum (owner popup 2026-11-03: w959, hc_res="sum", diverged at
+                           step 27; w960's learned scalar does not shrink; mHC's Sinkhorn moves 0.2% between streams, so no run
+                           separates shrinking from moving): H_o <- H_o - (1 - g) mean_s H_s + w_o F, g fixed per sublayer
+                           (HC_SUM_GAIN). The stream sum has gain g, every difference between streams has gain 1, and no learned
+                           part acts on the state through the mixing. res and w_res get no gradient. No new parameters; not hc's
+                           function at init, since g is not 1. Mixed in float32. Tests: scripts/della/depth_arch_hcshrink_test.py.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
                            with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
                            other half how the read / write dynamic terms are computed?): one projection rw_phi of the
@@ -189,6 +195,20 @@ class MhcParams(eqx.Module):
     def init(Embed: Axis, m: int) -> "MhcParams":
         Mh = Axis("mhc", m * m + 2 * m)
         return MhcParams(hax.zeros((Axis("stream", m), Embed, Mh)), hax.zeros(Mh), hax.full(Axis("hp_scale", 3), 0.01))
+
+
+# Mean row sum of hc's static mixing (I + res) per sublayer 2 l + j: hc's ordinary model on the fa4thd stack at step 4,958 (W&B
+# run ...-sep-bbfrozen-ahc-fa4thd-vs-d48, tmp/pls_hcid/sumfail_data.py). depth_hc_res="sumshrink" takes these as fixed gains.
+HC_SUM_GAIN = (
+    0.8715, 0.9652, 0.7010, 0.5072, 0.7668, 0.4930, 0.6593, 0.7785, 0.6673, 0.6813, 0.6512, 0.7854,
+    0.8181, 0.7664, 0.7203, 0.6813, 0.6379, 0.8391, 0.5304, 0.9800, 0.7428, 0.7432, 0.3213, 0.3274,
+    0.6518, 0.8359, 0.7704, 0.7444, 0.8656, 0.9279, 1.0170, 0.8217, 0.7733, 0.9815, 0.9682, 0.7953,
+    0.8686, 0.8034, 0.6878, 0.7591, 0.8511, 0.8860, 0.9571, 0.7531, 0.9307, 0.8722, 0.9928, 0.7987,
+    0.8707, 0.9605, 0.9711, 0.8852, 0.9372, 0.9069, 1.0541, 0.9953, 1.0627, 0.9054, 0.9615, 0.8266,
+    1.0140, 0.8757, 1.0777, 0.8748, 0.9170, 0.9085, 0.9119, 0.9225, 1.2409, 0.8879, 1.3158, 1.0640,
+    1.1711, 0.9621, 1.2937, 1.0352, 1.5983, 1.0903, 1.3700, 0.8046, 0.9412, 0.8681, 1.2143, 1.0494,
+    1.1222, 0.8776, 0.9755, 0.8315, 0.9917, 0.7626, 0.9078, 0.8575, 1.1364, 1.0528, 1.3300, 1.3588,
+)
 
 
 def _hc_constants(m: int, sublayer):
@@ -375,6 +395,12 @@ class DepthArchLayer(eqx.Module):
                 g = hax.sum(c_res * (c_res + f32(p.res))) / m
                 H = (g * f32(H)).astype(H.dtype) + upd.rename({"stream_out": "stream"})
                 continue
+            if res_mode == "sumshrink":  # the stream sum gets the fixed gain g; every difference between streams keeps gain 1
+                S_ = H.resolve_axis("stream")
+                Hf = f32(H)
+                g = jnp.asarray(HC_SUM_GAIN, jnp.float32)[2 * li + j]
+                H = (Hf - (1.0 - g) * hax.mean(Hf, axis=S_).broadcast_axis(S_)).astype(H.dtype) + upd.rename({"stream_out": "stream"})
+                continue
             if res_mode == "sum":  # every input stream's outflow sums to 1, so the mixing leaves the stream sum unchanged
                 So_ = res.resolve_axis("stream_out")
                 res = res - ((hax.sum(res, axis=So_) - 1.0) / m).broadcast_axis(So_)
@@ -474,8 +500,8 @@ def _hc_rw_sigmoid(config) -> bool:
 
 def _hc_res(config) -> str:
     res = getattr(config, "depth_hc_res", "learned")
-    if res not in ("learned", "identity", "sum", "scalar"):
-        raise ValueError(f"depth_hc_res must be 'learned', 'identity', 'sum' or 'scalar', got {res!r}")
+    if res not in ("learned", "identity", "sum", "scalar", "sumshrink"):
+        raise ValueError(f"depth_hc_res must be 'learned', 'identity', 'sum', 'scalar' or 'sumshrink', got {res!r}")
     return res
 
 
@@ -613,6 +639,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
         if _hc_res(config) != "learned" and arch != "hc":
             raise ValueError(f"depth_hc_res={_hc_res(config)!r} needs hc, got {arch!r}")
+        if _hc_res(config) == "sumshrink" and config.num_layers > len(HC_SUM_GAIN) // 2:
+            raise ValueError(f"depth_hc_res='sumshrink' has gains for {len(HC_SUM_GAIN) // 2} layers, got {config.num_layers}")
         if _hc_rw_joint(config) and (arch != "hc" or _static(config) or _hc_rw_sigmoid(config) or _hc_write_shared(config)):
             raise ValueError(f"depth_hc_rwdyn='joint' needs hc with dynamic routing, linear read/write and per-stream writes, got {arch!r}")
         if static and arch != "attnres":
