@@ -2,7 +2,9 @@
 depth_shrink_power (half the dose of the fixed gains) and depth_preln_leak (Pre-LN with h <- g h + F). Run on a vis node from this worktree:
     CUDA_VISIBLE_DEVICES= nice -n 19 $PY -u scripts/della/depth_arch_hcmove_test.py
 The states are tested in float32 and in bfloat16, the state's dtype in training.
-1. move: no new parameters, and at init it computes hc's layer outputs (the streams are equal and P is symmetric).
+1. move: no new parameters, and at init it computes hc's layer outputs. Equal streams pass this for any row-stochastic P, so the next check gives the
+   streams different contents: with init parameters and writes off, one layer of move keeps the differences as hc does (audit 2026-11-03: gain 0.765
+   per layer without HC_MOVE_SHIFT).
 2. move, static mixing only, writes off, one layer: H_out equals the formula, the stream sum stays, and many layers in a row do not grow the state
    (hc_res="sum" with the same parameters does, in the same loop). A row with no positive entry keeps its own stream.
 3. Half dose: the stream sum gets (g0 g1) ** 0.5, the differences stay.
@@ -31,7 +33,7 @@ from haliax import Axis  # noqa: E402
 from levanter.layers.attention import AttentionBackend, AttentionMask  # noqa: E402
 from levanter.models.lm_model import LmExample  # noqa: E402
 
-from experiments.references.depth_arch_qwen3 import HC_MOVE_BETA, HC_SUM_GAIN  # noqa: E402
+from experiments.references.depth_arch_qwen3 import HC_MOVE_BETA, HC_MOVE_SHIFT, HC_SUM_GAIN  # noqa: E402
 from experiments.references.per_layer_qwen3 import PerLayerQwen3Config, PerLayerQwen3LMHeadModel  # noqa: E402
 
 jax.config.update("jax_default_matmul_precision", "highest")
@@ -93,6 +95,17 @@ assert len(jax.tree_util.tree_leaves(m_mv)) == n
 r = rel(outs(m_mv), outs(m_hc))
 assert r <= 1e-5, r
 print(f"ok 1 move has the same {n} leaves as hc; at init it computes hc's layer outputs (rel {r:.1e})")
+Hd_np = rng.standard_normal((M, B, T, D))
+Hd = hax.named(jnp.asarray(Hd_np, jnp.float32), (Stream, Batch, Pos, Embed))
+init_nw = [dataclasses.replace(p, write=hax.named(jnp.full(p.write.array.shape, -1.0, p.write.array.dtype), p.write.axes)) for p in m_hc.transformer.layers.stacked.hyper]
+d_in = Hd_np - Hd_np.mean(0, keepdims=True)
+gain = {}
+for name_, m_ in (("hc", m_hc), ("move", m_mv)):
+    o_ = np.asarray(step(with_hyper(m_, init_nw), Hd).array, np.float64)
+    gain[name_] = float(np.linalg.norm(o_ - o_.mean(0, keepdims=True)) / np.linalg.norm(d_in))
+    assert abs(float(np.linalg.norm(o_.sum(0) - Hd_np.sum(0)) / np.linalg.norm(Hd_np.sum(0)))) < 1e-5, name_
+assert abs(gain["hc"] - 1.0) < 1e-5 and gain["move"] >= 0.998, gain
+print(f"ok 1 init parameters, different streams, writes off, one layer: the differences get gain {gain['move']:.4f} in move, {gain['hc']:.4f} in hc; the stream sum stays")
 
 
 # 2. move, static mixing, writes off -------------------------------------------------------------------------------------------
@@ -116,7 +129,7 @@ for name, dtype, lim_f, lim_s in (("float32", jnp.float32, 2e-6, 2e-6), ("bfloat
     hc_ = list(mc.transformer.layers.stacked.hyper)
     def P_c(p):
         Ln = [a.name for a in p.res.axes if a.name not in ("stream", "stream_out")][0]
-        a = np.logaddexp(0.0, HC_MOVE_BETA * (np.eye(M) + np.asarray(p.res.rearrange((Ln, "stream", "stream_out")).array[0].astype(jnp.float32), np.float64))) / HC_MOVE_BETA + 1e-6 * np.eye(M)
+        a = np.logaddexp(0.0, HC_MOVE_BETA * (np.eye(M) + np.asarray(p.res.rearrange((Ln, "stream", "stream_out")).array[0].astype(jnp.float32), np.float64) - HC_MOVE_SHIFT)) / HC_MOVE_BETA + 1e-6 * np.eye(M)
         return a / a.sum(1, keepdims=True)
     P0, P1 = P_c(hc_[0]), P_c(hc_[1])
     assert (P0 >= 0).all() and (P1 >= 0).all() and abs(P0.sum(1) - 1).max() < 1e-9

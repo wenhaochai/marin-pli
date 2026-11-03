@@ -59,7 +59,7 @@ def hstep(layer, H, i, *, key):   # depth_arch_qwen3.DepthArchTransformer.output
 
 
 t0 = time.time()
-_, st = eqx.filter_jit(lambda tr_, x_: tr_.layers.scan_via(hstep)(hax.stack(Axis("stream", S), [x_] * S), hax.arange(cfg.Layers), key=None))(tr, x)
+_, st = eqx.filter_jit(lambda tr_, x_: tr_.layers.scan_via(hstep)(hax.stack(Axis("stream", S), [x_] * S).astype(jnp.float32 if getattr(cfg, "depth_hc_state_f32", False) else x_.dtype), hax.arange(cfg.Layers), key=None))(tr, x)
 st = np.asarray(st.rearrange((cfg.Layers.name, "stat")).array, np.float64)
 print(f"forward in {time.time() - t0:.0f}s", flush=True)
 out = dict(ckpt=ckpt, streams=S, tokens=B * T, hidden_share=st[:, 0].tolist(), stream_rms=st[:, 1].tolist(), mean_norm=st[:, 2].tolist())

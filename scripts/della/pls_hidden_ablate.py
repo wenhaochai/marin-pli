@@ -74,7 +74,7 @@ def run(model_, x_, l0):
         H = hax.where(i.array == l0, new.rearrange(H.axes).astype(H.dtype), H)
         return H, share.array
 
-    H, share = tr.layers.scan_via(step)(hax.stack(S, [x_] * m), hax.arange(cfg.Layers), key=None)
+    H, share = tr.layers.scan_via(step)(hax.stack(S, [x_] * m).astype(jnp.float32 if getattr(cfg, "depth_hc_state_f32", False) else x_.dtype), hax.arange(cfg.Layers), key=None)
     s = hax.sum(H, axis="stream")
     logits = model_.lm_head(tr.norm(s)).array.astype(jnp.float32)   # (batch, position, vocab)
     lp = jax.nn.log_softmax(logits[:, :-1], axis=-1)

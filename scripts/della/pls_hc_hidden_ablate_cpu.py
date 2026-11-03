@@ -67,7 +67,7 @@ def final_ce(m, cut):
     tr = m.transformer
     x = m.embeddings.embed(ex.tokens)
     S = Axis("stream", tr.config.hc_streams)
-    H0 = hax.stack(S, [x] * S.size)
+    H0 = hax.stack(S, [x] * S.size).astype(jnp.float32 if getattr(tr.config, "depth_hc_state_f32", False) else x.dtype)
 
     def step(layer, H, i, *, key):
         H = layer.hyper_step(H, ex.attn_mask, key=None, pos_ids=None, layer=i).rearrange(H.axes)

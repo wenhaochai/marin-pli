@@ -93,6 +93,8 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            2026-11-03). With bfloat16 streams w959 diverged at step 27: the stream differences grew to about 300 times the stream sum and
                            bfloat16 rounding of the streams swamped the sum the readouts read. A small-model replay in float32 did not diverge in 800
                            steps. The read input goes to the branch and the stream sum to the readouts in the compute dtype. No new parameters.
+                           The read and the mixing use Precision.HIGHEST: by default a float32 dot on A100 / H100 rounds both operands to TF32 (10 mantissa
+                           bits), which on an A40 loses the sum at differences 1e4 times the sum (relative error 2.4 after one mixing, 2.2e-4 with HIGHEST).
     DepthConfig.depth_shrink_power = p  g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (owner popup 2026-11-03: half the dose,
                            p = 0.5; if shrinking is the cause, the layer-12 loss and the cost should fall between p = 1 and identity mixing).
     depth_preln_leak       Pre-LN whose running sum leaks, h <- g h + F, with the gains of depth_hc_res="sumshrink" (owner popup 2026-11-03:
@@ -101,11 +103,12 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
     depth_hc_res="move"    hc whose mixing moves content between streams and leaves the stream sum alone (owner popup 2026-11-03: the arm of
                            the 2 x 2 that w959 could not give, since hc_res="sum" has negative weights and its stream differences grow by many
                            orders of magnitude, after which bfloat16 rounding of the streams swamps the stream sum). P[i, o] = sp(A[i, o]) /
-                           sum_o' sp(A[i, o']) on hc's whole mixing A (static plus dynamic), sp(a) = softplus(HC_MOVE_BETA a) / HC_MOVE_BETA. Every
-                           row of P is non-negative and sums to 1, so the stream sum stays and every product of mixings has entries in [0, 1]: no
-                           mode can grow. sp is close to a for a > 0.1 and leaves a gradient below 0, so an entry that turns negative can come back
-                           (relu kills it: Adam then gets no gradient). Same parameters as hc, mixed in float32. At init the streams are equal and
-                           P is symmetric, so this is hc's function.
+                           sum_o' sp(A[i, o']) on hc's whole mixing A (static plus dynamic), sp(a) = softplus(HC_MOVE_BETA (a - HC_MOVE_SHIFT)) /
+                           HC_MOVE_BETA. Every row of P is non-negative and sums to 1, so the stream sum stays and every product of mixings has
+                           entries in [0, 1]: no mode can grow. The shift keeps the mixing at I at init: the zeros of I map to 1.2e-4, so a difference
+                           between streams gets gain 0.9993 per sublayer. Without the shift they map to 0.035 and the gain is 0.874, a built-in average
+                           of the streams that hc does not have (audit 2026-11-03). sp leaves a gradient below 0 (relu kills it: Adam then gets no
+                           gradient). Same parameters as hc, mixed in float32. At init the streams are equal, so this is hc's function.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
                            with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
                            other half how the read / write dynamic terms are computed?): one projection rw_phi of the
@@ -228,7 +231,8 @@ HC_SUM_GAIN = (
 )
 
 
-HC_MOVE_BETA = 20.0  # depth_hc_res="move": the sharpness of the soft non-negativity; sp(0) = ln 2 / 20 = 0.035
+HC_MOVE_BETA = 20.0  # depth_hc_res="move": the sharpness of the soft non-negativity
+HC_MOVE_SHIFT = 0.3  # depth_hc_res="move": an entry of A at 0 maps to softplus(-6) / 20 = 1.2e-4, an entry at 1 to 0.7
 
 
 def _sum_gain(config, sublayer):
@@ -412,8 +416,10 @@ class DepthArchLayer(eqx.Module):
             if _hc_write_shared(self.config):  # one write for every stream: the mean of the per-stream writes
                 So_ = write.resolve_axis("stream_out")
                 write = hax.mean(write, axis=So_).broadcast_axis(So_)
-            x = hax.dot(read.astype(H.dtype), H, axis="stream")
-            if getattr(self.config, "depth_hc_state_f32", False):  # the streams alone are in float32: the branch runs in the compute dtype
+            state_f32 = getattr(self.config, "depth_hc_state_f32", False)
+            prec = jax.lax.Precision.HIGHEST if state_f32 else None  # no TF32 on the float32 streams: see depth_hc_state_f32
+            x = hax.dot(read.astype(H.dtype), H, axis="stream", precision=prec)
+            if state_f32:  # the streams alone are in float32: the branch runs in the compute dtype
                 x = x.astype(p.res.dtype)
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
@@ -433,14 +439,14 @@ class DepthArchLayer(eqx.Module):
                 continue
             if res_mode == "move":  # non-negative outflows that sum to 1 per input stream: the sum stays and no mode can grow
                 So_ = res.resolve_axis("stream_out")
-                pos = hax.named(jax.nn.softplus(HC_MOVE_BETA * res.array), res.axes) / HC_MOVE_BETA + 1e-6 * c_res  # 1e-6: a row far below 0 keeps its own stream
+                pos = hax.named(jax.nn.softplus(HC_MOVE_BETA * (res.array - HC_MOVE_SHIFT)), res.axes) / HC_MOVE_BETA + 1e-6 * c_res  # 1e-6: a row far below 0 keeps its own stream
                 res = pos / hax.sum(pos, axis=So_).broadcast_axis(So_)
                 H = (hax.dot(res, f32(H), axis="stream").astype(H.dtype) + upd).rename({"stream_out": "stream"})
                 continue
             if res_mode == "sum":  # every input stream's outflow sums to 1, so the mixing leaves the stream sum unchanged
                 So_ = res.resolve_axis("stream_out")
                 res = res - ((hax.sum(res, axis=So_) - 1.0) / m).broadcast_axis(So_)
-                H = (hax.dot(res, f32(H), axis="stream").astype(H.dtype) + upd).rename({"stream_out": "stream"})
+                H = (hax.dot(res, f32(H), axis="stream", precision=prec).astype(H.dtype) + upd).rename({"stream_out": "stream"})
                 continue
             H = (hax.dot(res.astype(H.dtype), H, axis="stream") + upd).rename({"stream_out": "stream"})
         return H

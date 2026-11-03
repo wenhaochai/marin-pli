@@ -71,7 +71,7 @@ def streams(m):
     tr = m.transformer
     L = tr.config.num_layers
     x = m.embeddings.embed(tokens)
-    H0 = hax.stack(Axis("stream", tr.config.hc_streams), [x] * tr.config.hc_streams)
+    H0 = hax.stack(Axis("stream", tr.config.hc_streams), [x] * tr.config.hc_streams).astype(jnp.float32 if getattr(tr.config, "depth_hc_state_f32", False) else x.dtype)
 
     def step(layer, H, i, *, key):
         H = layer.hyper_step(H, mask, key=None, pos_ids=None, layer=i).rearrange(H.axes)

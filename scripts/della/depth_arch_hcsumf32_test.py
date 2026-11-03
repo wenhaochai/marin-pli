@@ -3,7 +3,9 @@ Parameters and inputs are cast to bfloat16 as in training. Run on a vis node fro
     CUDA_VISIBLE_DEVICES= nice -n 19 $PY -u scripts/della/depth_arch_hcsumf32_test.py
 1. No new parameters. At init the layer outputs equal hc's up to rounding, and they come out in bfloat16.
 2. The mixing alone, writes off, in bfloat16 compute: the stream state stays float32 and keeps the stream sum to float32 rounding, against about
-   1e-2 with bfloat16 streams. With differences 1e5 times the sum, the float32 streams still return the sum; the bfloat16 streams do not.
+   1e-2 with bfloat16 streams. With differences 1e4 times the sum, the same two models through hyper_step: float32 streams return the sum; bfloat16 do not.
+   The read and the mixing are dots with Precision.HIGHEST, in the forward and in the gradient: by default a float32 dot on A100 / H100 rounds both operands to
+   TF32, which a CPU test cannot see. This file leaves jax_default_matmul_precision unset, as in training. The GPU check is depth_arch_hcsumf32_gpu_test.py.
 3. The branch runs in bfloat16: one sublayer's write has the compute dtype.
 4. A separate-heads and a probes training step are finite; res and w_res get non-zero gradient.
 5. Wrong combinations are rejected.
@@ -29,7 +31,6 @@ from levanter.models.lm_model import LmExample  # noqa: E402
 
 from experiments.references.per_layer_qwen3 import PerLayerQwen3Config, PerLayerQwen3LMHeadModel  # noqa: E402
 
-jax.config.update("jax_default_matmul_precision", "highest")
 rng = np.random.default_rng(0)
 B, T, V, L, D, M = 4, 16, 300, 4, 48, 4
 Batch, Pos, Vocab = Axis("batch", B), Axis("position", T), Axis("vocab", V)
@@ -101,16 +102,42 @@ s_in32, s_in16 = arr(H32).sum(0), arr(H16).sum(0)
 r32, r16 = rel(arr(out32.rearrange((Stream, Batch, Pos, Embed))).sum(0), s_in32), rel(arr(out16.rearrange((Stream, Batch, Pos, Embed))).sum(0), s_in16)
 assert r32 <= 2e-5 and r16 > 1e-3, (r32, r16)
 print(f"ok 2 writes off, bfloat16 compute, one layer: the stream sum changes by rel {r32:.1e} with float32 streams, {r16:.1e} with bfloat16 streams")
-# differences 1e5 times the sum: storing the streams in float32 returns the sum; storing them in bfloat16 loses it
-base = rng.standard_normal((1, B, T, D))
+# differences 1e4 times the sum, through the model: the float32 streams return the sum, the bfloat16 streams lose it
+base = rng.standard_normal((B, T, D))
 dif = rng.standard_normal((M, B, T, D)); dif = dif - dif.mean(0, keepdims=True)
-big = base / M + 1e5 * dif * np.linalg.norm(base) / np.linalg.norm(dif)
-true_sum = big.sum(0)
-s32 = np.asarray(jnp.asarray(big, jnp.float32), np.float64).sum(0)
-s16 = np.asarray(jnp.asarray(big, jnp.bfloat16).astype(jnp.float32), np.float64).sum(0)
-e32, e16 = rel(s32, true_sum), rel(s16, true_sum)
-assert e32 < 0.1 and e16 > 10, (e32, e16)
-print(f"ok 2 differences 1e5 times the sum: relative error of the stream sum {e32:.1e} in float32, {e16:.1e} in bfloat16")
+big = base[None] / M + 1e4 * dif * np.linalg.norm(base) / np.linalg.norm(dif)
+H32b, H16b = (hax.named(jnp.asarray(big, dt), (Stream, Batch, Pos, Embed)) for dt in (jnp.float32, jnp.bfloat16))
+o32, o16 = stepped(m_f, H32b), stepped(m_b, H16b)
+true32, true16 = arr(H32b).sum(0), base
+e32, e16 = rel(arr(o32.rearrange((Stream, Batch, Pos, Embed))).sum(0), true32), rel(arr(o16.rearrange((Stream, Batch, Pos, Embed))).sum(0), true16)
+assert e32 < 2e-2 and e16 > 1.0, (e32, e16)
+print(f"ok 2 differences 1e4 times the sum, one layer through the model: relative error of the stream sum {e32:.1e} with float32 streams, {e16:.1e} with bfloat16 streams")
+# Precision.HIGHEST on the read and the mixing, in the forward and in the gradient
+def f32_dots(fn, *a):
+    out = []
+    def walk(jp):
+        for eq in jp.eqns:
+            for v in eq.params.values():
+                if hasattr(v, "eqns"):
+                    walk(v)
+                elif hasattr(v, "jaxpr"):
+                    walk(v.jaxpr)
+            if eq.primitive.name == "dot_general" and all(x.aval.dtype == jnp.float32 for x in eq.invars):
+                out.append(eq.params["precision"])
+    walk(jax.make_jaxpr(fn)(*a).jaxpr)
+    return out
+is_high = lambda pr: (pr == jax.lax.Precision.HIGHEST) or (isinstance(pr, tuple) and pr[0] == jax.lax.Precision.HIGHEST)  # noqa: E731
+lay_f = mp.cast_to_compute(with_hyper(m_f, nw)).transformer.layer(0)
+fw = lambda h_: lay_f.hyper_step(h_, mask, key=None, pos_ids=None, layer=0)  # noqa: E731
+pr_f = f32_dots(fw, H32)
+assert sum(map(is_high, pr_f)) == 4, pr_f   # two sublayers, each one read and one mixing
+gw = jax.grad(lambda h_: jnp.sum(fw(h_).array ** 2.0))
+pr_g = f32_dots(gw, H32)
+assert sum(map(is_high, pr_g)) >= 8, pr_g   # the same four forward, and their transposes
+lay_b = mp.cast_to_compute(with_hyper(m_b, nw)).transformer.layer(0)
+pr_b = f32_dots(lambda h_: lay_b.hyper_step(h_, mask, key=None, pos_ids=None, layer=0), H16)
+assert not any(map(is_high, pr_b)), pr_b   # without depth_hc_state_f32 nothing changes
+print(f"ok 2 float32 dots in one layer: {sum(map(is_high, pr_f))} of {len(pr_f)} with HIGHEST in the forward (read and mixing), {sum(map(is_high, pr_g))} of {len(pr_g)} in the gradient, 0 without depth_hc_state_f32")
 
 # 3. the branch runs in the compute dtype --------------------------------------------------------------------------------------
 lay = mp.cast_to_compute(m_f).transformer.layer(0)
