@@ -29,6 +29,22 @@ full-attention Qwen3 layers within each document. The pieces follow hnet/models/
    identity backward, and R a zero-initialised matrix applied in float32 (an Adam parameter, so MuonH leaves it alone).
 7. The decoder (``dec_layers`` layers and a final norm) at every byte position, then the byte head.
 
+Ablations (owner popup 2026-11-03; each off by default, so the default model is unchanged bit for bit):
+- ``route="space"``: a chunk opens at a document's first byte and at every byte whose previous byte is whitespace (space,
+  newline, tab, carriage return); a special token (BOS, EOS) is a chunk of its own, as it is a token of the Marin
+  tokenizer. p = 1 there and 0 elsewhere, as with ``route="fixed"``.
+- ``route="bpe"``: the chunks are the tokens of the 128K Marin tokenizer. The byte cache marks every text byte that opens
+  a Marin token by adding ``BPE_FLAG`` (the byte vocabulary's size, 512) to its id (convert_token_start_cache.py; special
+  tokens are never flagged, so the data pipeline still finds EOS, and each is a chunk of its own); the model strips the
+  flag before the embedding and before the loss's targets, so inputs, targets and the vocabulary are the byte task's.
+- ``no_route_grad``: p enters the output (the STE factor and the EMA weights) through a stop_gradient, so only the ratio
+  loss trains q and k; the encoder still learns through the chunk vectors.
+- ``no_residual``: no R h_t term (R stays a zero matrix with a zero gradient).
+- ``no_ema``: dechunking without the EMA, z_j = c_j.
+``route_p`` (evaluation only) replaces the routing's output p, and so the boundaries p > 0.5 and the EMA weights, by a
+given one, while the chunk vectors stay the model's own encoder states: hnet_eval.py scores one model with another model's
+boundaries this way (``routing`` returns a model's p).
+
 Training adds the ratio loss alpha * N / (N - 1) * ((N - 1) F G + (1 - F)(1 - G)), F the share of boundaries and G the
 mean of p over the batch's bytes, N = ``chunk_ratio`` (target bytes per chunk), alpha = ``ratio_loss_weight`` (0.03 in
 the paper). Evaluation (no key or no train step) returns the byte states alone, so eval losses are the plain byte loss.
@@ -49,7 +65,8 @@ import haliax.nn as hnn
 from haliax import Axis, NamedArray
 from levanter.layers.attention import AttentionMask
 from levanter.models.llama import LlamaEmbedding, LlamaTransformer
-from levanter.models.lm_model import LmConfig
+from levanter.models.lm_model import LmConfig, split_activations
+from levanter.models.loss import maybe_fused_next_token_loss
 from levanter.models.qwen import Qwen3Config, Qwen3LMHeadModel
 from levanter.trainer import current_train_step
 
@@ -60,6 +77,15 @@ class HNetRoute(StrEnum):
     START = "start"     # (h_{t-1}, h_t): the original H-Net, which reads the opening byte itself
     CAUSAL = "causal"   # (h_{t-2}, h_{t-1}): bytes before t only
     FIXED = "fixed"     # every round(chunk_ratio) bytes from a document's first byte: nothing learned
+    SPACE = "space"     # after whitespace, a special token or a document start: nothing learned
+    BPE = "bpe"         # the 128K Marin tokenizer's token starts, flagged in the data: nothing learned
+
+
+DATA_ROUTES = (HNetRoute.FIXED, HNetRoute.SPACE, HNetRoute.BPE)   # p is 0 or 1, fixed by the bytes and documents alone
+# v256 ids of the whitespace bytes (the byte-level alphabet of the Marin tokenizer: Ġ space, Ċ newline, ĉ tab, č CR)
+WHITESPACE_IDS = (220, 198, 197, 201)
+N_BYTES = 256     # v256 ids below this are bytes; 256.. are the special tokens
+BPE_FLAG = 512    # the byte vocabulary's size: a byte that opens a Marin token is stored as id + BPE_FLAG
 
 
 @LmConfig.register_subclass("qwen3_hnet")
@@ -74,10 +100,17 @@ class HNetQwen3Config(Qwen3Config):
     slot_margin: float = 1.25
     ratio_loss_weight: float = 0.03
     route: HNetRoute = HNetRoute.START
+    no_route_grad: bool = False    # p enters the output through a stop_gradient: only the ratio loss trains q and k
+    no_residual: bool = False      # drop R h_t
+    no_ema: bool = False           # z_j = c_j
 
     def __post_init__(self):
         super().__post_init__()
         HNetRoute(self.route)   # fails fast on an unknown route
+        if self.no_route_grad and self.route in DATA_ROUTES:
+            raise ValueError(f"no_route_grad with route={self.route}: that route has no learned routing")
+        if self.slot_margin <= 0:
+            raise ValueError(f"slot_margin={self.slot_margin}: must be positive")
         if self.enc_layers < 1 or self.dec_layers < 1:
             raise ValueError(f"enc_layers={self.enc_layers}, dec_layers={self.dec_layers}: at least one each")
         if not self.chunk_ratio > 1:
@@ -140,11 +173,55 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
         ident = lambda k: eqx.tree_at(lambda m: m.weight, hnn.Linear.init(In=E, Out=Eo, key=k, use_bias=False, out_first=True), eye)  # noqa: E731
         q_proj, k_proj = ident(k_t), ident(k_t)
         residual_proj = hax.zeros((Eo, E), dtype=jnp.float32)
+        if config.route == HNetRoute.BPE and Vocab.size != BPE_FLAG:
+            raise ValueError(f"route=bpe stores flagged ids as id + {BPE_FLAG}: needs the {BPE_FLAG}-id byte vocabulary, got {Vocab.size}")
         return cls(transformer, embeddings, lm_head, encoder, decoder, q_proj, k_proj, residual_proj)
 
-    def chunked(self, h: NamedArray, attn_mask: Optional[AttentionMask | NamedArray]):
+    def split_ids(self, input_ids: NamedArray) -> tuple[NamedArray, Optional[NamedArray]]:
+        """(byte ids, Marin token starts) for route="bpe", where the data flags each token start as id + BPE_FLAG; the
+        ids unchanged and None for every other route."""
+        if self.config.route != HNetRoute.BPE:
+            return input_ids, None
+        start = input_ids >= BPE_FLAG
+        return hax.where(start, input_ids - BPE_FLAG, input_ids), start
+
+    def compute_next_token_loss(  # type: ignore[override]
+        self,
+        example,
+        *,
+        key=None,
+        reduction=hax.mean,
+        reduction_axis=None,
+        logsumexp_weight=None,
+        loss_dtype=jnp.float32,
+        logit_soft_cap=None,
+    ):
+        """LmHeadModel.compute_next_token_loss, except that the targets are the byte ids without route="bpe"'s
+        token-start flag (activations reads the flags from the raw ids). Other routes: the base method unchanged."""
+        kw = dict(key=key, reduction=reduction, reduction_axis=reduction_axis, logsumexp_weight=logsumexp_weight,
+                  loss_dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
+        if self.config.route != HNetRoute.BPE:
+            return super().compute_next_token_loss(example, **kw)
+        ids, _ = self.split_ids(example.tokens)
+        activations, aux_loss = split_activations(self.activations(example.tokens, example.attn_mask, key=key))
+        loss = maybe_fused_next_token_loss(self.Pos, self.Embed, self.Vocab, activations, self.get_lm_head(), ids,
+                                           loss_weight=example.loss_weight, reduction=reduction, reduction_axis=reduction_axis,
+                                           logsumexp_weight=logsumexp_weight, dtype=loss_dtype, logit_soft_cap=logit_soft_cap)
+        return loss + aux_loss
+
+    def routing(self, input_ids: NamedArray, attn_mask=None, *, pos_ids: Optional[NamedArray] = None) -> jax.Array:
+        """p of every byte (raw array, batch axes first, then position; boundaries are p > 0.5 before the slot cap):
+        this model's routing, for scoring another model with it (activations' ``route_p``)."""
+        ids, start = self.split_ids(input_ids)
+        h = self.encoder(self.embeddings.embed(ids), attn_mask=attn_mask, key=None, pos_ids=pos_ids)
+        return self.chunked(h, attn_mask, ids=ids, token_start=start)[0]
+
+    def chunked(self, h: NamedArray, attn_mask: Optional[AttentionMask | NamedArray], *, ids: Optional[NamedArray] = None,
+                token_start: Optional[NamedArray] = None, route_p: Optional[jax.Array] = None):
         """Routing and chunking of the encoder states h: (boundary probabilities p, boundaries b, chunk order, number
-        of valid chunks, chunk states, chunk mask), the arrays raw, batch axes first, then position."""
+        of valid chunks, chunk states, chunk mask), the arrays raw, batch axes first, then position. ``ids`` (the byte
+        ids) is needed by route="space" and "bpe", ``token_start`` by route="bpe"; ``route_p`` (batch axes first, then
+        position) replaces the routing's p."""
         cfg: HNetQwen3Config = self.config  # type: ignore[assignment]
         Pos = h.resolve_axis(cfg.max_Pos.name)
         E = cfg.Embed
@@ -173,6 +250,24 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
             t = jnp.arange(L)
             opened = jax.lax.cummax(jnp.where(start, t, 0), axis=start.ndim - 1) if seg is not None else 0
             p = jnp.broadcast_to(((t - opened) % round(cfg.chunk_ratio) == 0).astype(p.dtype), p.shape)
+        elif cfg.route in (HNetRoute.SPACE, HNetRoute.BPE):
+            if ids is None:
+                raise ValueError(f"route={cfg.route} needs the byte ids")
+            x = ids.rearrange((*batch_axes, Pos)).array
+            special = x >= N_BYTES   # a special token (BOS, EOS) is a chunk of its own, as it is a token of the Marin tokenizer
+            if cfg.route == HNetRoute.SPACE:
+                after = jnp.isin(x, jnp.asarray(WHITESPACE_IDS)) | special
+                opens = jnp.concatenate([jnp.ones_like(after[..., :1]), after[..., :-1]], axis=-1) | special
+            else:
+                if token_start is None:
+                    raise ValueError("route=bpe needs the token starts (ids flagged in the data)")
+                opens = token_start.rearrange((*batch_axes, Pos)).array | special
+                opens = opens.at[..., 0].set(True)
+            if seg is not None:
+                opens = opens | start
+            p = opens.astype(p.dtype)
+        if route_p is not None:   # evaluation: another routing's output (its p, and so its boundaries and EMA weights)
+            p = jnp.asarray(route_p, p.dtype)
         b_raw = p > 0.5
         b = b_raw & (jnp.cumsum(b_raw, axis=-1) <= M)   # chunks past the slots join the last one
         t = jnp.arange(L)
@@ -185,31 +280,38 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
             segc = jnp.where(valid, segc, jnp.max(seg) + 1)   # empty slots: one segment of their own after the last document
         return p, b_raw, b, order, valid, hc, segc, batch_axes
 
-    def activations(self, input_ids, attn_mask=None, *, key=None, pos_ids: Optional[NamedArray] = None):  # type: ignore[override]
+    def activations(self, input_ids, attn_mask=None, *, key=None, pos_ids: Optional[NamedArray] = None, route_p: Optional[jax.Array] = None):  # type: ignore[override]
         cfg: HNetQwen3Config = self.config  # type: ignore[assignment]
         k_enc, k_main, k_dec = jrandom.split(key, 3) if key is not None else (None, None, None)
         Pos = input_ids.resolve_axis(cfg.max_Pos.name)
         E = cfg.Embed
+        input_ids, token_start = self.split_ids(input_ids)
         x = self.embeddings.embed(input_ids)
         h = self.encoder(x, attn_mask=attn_mask, key=k_enc, pos_ids=pos_ids)
-        p, b_raw, b, order, valid, hc, segc, batch_axes = self.chunked(h, attn_mask)
+        p, b_raw, b, order, valid, hc, segc, batch_axes = self.chunked(h, attn_mask, ids=input_ids, token_start=token_start,
+                                                                       route_p=route_p)
+        p_out = jax.lax.stop_gradient(p) if cfg.no_route_grad else p   # where p enters the output
         Chunk = Pos.resize(cfg.slots)
         hc_n = hax.named(hc, (*batch_axes, Chunk, E))
         mask_c = AttentionMask.causal()
         if segc is not None:
             mask_c = mask_c.with_segment_ids(hax.named(segc, (*batch_axes, Chunk)))
         zc = self.transformer(hc_n, attn_mask=mask_c, key=k_main).rearrange((*batch_axes, Chunk, E)).array
-        pc = jnp.clip(jnp.take_along_axis(p, order, axis=-1), 1e-4, 1 - 1e-4)
-        first = jnp.arange(cfg.slots) == 0
-        if segc is not None:
-            first = first | jnp.concatenate([jnp.ones_like(segc[..., :1], dtype=bool), segc[..., 1:] != segc[..., :-1]], axis=-1)
-        z = _ema(pc, zc.astype(jnp.float32), first)
+        if cfg.no_ema:
+            z = zc.astype(jnp.float32)
+        else:
+            pc = jnp.clip(jnp.take_along_axis(p_out, order, axis=-1), 1e-4, 1 - 1e-4)
+            first = jnp.arange(cfg.slots) == 0
+            if segc is not None:
+                first = first | jnp.concatenate([jnp.ones_like(segc[..., :1], dtype=bool), segc[..., 1:] != segc[..., :-1]], axis=-1)
+            z = _ema(pc, zc.astype(jnp.float32), first)
         idx = jnp.cumsum(b, axis=-1) - 1
         out = jnp.take_along_axis(z, idx[..., None], axis=-2)   # (batch..., L, E)
-        sel = jnp.where(b, p, 1.0 - p)
-        hr = h.rearrange((*batch_axes, Pos, E)).array.astype(jnp.float32)
-        res = jnp.einsum("...le,oe->...lo", hr, self.residual_proj.rearrange((self.q_proj.Out, E)).array)
-        y = out * _ste(sel)[..., None] + res
+        sel = jnp.where(b, p_out, 1.0 - p_out)
+        y = out * _ste(sel)[..., None]
+        if not cfg.no_residual:
+            hr = h.rearrange((*batch_axes, Pos, E)).array.astype(jnp.float32)
+            y = y + jnp.einsum("...le,oe->...lo", hr, self.residual_proj.rearrange((self.q_proj.Out, E)).array)
         y = hax.named(y.astype(h.dtype), (*batch_axes, Pos, E))
         y = self.decoder(y, attn_mask=attn_mask, key=k_dec, pos_ids=pos_ids)
         if key is None or current_train_step() is None:
