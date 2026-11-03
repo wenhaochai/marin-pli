@@ -4,7 +4,7 @@ depth_shrink_power (half the dose of the fixed gains) and depth_preln_leak (Pre-
 The states are tested in float32 and in bfloat16, the state's dtype in training.
 1. move: no new parameters, and at init it computes hc's layer outputs. Equal streams pass this for any row-stochastic P, so the next check gives the
    streams different contents: with init parameters and writes off, one layer of move keeps the differences as hc does (audit 2026-11-03: gain 0.765
-   per layer without HC_MOVE_SHIFT).
+   per layer with beta 20 and no shift).
 2. move, static mixing only, writes off, one layer: H_out equals the formula, the stream sum stays, and many layers in a row do not grow the state
    (hc_res="sum" with the same parameters does, in the same loop). A row with no positive entry keeps its own stream.
 3. Half dose: the stream sum gets (g0 g1) ** 0.5, the differences stay.

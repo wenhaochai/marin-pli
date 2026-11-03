@@ -105,10 +105,13 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            orders of magnitude, after which bfloat16 rounding of the streams swamps the stream sum). P[i, o] = sp(A[i, o]) /
                            sum_o' sp(A[i, o']) on hc's whole mixing A (static plus dynamic), sp(a) = softplus(HC_MOVE_BETA (a - HC_MOVE_SHIFT)) /
                            HC_MOVE_BETA. Every row of P is non-negative and sums to 1, so the stream sum stays and every product of mixings has
-                           entries in [0, 1]: no mode can grow. The shift keeps the mixing at I at init: the zeros of I map to 1.2e-4, so a difference
-                           between streams gets gain 0.9993 per sublayer. Without the shift they map to 0.035 and the gain is 0.874, a built-in average
-                           of the streams that hc does not have (audit 2026-11-03). sp leaves a gradient below 0 (relu kills it: Adam then gets no
-                           gradient). Same parameters as hc, mixed in float32. At init the streams are equal, so this is hc's function.
+                           entries in [0, 1]: no mode can grow. The shift keeps the mixing at I at init: the zeros of I map to 1.5e-4 of the row, so a
+                           difference between streams gets gain 0.9994 per sublayer. With beta 20 and no shift they map to 0.031 and the gain is 0.874, a
+                           built-in average of the streams that hc does not have (audit 2026-11-03). Beta 20 with shift 0.3 keeps I, and its entries stay
+                           under the knee for too long: positive off-diagonal mass 0.04 at step 1,000 of the small replay, about 0.003 in layers 13-24.
+                           Beta 50 with shift 0.1: 0.08, with every layer group open by step 400 (HC 0.21; HC's final checkpoint at full scale 0.03-0.23).
+                           sp leaves a gradient below 0 (relu kills it: Adam then gets no gradient). Same parameters as hc, mixed in float32. At init the
+                           streams are equal, so this is hc's function.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
                            with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
                            other half how the read / write dynamic terms are computed?): one projection rw_phi of the
@@ -231,8 +234,8 @@ HC_SUM_GAIN = (
 )
 
 
-HC_MOVE_BETA = 20.0  # depth_hc_res="move": the sharpness of the soft non-negativity
-HC_MOVE_SHIFT = 0.3  # depth_hc_res="move": an entry of A at 0 maps to softplus(-6) / 20 = 1.2e-4, an entry at 1 to 0.7
+HC_MOVE_BETA = 50.0  # depth_hc_res="move": the sharpness of the soft non-negativity
+HC_MOVE_SHIFT = 0.1  # depth_hc_res="move": an entry of A at 0 maps to softplus(-5) / 50 = 1.3e-4, an entry at 1 to 0.9
 
 
 def _sum_gain(config, sublayer):
