@@ -254,6 +254,7 @@ class PerLayerQwen3Config(Qwen3Config):
     depth_mhc_rw: str = "sigmoid"  # "linear": mhc's read and write through hc's signed maps r = e_k + ..., w = 1 + ... (docstring)
     depth_hc_write: str = "stream"  # "shared": hc's write is one weight shared by every stream (depth_arch_qwen3 docstring)
     depth_hc_res: str = "learned"  # "identity": hc's mixing fixed to I; "sum": mixing keeps the stream sum; "scalar": one learned number per sublayer; "sumshrink": fixed gains on the stream sum only; "move": non-negative outflows that sum to 1 (depth_arch_qwen3 docstring)
+    depth_hc_state_f32: bool = False  # with depth_hc_res="sum": the streams in float32, the rest in the compute dtype (depth_arch_qwen3 docstring)
     depth_shrink_power: float = 1.0  # g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (depth_arch_qwen3 docstring)
     depth_preln_leak: bool = False  # preln with h <- g h + F, the same fixed gains (depth_arch_qwen3 docstring)
     depth_hc_rwdyn: str = "stream"  # "joint": hc's read / write dynamic terms from mhc's joint projection (depth_arch_qwen3 docstring)

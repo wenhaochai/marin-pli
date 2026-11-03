@@ -89,6 +89,10 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            (HC_SUM_GAIN). The stream sum has gain g, every difference between streams has gain 1, and no learned
                            part acts on the state through the mixing. res and w_res get no gradient. No new parameters; not hc's
                            function at init, since g is not 1. Mixed in float32. Tests: scripts/della/depth_arch_hcshrink_test.py.
+    depth_hc_state_f32     with depth_hc_res="sum": the streams are stored in float32, everything else stays in the compute dtype (owner popup
+                           2026-11-03). With bfloat16 streams w959 diverged at step 27: the stream differences grew to about 300 times the stream sum and
+                           bfloat16 rounding of the streams swamped the sum the readouts read. A small-model replay in float32 did not diverge in 800
+                           steps. The read input goes to the branch and the stream sum to the readouts in the compute dtype. No new parameters.
     DepthConfig.depth_shrink_power = p  g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (owner popup 2026-11-03: half the dose,
                            p = 0.5; if shrinking is the cause, the layer-12 loss and the cost should fall between p = 1 and identity mixing).
     depth_preln_leak       Pre-LN whose running sum leaks, h <- g h + F, with the gains of depth_hc_res="sumshrink" (owner popup 2026-11-03:
@@ -409,6 +413,8 @@ class DepthArchLayer(eqx.Module):
                 So_ = write.resolve_axis("stream_out")
                 write = hax.mean(write, axis=So_).broadcast_axis(So_)
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
+            if getattr(self.config, "depth_hc_state_f32", False):  # the streams alone are in float32: the branch runs in the compute dtype
+                x = x.astype(p.res.dtype)
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
             res_mode = _hc_res(self.config)
@@ -669,6 +675,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
         if _hc_res(config) != "learned" and arch != "hc":
             raise ValueError(f"depth_hc_res={_hc_res(config)!r} needs hc, got {arch!r}")
+        if getattr(config, "depth_hc_state_f32", False) and (arch != "hc" or _hc_res(config) != "sum"):
+            raise ValueError(f"depth_hc_state_f32 needs hc with depth_hc_res='sum', got {arch!r}, {_hc_res(config)!r}")
         leak = bool(getattr(config, "depth_preln_leak", False))
         power = float(getattr(config, "depth_shrink_power", 1.0))
         if leak and arch != "preln":
@@ -702,9 +710,11 @@ class DepthArchTransformer(eqx.Module):
 
                 def hstep(layer, H, i, *, key):
                     H = layer.hyper_step(H, attn_mask, key=key, pos_ids=pos_ids, layer=i).rearrange(H.axes)  # the scan carry keeps its axis order
-                    return H, hax.sum(H, axis="stream")
+                    return H, (hax.sum(H, axis="stream").astype(x.dtype) if state_f32 else hax.sum(H, axis="stream"))
 
-                _, outs = self.layers.scan_via(hstep)(hax.stack(Axis("stream", m), [x] * m), hax.arange(cfg.Layers), key=skeys)
+                state_f32 = bool(getattr(cfg, "depth_hc_state_f32", False))
+                H0 = hax.stack(Axis("stream", m), [x] * m)
+                _, outs = self.layers.scan_via(hstep)(H0.astype(jnp.float32) if state_f32 else H0, hax.arange(cfg.Layers), key=skeys)
                 return outs
 
             def rstep(layer, h, i, *, key):

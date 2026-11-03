@@ -92,6 +92,8 @@
 #                                of the 2 x 2 (hcid: neither; hcshrink: shrink; HC: both). arch3-hcshrink05-{sep,probes} half the dose,
 #                                g ** 0.5: between hcshrink and hcid if shrinking is the cause. arch3-plleak-{sep,probes} Pre-LN with h <- g h + F,
 #                                the same gains: does shrinking need HC's streams? Pre-LN's cost 0.084. Owner popup 2026-11-03.
+#   arch3-hcsumf32-{sep,probes}  arch3-hcsum with the streams in float32 (HC_STATE_F32=1); w959 diverged at step 27 with bfloat16 streams. HC's mixing
+#                                without its shrink of the sum: the other arm of the 2 x 2 with hcshrink. Owner popup 2026-11-03.
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -142,6 +144,7 @@ case $DESIGN in
   arch3-hcscalar) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=scalar";;
   arch3-hcshrink) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink";;
   arch3-hcmove) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=move";;
+  arch3-hcsumf32) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sum HC_STATE_F32=1";;
   arch3-hcshrink05) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink SHRINK_POWER=0.5";;
   arch3-plleak) S="$base LAYERS=48 PDP=4 ARCH=preln PRELN_LEAK=1";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
