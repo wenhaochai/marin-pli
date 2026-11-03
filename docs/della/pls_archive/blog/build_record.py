@@ -143,6 +143,11 @@ RUNS = [
     (S("Hyper-Connections, mixing = I: probes only", "Hyper-Connections，混合 = I：只加探针"), "130m", 48, 2.6, 4, ("wq", "w811", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48"), "38, 50"),
     (S("Hyper-Connections, joint read/write: separate heads", "Hyper-Connections，读写 = 联合投影：独立头"), "130m", 48, 2.6, 4, ("wq", "w888", "130m-della4xh100-pls1-sep-ahc-hcrwj-fa4thd-vs-d48"), "38, 50"),
     (S("Hyper-Connections, joint read/write: probes only", "Hyper-Connections，读写 = 联合投影：只加探针"), "130m", 48, 2.6, 4, ("wq", "w889", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcrwj-fa4thd-vs-d48"), "38, 50"),
+    # owner popup 2026-11-02: is the mixing's effect on the stream sum what makes HC differ?
+    (S("Hyper-Connections, mixing keeps the sum: separate heads", "Hyper-Connections，混合保持流之和：独立头"), "130m", 48, 2.6, 4, ("wq", "w961", "130m-della4xh100-pls1-sep-ahc-hcsum-fa4thd-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, mixing keeps the sum: probes only", "Hyper-Connections，混合保持流之和：只加探针"), "130m", 48, 2.6, 4, ("wq", "w959", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcsum-fa4thd-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, mixing = a scalar: separate heads", "Hyper-Connections，混合 = 标量：独立头"), "130m", 48, 2.6, 4, ("wq", "w962", "130m-della4xh100-pls1-sep-ahc-hcscalar-fa4thd-vs-d48"), "38, 50"),
+    (S("Hyper-Connections, mixing = a scalar: probes only", "Hyper-Connections，混合 = 标量：只加探针"), "130m", 48, 2.6, 4, ("wq", "w960", "130m-della4xh100-pls1-sep-bbfrozen-ahc-hcscalar-fa4thd-vs-d48"), "38, 50"),
     # owner popups 2026-10-27: reruns of the Pre-LN probes model on both attention kernels (Figure 45); separate heads whose
     # intermediate losses stop at 50% / 80% of training (Figure 46)
     (S("Pre-LN, rerun of seed 0 on JAX-flash attention: probes only", "Pre-LN，种子 0 在 JAX flash 注意力上重跑：只加探针"), "130m", 48, 2.6, 4, ("wq", "w500", "130m-della4xh100-pls1-sep-bbfrozen-apreln-vs-d48-rerun"), "45"),

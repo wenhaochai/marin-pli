@@ -923,33 +923,37 @@ def sep_cost(tag, layers=48):
     return None if a is None or b is None else round(float(a[layers - 1] - b[layers - 1]), 4)
 
 
+# "read/ write": the category axis wraps at spaces only, and with 14 bars "read/write" overlapped its neighbours (2026-11-02)
 VAR38 = [("amhc-vs-d48-g4", {"en": "mHC", "zh": "mHC"}, GREY),
-         ("amhc-mhcid-vs-d48", {"en": "mHC, residual mixing = I", "zh": "mHC，残差混合 = I"}, BLUE7),
+         ("amhc-mhcid-vs-d48", {"en": "mHC, mixing = I", "zh": "mHC，混合 = I"}, BLUE7),
          # owner popup 2026-10-27 (wq w510/w511): mHC with HC's signed read / write maps, the mirror of HC's sigmoid variant
-         ("amhc-mhcrwlin-vs-d48", {"en": "mHC, read/write = linear", "zh": "mHC，读写 = 线性"}, BLUE7),
+         ("amhc-mhcrwlin-vs-d48", {"en": "mHC, read/ write = linear", "zh": "mHC，读写 = 线性"}, BLUE7),
          # owner popup 2026-10-30 (wq w711/w712): mHC with identity mixing and linear read/write, the causal test of Fig 49
-         ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", {"en": "mHC, mixing = I, read/write = linear", "zh": "mHC，混合 = I，读写 = 线性"}, BLUE7),
+         ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", {"en": "mHC, mixing = I, read/ write = linear", "zh": "mHC，混合 = I，读写 = 线性"}, BLUE7),
          # owner popup 2026-10-26 (~16:40; wq w389/w390): HC with mHC's read / write maps, beside HC itself
          ("ahc-vs-d48-g4", {"en": "HC", "zh": "HC"}, GREY),
-         ("ahc-hcrwsig-vs-d48", {"en": "HC, read/write = sigmoid", "zh": "HC，读写 = sigmoid"}, BLUE7),
+         ("ahc-hcrwsig-vs-d48", {"en": "HC, read/ write = sigmoid", "zh": "HC，读写 = sigmoid"}, BLUE7),
          # owner popup 2026-10-30 (wq w713/w714): HC whose write is one weight shared by every stream
          ("ahc-hcwsh-fa4thd-vs-d48", {"en": "HC, one shared write", "zh": "HC，各流共用写入"}, BLUE7),
          # owner popup 2026-11-01 (wq w810/w811): HC with the residual mixing fixed to I; does HC's learned mixing cost its ordinary model?
          ("ahc-hcid-fa4thd-vs-d48", {"en": "HC, mixing = I", "zh": "HC，混合 = I"}, BLUE7),
          # owner popup 2026-11-02 (wq w888/w889): HC with mHC's joint read / write computation, mixing kept
-         ("ahc-hcrwj-fa4thd-vs-d48", {"en": "HC, joint read/write", "zh": "HC，读写 = 联合投影"}, BLUE7),
+         ("ahc-hcrwj-fa4thd-vs-d48", {"en": "HC, joint read/ write", "zh": "HC，读写 = 联合投影"}, BLUE7),
+         # owner popup 2026-11-02 (wq w959-w962): HC whose mixing keeps the stream sum; HC whose mixing is one learned number
+         ("ahc-hcsum-fa4thd-vs-d48", {"en": "HC, mixing keeps the sum", "zh": "HC，混合保持流之和"}, BLUE7),
+         ("ahc-hcscalar-fa4thd-vs-d48", {"en": "HC, mixing = a scalar", "zh": "HC，混合 = 标量"}, BLUE7),
          ("aattnres-vs-d48-g4", {"en": "AttnRes (Full), seed 0", "zh": "AttnRes (Full)，种子 0"}, GREY),
          ("aattnres-vs-d48-s1-g4", {"en": "AttnRes (Full), seed 1", "zh": "AttnRes (Full)，种子 1"}, GREY),
          ("aattnres-qclip10-vs-d48", {"en": "AttnRes (Full), query scale \u2264 10", "zh": "AttnRes (Full)，query 尺度 \u2264 10"}, BLUE7)]
 v38 = [sep_cost(t) for t, _, _ in VAR38]
 # the query-clip probes run (w79) diverged at step 660 and was stopped (owner popup 2026-10-24): that bar stays empty
 w38 = [lab for (t, lab, _), v in zip(VAR38, v38) if v is None and t != "aattnres-qclip10-vs-d48"]
-lab38 = {"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w38) + " still training" if w38 else "") + " · query scale \u2264 10: ordinary model diverged",   # ", stopped" dropped 2026-11-02: the line clipped at 1280 px with two runs training
-         "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w38) + " 仍在训练" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散"}
+lab38 = {"en": "Layer 48" + (" · empty HC bars still training" if w38 else "") + " · query scale \u2264 10: ordinary model diverged",   # names on the axis (2026-11-02: the list of names clipped at 1280 px)
+         "zh": "第 48 层" + (" · HC 空柱仍在训练" if w38 else "") + " · query 尺度 \u2264 10：普通模型发散"}
 figs["fig-arch-var"] = dict(title={"en": "Separate-heads cost of design variants, 48 layers", "zh": "结构变体的独立头代价，48 层"},
                             legend=[[{"en": "Control", "zh": "对照"}, GREY, "box"], [{"en": "Variant", "zh": "变体"}, BLUE7, "box"]],
                             quantity={"en": "Last-layer training loss, separate heads minus probes (nats)", "zh": "最后一层训练损失，独立头减探针（nats）"}, height=200, cols=1,
-                            panels=[dict(xlim=[-0.7, len(VAR38) - 0.3], ylim=[-0.05, 0.15], yticks=lin_ticks(-0.05, 0.15, 0.05, "{:.2f}"), cats=[l for _, l, _ in VAR38], label=lab38,
+                            panels=[dict(xlim=[-0.7, len(VAR38) - 0.3], ylim=[-0.05, 0.20], yticks=lin_ticks(-0.05, 0.20, 0.05, "{:.2f}"), cats=[l for _, l, _ in VAR38], label=lab38,
                                          marks=[dict(type="bars", color=c, vals=[v if i == n else None for n, v in enumerate(v38)]) for i, (_, _, c) in enumerate(VAR38)])])
 print("Fig 38 separate-heads cost", dict(zip([t for t, _, _ in VAR38], v38)))
 HCD = {6: round(A10["hc"][5] - A10["hc-probes"][5], 4) if {"hc", "hc-probes"} <= set(A10) else None,
@@ -1219,7 +1223,8 @@ SP50 = [[("apreln-vs-d48-g4", ("Pre-LN", "Pre-LN")), ("apreln-vs-d48-s1", ("Pre-
          ("ahc-hcrwsig-vs-d48", ("HC, sigmoid read/write", "HC，sigmoid 读写")), ("ahc-hcs8-vs-d48", ("HC, 8 streams", "HC，8 条流")),
          ("ahc-hcs2-vs-d48", ("HC, 2 streams", "HC，2 条流")), ("ahc-rstatic-vs-d48", ("HC, static routing", "HC，静态路由")),
          ("ahc-hcwsh-fa4thd-vs-d48", ("HC, one shared write", "HC，各流共用写入")), ("ahc-hcid-fa4thd-vs-d48", ("HC, mixing = I", "HC，混合 = I")),
-         ("ahc-hcrwj-fa4thd-vs-d48", ("HC, joint read/write", "HC，读写 = 联合投影"))],
+         ("ahc-hcrwj-fa4thd-vs-d48", ("HC, joint read/write", "HC，读写 = 联合投影")),
+         ("ahc-hcsum-fa4thd-vs-d48", ("HC, mixing keeps the sum", "HC，混合保持流之和")), ("ahc-hcscalar-fa4thd-vs-d48", ("HC, mixing = a scalar", "HC，混合 = 标量"))],
         [("amhc-vs-d48-g4", ("mHC", "mHC")), ("amhc-mhcid-vs-d48", ("mHC, mixing = I", "mHC，混合 = I")),
          ("amhc-mhcrwlin-vs-d48", ("mHC, linear read/write", "mHC，线性读写")),
          ("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", ("mHC, mixing = I, linear read/write", "mHC，混合 = I，线性读写"))]]
@@ -1247,8 +1252,8 @@ figs["fig-sep-probes"] = dict(title={"en": "Last-layer loss of the ordinary and 
                               legend=[[{"en": "Ordinary model with probes", "zh": "普通模型加探针"}, BLUE3, "dot"], [{"en": "Separate heads", "zh": "独立头"}, BLUE7, "dot"]],
                               quantity={"en": "Last-layer final training loss (nats)", "zh": "最后一层最终训练损失（nats）"}, height=round(18 * (_n50 + 2.3)), cols=1,
                               panels=[dict(xlim=[2.74, 3.115], ylim=[-(_n50 - 1) - 0.6, 2.4], xticks=[[v, f"{v:.2f}"] for v in (2.90, 2.95, 3.00, 3.05, 3.10)], yticks=[],
-                                           label={"en": "Layer 48" + (" · " + "; ".join(l["en"] for l in w50) + " still training" if w50 else ""),
-                                                  "zh": "第 48 层" + (" · " + "；".join(l["zh"] for l in w50) + " 仍在训练" if w50 else "")},
+                                           label={"en": "Layer 48" + (" · rows without dots still training" if w50 else ""),
+                                                  "zh": "第 48 层" + (" · 没有点的行仍在训练" if w50 else "")},
                                            rows=_rows50,
                                            marks=_seg50 + [dict(type="text", color=NAME50, anchor="end", pts=[q for q, _ in _names50], labels=[l for _, l in _names50]),
                                                            dict(type="dots", color=BLUE3, pts=_p50), dict(type="dots", color=BLUE7, pts=_s50)])])
