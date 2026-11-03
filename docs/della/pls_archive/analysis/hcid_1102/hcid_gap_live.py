@@ -1,10 +1,10 @@
-"""Status of the HC identity-mixing pair (wq w810 separate heads, w811 probes; still training), against finished
+"""The HC identity-mixing pair (wq w810 separate heads, w811 probes; finished 2026-11-02), against finished
 references on the same attention stack (fa4thd).
 
 y: layer-48 train cross-entropy (W&B train/pls/L47) minus HC's (ahc-fa4thd-vs-d48) at the same step, each run smoothed
    with a 250-step running mean first. Left: the ordinary model (the probes run, PLS_DETACH_BB=1, whose layer-48 readout
    is the model's own head). Right: the separate-heads run.
-   Live runs: W&B reself/marin-della muonh-qwen3-130m-della4xh100-pls1-sep[-bbfrozen]-ahc-hcid-fa4thd-vs-d48, read now.
+   These runs: W&B reself/marin-della muonh-qwen3-130m-della4xh100-pls1-sep[-bbfrozen]-ahc-hcid-fa4thd-vs-d48, read now.
    References: ../../pls_blog/d48g4.npz (HC, mHC with identity mixing + linear read/write, Pre-LN; all fa4thd).
 x: training step (4959 steps in all), from step 500.
 Criterion (docs pls.md, 2026-11-01): the ordinary model reaching mHC's level (about 2.92, 0.04 below HC) means HC's
@@ -20,7 +20,7 @@ apply_style()
 RED = tone("red", 600)
 P = "reself/marin-della/muonh-qwen3-130m-della4xh100-pls1"
 BASE = "ahc-fa4thd-vs-d48"
-LIVE = ("ahc-hcid-fa4thd-vs-d48", "HC, identity mixing (training)", BLUE, "line")
+LIVE = ("ahc-hcid-fa4thd-vs-d48", "HC, identity mixing", BLUE, "line")
 REF = [("amhc-mhcid-mhcrwlin-fa4thd-vs-d48", "mHC, identity mixing + linear read/write", RED, "dash"),
        ("apreln-fa4thd-vs-d48", "Pre-LN", GREY, "dash")]
 W = 250
@@ -75,7 +75,7 @@ for ax, setup, name in ((axs[0], "sep-bbfrozen", "Ordinary model"), (axs[1], "se
     refs_now = {}
     for tag, lab, _, _ in REF:
         xr, yr = minus(ref(f"{setup}-{tag}"), base)
-        refs_now[lab] = float(yr[xr == xs][0])
+        refs_now[lab] = float(yr[np.argmin(np.abs(xr - xs))])
     print(f"{name} | {LIVE[1]}: last logged step {max(d)}, smoothed difference at step {xs} {y[-1]:+.3f}; "
           f"references at that step {', '.join(f'{k} {v:+.3f}' for k, v in refs_now.items())}", flush=True)
     ax.set_xlim(0, 5000)
