@@ -579,6 +579,7 @@ if LR_SCHED not in ("", "wsd") or not 0 < LR_DECAY < 1 or not 0 <= MIN_LR_RATIO 
 # as the main network on learned chunks of HNET_N target bytes. Needs VOCAB_K=256 and the segmented attention (fa4 or
 # jax_flash: the main network's chunk mask has no THD metadata). Tag -hnet<enc>x<dec>n<N>. HNET_ROUTE=causal (2026-11-01, popup
 # "排队"; Cartesia's no-lookahead remark): byte t's boundary reads only the encoder states before t (HNetRoute); tag -rcausal.
+# HNET_ROUTE=fixed (2026-11-03, popup "全部 7 组"): a chunk every round(HNET_N) bytes from each document's start; tag -rfixed.
 HNET_ENC = int(os.environ.get("HNET_ENC", "2"))
 HNET_DEC = int(os.environ.get("HNET_DEC", "2"))
 HNET_N = float(os.environ.get("HNET_N", "4.74"))
@@ -704,7 +705,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "inoise":
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-r{INOISE_RAND_MAX // 1000}k" if INOISE_RAND_MAX else "") + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "hnet":
-        variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}" + ("-rcausal" if HNET_ROUTE == HNetRoute.CAUSAL else "")
+        variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}" + ("" if HNET_ROUTE == HNetRoute.START else f"-r{HNET_ROUTE.value}")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":

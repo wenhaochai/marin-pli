@@ -77,9 +77,13 @@ def reference(model, cfg, ids, mask):
     for r in range(B):
         p = np.ones(L)
         shift = 1 if cfg.route == HNetRoute.CAUSAL else 0
+        doc = 0
         for t in range(1, L):
             if seg[r, t] != seg[r, t - 1]:
+                doc = t
                 p[t] = 1.0
+            elif cfg.route == HNetRoute.FIXED:
+                p[t] = float((t - doc) % round(cfg.chunk_ratio) == 0)
             elif shift and (t == 1 or seg[r, t - 1] != seg[r, t - 2]):
                 p[t] = 0.0   # a document's second byte: no pair inside the document
             else:
@@ -216,4 +220,45 @@ check("causal: ratio loss finite and matches the formula on the causal p", bool(
       f"{float(aux):.6f} vs {want_aux:.6f}; boundary share {b_c.mean():.3f}")
 lg = cmodel(ids, mask, key=None).array
 check("causal: training activations and eval logits finite", bool(jnp.all(jnp.isfinite(y.array))) and bool(jnp.all(jnp.isfinite(lg))))
+# route="fixed": no learned routing
+_, fmodel = make(128, HNetRoute.FIXED)
+p_f, b_f = routing(fmodel, ids)
+want_f = np.zeros((B, L), bool)
+for r in range(B):
+    doc = 0
+    for t in range(L):
+        if t and seg_np[r, t] != seg_np[r, t - 1]:
+            doc = t
+        want_f[r, t] = (t - doc) % 4 == 0
+check("fixed: a boundary every 4 bytes from each document's first byte, p is 0 or 1", np.array_equal(b_f, want_f) and set(np.unique(p_f)) <= {0.0, 1.0},
+      f"boundaries per row {b_f.sum(axis=1).tolist()}")
+ids2_np = ids_np.copy()
+ids2_np[0, 50:] = np.random.default_rng(5).integers(0, 256, size=L - 50)
+_, b_f2 = routing(fmodel, hax.named(jnp.asarray(ids2_np), (Batch, Pos)))
+check("fixed: boundaries do not depend on the bytes", np.array_equal(b_f, b_f2))
+
+
+def floss(m):
+    t_ = lt._TRACED_TRAIN_STEP.set(jnp.asarray(5))
+    try:
+        y_, aux_ = m.activations(ids, mask, key=jrandom.PRNGKey(7))
+    finally:
+        lt._TRACED_TRAIN_STEP.reset(t_)
+    return jnp.mean(jnp.square(y_.array)) + aux_
+
+
+fgrads = eqx.filter_grad(floss)(fmodel)
+fnorm = lambda g: float(jnp.linalg.norm(g.weight.array))   # noqa: E731
+check("fixed: q and k get no gradient, the encoder does", fnorm(fgrads.q_proj) == 0 and fnorm(fgrads.k_proj) == 0
+      and sum(float(jnp.sum(jnp.abs(g))) for g in jax.tree_util.tree_leaves(eqx.filter(fgrads.encoder, eqx.is_array))) > 0,
+      f"q {fnorm(fgrads.q_proj):.1e}, k {fnorm(fgrads.k_proj):.1e}")
+check("fixed: all gradients finite", all(bool(jnp.all(jnp.isfinite(g))) for g in jax.tree_util.tree_leaves(eqx.filter(fgrads, eqx.is_array))))
+# MuonH on a zero gradient must leave the weight where it is (no division by a zero norm)
+from levanter.optim.muonh import scale_with_muonh  # noqa: E402
+_w = {"w": fmodel.q_proj}
+_opt = scale_with_muonh(learning_rate=0.01)
+_st = _opt.init(_w)
+_u, _ = _opt.update({"w": fgrads.q_proj}, _st, _w)
+_uw = _u["w"].weight.array
+check("fixed: a MuonH step on the zero gradient of q is finite and zero", bool(jnp.all(jnp.isfinite(_uw))) and float(jnp.abs(_uw).max()) < 1e-5, f"max |update| {float(jnp.abs(_uw).max()):.1e}")
 print("ALL OK" if ok else "FAILED")
