@@ -96,11 +96,12 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            not 1. Tests: scripts/della/depth_arch_hcmove_test.py.
     depth_hc_res="move"    hc whose mixing moves content between streams and leaves the stream sum alone (owner popup 2026-11-03: the arm of
                            the 2 x 2 that w959 could not give, since hc_res="sum" has negative weights and its stream differences grow by many
-                           orders of magnitude, after which bfloat16 rounding of the streams swamps the stream sum). P[i, o] = relu(A[i, o] +
-                           HC_MOVE_SEED) / sum_o' relu(A[i, o'] + HC_MOVE_SEED) on hc's whole mixing A (static plus dynamic). Every row of P is
-                           non-negative and sums to 1, so the stream sum stays and every product of mixings has entries in [0, 1]: no mode can
-                           grow. The seed keeps the off-diagonal entries active at init, where A = I and relu has zero gradient at 0. Same
-                           parameters as hc, mixed in float32. At init the streams are equal and P is symmetric, so this is hc's function.
+                           orders of magnitude, after which bfloat16 rounding of the streams swamps the stream sum). P[i, o] = sp(A[i, o]) /
+                           sum_o' sp(A[i, o']) on hc's whole mixing A (static plus dynamic), sp(a) = softplus(HC_MOVE_BETA a) / HC_MOVE_BETA. Every
+                           row of P is non-negative and sums to 1, so the stream sum stays and every product of mixings has entries in [0, 1]: no
+                           mode can grow. sp is close to a for a > 0.1 and leaves a gradient below 0, so an entry that turns negative can come back
+                           (relu kills it: Adam then gets no gradient). Same parameters as hc, mixed in float32. At init the streams are equal and
+                           P is symmetric, so this is hc's function.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
                            with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
                            other half how the read / write dynamic terms are computed?): one projection rw_phi of the
@@ -223,7 +224,7 @@ HC_SUM_GAIN = (
 )
 
 
-HC_MOVE_SEED = 0.01  # depth_hc_res="move": added to every mixing entry, so the off-diagonal entries are active at init
+HC_MOVE_BETA = 20.0  # depth_hc_res="move": the sharpness of the soft non-negativity; sp(0) = ln 2 / 20 = 0.035
 
 
 def _sum_gain(config, sublayer):
@@ -426,7 +427,7 @@ class DepthArchLayer(eqx.Module):
                 continue
             if res_mode == "move":  # non-negative outflows that sum to 1 per input stream: the sum stays and no mode can grow
                 So_ = res.resolve_axis("stream_out")
-                pos = hax.nn.relu(res + HC_MOVE_SEED) + 1e-6 * c_res  # 1e-6: a row with no positive entry keeps its own stream
+                pos = hax.named(jax.nn.softplus(HC_MOVE_BETA * res.array), res.axes) / HC_MOVE_BETA + 1e-6 * c_res  # 1e-6: a row far below 0 keeps its own stream
                 res = pos / hax.sum(pos, axis=So_).broadcast_axis(So_)
                 H = (hax.dot(res, f32(H), axis="stream").astype(H.dtype) + upd).rename({"stream_out": "stream"})
                 continue

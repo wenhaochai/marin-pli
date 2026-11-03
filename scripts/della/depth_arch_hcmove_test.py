@@ -31,7 +31,7 @@ from haliax import Axis  # noqa: E402
 from levanter.layers.attention import AttentionBackend, AttentionMask  # noqa: E402
 from levanter.models.lm_model import LmExample  # noqa: E402
 
-from experiments.references.depth_arch_qwen3 import HC_MOVE_SEED, HC_SUM_GAIN  # noqa: E402
+from experiments.references.depth_arch_qwen3 import HC_MOVE_BETA, HC_SUM_GAIN  # noqa: E402
 from experiments.references.per_layer_qwen3 import PerLayerQwen3Config, PerLayerQwen3LMHeadModel  # noqa: E402
 
 jax.config.update("jax_default_matmul_precision", "highest")
@@ -116,7 +116,7 @@ for name, dtype, lim_f, lim_s in (("float32", jnp.float32, 2e-6, 2e-6), ("bfloat
     hc_ = list(mc.transformer.layers.stacked.hyper)
     def P_c(p):
         Ln = [a.name for a in p.res.axes if a.name not in ("stream", "stream_out")][0]
-        a = np.maximum(np.eye(M) + np.asarray(p.res.rearrange((Ln, "stream", "stream_out")).array[0].astype(jnp.float32), np.float64) + HC_MOVE_SEED, 0.0) + 1e-6 * np.eye(M)
+        a = np.logaddexp(0.0, HC_MOVE_BETA * (np.eye(M) + np.asarray(p.res.rearrange((Ln, "stream", "stream_out")).array[0].astype(jnp.float32), np.float64))) / HC_MOVE_BETA + 1e-6 * np.eye(M)
         return a / a.sum(1, keepdims=True)
     P0, P1 = P_c(hc_[0]), P_c(hc_[1])
     assert (P0 >= 0).all() and (P1 >= 0).all() and abs(P0.sum(1) - 1).max() < 1e-9
@@ -137,12 +137,12 @@ for _ in range(24):
 g_mv, g_su = np.linalg.norm(arr(H_mv)) / np.linalg.norm(H0np), np.linalg.norm(arr(H_su)) / np.linalg.norm(H0np)
 assert g_mv <= 2.0 and g_su > 10.0, (g_mv, g_su)
 print(f"ok 2 static mixing, 24 layers in a row: state norm x {g_mv:.2f} for move, x {g_su:.2e} for hc_res='sum'")
-# a row with no positive entry keeps its own stream
+# a row far below 0 keeps its own stream
 neg = [dataclasses.replace(p, res=hax.named(jnp.full(p.res.array.shape, -5.0, p.res.array.dtype), p.res.axes)) for p in nw]
 H0f = hax.named(jnp.asarray(H0np, jnp.float32), (Stream, Batch, Pos, Embed))
 r_n = rel(arr(step(with_hyper(m_mv, neg), H0f)), H0np)
 assert r_n <= 1e-6, r_n
-print(f"ok 2 no positive entry in any row: every stream keeps itself (rel {r_n:.1e})")
+print(f"ok 2 every entry far below 0: every stream keeps itself (rel {r_n:.1e})")
 
 # 3. half dose -----------------------------------------------------------------------------------------------------------------
 m_half = model("hc", depth_hc_res="sumshrink", depth_shrink_power=0.5)
@@ -181,10 +181,11 @@ for detach in (False, True):
     gh = gr.transformer.layers.stacked.hyper
     s = lambda f: sum(float(jnp.sum(jnp.abs(getattr(p, f).array.astype(jnp.float32)))) for p in gh)  # noqa: E731
     assert s("res") > 0 and s("w_res") > 0, (s("res"), s("w_res"))
-    # at init too, the seed keeps the off-diagonal entries active
+    # at init too: soft non-negativity leaves a gradient on every entry
     loss0, gr0 = eqx.filter_value_and_grad(lf)(mp.cast_to_compute(model("hc", depth_hc_res="move", pls_detach_backbone=detach)))
     gh0 = gr0.transformer.layers.stacked.hyper
     s0 = sum(float(jnp.sum(jnp.abs(p.res.array.astype(jnp.float32)))) for p in gh0)
+    assert s0 > 0, s0
     print(f"ok 5 move, {name} step: loss {float(loss):.4f}, |grad res| {s('res'):.2e}, |grad w_res| {s('w_res'):.2e}; at init loss {float(loss0):.4f}, |grad res| {s0:.2e}")
     for tag, kw in (("half dose", dict(depth_hc_res="sumshrink", depth_shrink_power=0.5)),):
         l_, _ = eqx.filter_value_and_grad(lf)(mp.cast_to_compute(with_hyper(model("hc", pls_detach_backbone=detach, **kw), rnd)))
