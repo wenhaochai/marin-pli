@@ -1,6 +1,6 @@
 """Raw W&B rows behind sep_layers.py: per-layer train CE, grad norm and routing-parameter norms of w810 (HC mixing = I,
-separate heads) and its references, at the rows that carry grad norms (every 10 steps). W&B reself/marin-della. A finished
-run's cache is never re-read; the live run is read again unless its last step is unchanged. Output: cache/<tag>.npz."""
+separate heads) and its references, at the rows that carry grad norms (every 10 steps). W&B reself/marin-della. A cache
+is re-read only when the run's last step moved, so a finished run is read once more after its last live read. Output: cache/<tag>.npz."""
 import sys, numpy as np, wandb
 from pathlib import Path
 HERE = Path(__file__).parent; (HERE / "cache").mkdir(exist_ok=True)
@@ -10,7 +10,7 @@ TAGS = ["sep-ahc-hcid-fa4thd-vs-d48", "sep-ahc-fa4thd-vs-d48", "sep-amhc-mhcid-m
 api = wandb.Api(timeout=300)
 for tag in TAGS:
     r = api.run(P + tag); last = int(r.summary.get("_step", -1)); f = HERE / "cache" / f"{tag}.npz"
-    if f.exists() and (r.state == "finished" or int(np.load(f)["last"]) == last):
+    if f.exists() and int(np.load(f)["last"]) == last:   # a cache written while the run was live has a smaller last
         print(tag, "cached", last, flush=True); continue
     arch_mhc = "amhc" in tag
     hyper = ["phi", "bias", "gain"] if arch_mhc else ["read", "write", "scale", "w_read", "w_write", "res", "w_res"]
