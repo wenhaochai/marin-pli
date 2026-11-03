@@ -108,19 +108,21 @@ H0np = rng.standard_normal((M, B, T, D))
 for name, dtype, lim_s, lim_d in (("float32", jnp.float32, 2e-6, 2e-6), ("bfloat16", jnp.bfloat16, 2e-2, 2e-2)):
     H0 = hax.named(jnp.asarray(H0np, dtype), (Stream, Batch, Pos, Embed))
     h0 = np.asarray(H0.array.astype(jnp.float32), np.float64)
-    Hs = step0(with_hyper(m_shr, nw), H0)
-    assert H0.array.dtype == dtype
+    cast = (lambda m_: m_) if dtype == jnp.float32 else mp.cast_to_compute   # as the trainer does: the writes and the stored state stay in this dtype
+    Hd = cast(with_hyper(m_shr, nw)).transformer.layer(0).hyper_step(H0, mask, key=None, pos_ids=None, layer=0)
+    assert Hd.array.dtype == dtype, Hd.array.dtype
+    Hs = step0(cast(with_hyper(m_shr, nw)), H0)
     r_sum = rel(Hs.sum(0), g01 * h0.sum(0))
     d_in, d_out = h0 - h0.mean(0, keepdims=True), Hs - Hs.mean(0, keepdims=True)
     r_dif = rel(d_out, d_in)
     assert r_sum <= lim_s, f"{name}: stream sum vs g0 g1 x sum: rel {r_sum:.2e}"
     assert r_dif <= lim_d, f"{name}: differences between streams changed by rel {r_dif:.2e}"
     other = [dataclasses.replace(p, res=rand_like(p.res, 0.7, 300 + j), w_res=rand_like(p.w_res, 0.7, 310 + j)) for j, p in enumerate(nw)]
-    r_dep = rel(step0(with_hyper(m_shr, other), H0), Hs)
+    r_dep = rel(step0(cast(with_hyper(m_shr, other)), H0), Hs)
     assert r_dep == 0.0, f"{name}: depends on res or w_res: rel {r_dep:.2e}"
     print(f"ok 2 {name}, writes off, one layer: sum gain g0 g1 = {g01:.3f} (rel {r_sum:.1e}); differences kept (rel {r_dif:.1e}); no dependence on res, w_res")
     # the same state through hc_res="sum": what storing the state in this dtype does to the sum it should keep, and how far the differences move
-    Hq = step0(with_hyper(m_sum, nw), H0)
+    Hq = step0(cast(with_hyper(m_sum, nw)), H0)
     d_q = Hq - Hq.mean(0, keepdims=True)
     print(f"   hc_res='sum' here: stream sum rel {rel(Hq.sum(0), h0.sum(0)):.1e}; differences grow by {np.linalg.norm(d_q) / np.linalg.norm(d_in):.2f} times")
 

@@ -89,6 +89,18 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            (HC_SUM_GAIN). The stream sum has gain g, every difference between streams has gain 1, and no learned
                            part acts on the state through the mixing. res and w_res get no gradient. No new parameters; not hc's
                            function at init, since g is not 1. Mixed in float32. Tests: scripts/della/depth_arch_hcshrink_test.py.
+    DepthConfig.depth_shrink_power = p  g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (owner popup 2026-11-03: half the dose,
+                           p = 0.5; if shrinking is the cause, the layer-12 loss and the cost should fall between p = 1 and identity mixing).
+    depth_preln_leak       Pre-LN whose running sum leaks, h <- g h + F, with the gains of depth_hc_res="sumshrink" (owner popup 2026-11-03:
+                           does the effect of shrinking need hc's streams?). No new parameters. Not Pre-LN's function at init, since g is
+                           not 1. Tests: scripts/della/depth_arch_hcmove_test.py.
+    depth_hc_res="move"    hc whose mixing moves content between streams and leaves the stream sum alone (owner popup 2026-11-03: the arm of
+                           the 2 x 2 that w959 could not give, since hc_res="sum" has negative weights and its stream differences grow by many
+                           orders of magnitude, after which bfloat16 rounding of the streams swamps the stream sum). P[i, o] = relu(A[i, o] +
+                           HC_MOVE_SEED) / sum_o' relu(A[i, o'] + HC_MOVE_SEED) on hc's whole mixing A (static plus dynamic). Every row of P is
+                           non-negative and sums to 1, so the stream sum stays and every product of mixings has entries in [0, 1]: no mode can
+                           grow. The seed keeps the off-diagonal entries active at init, where A = I and relu has zero gradient at 0. Same
+                           parameters as hc, mixed in float32. At init the streams are equal and P is symmetric, so this is hc's function.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
                            with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
                            other half how the read / write dynamic terms are computed?): one projection rw_phi of the
@@ -209,6 +221,14 @@ HC_SUM_GAIN = (
     1.1711, 0.9621, 1.2937, 1.0352, 1.5983, 1.0903, 1.3700, 0.8046, 0.9412, 0.8681, 1.2143, 1.0494,
     1.1222, 0.8776, 0.9755, 0.8315, 0.9917, 0.7626, 0.9078, 0.8575, 1.1364, 1.0528, 1.3300, 1.3588,
 )
+
+
+HC_MOVE_SEED = 0.01  # depth_hc_res="move": added to every mixing entry, so the off-diagonal entries are active at init
+
+
+def _sum_gain(config, sublayer):
+    """The fixed gain of sublayer 2 l + j, float32; sublayer may be traced."""
+    return jnp.asarray(HC_SUM_GAIN, jnp.float32)[sublayer] ** float(getattr(config, "depth_shrink_power", 1.0))
 
 
 def _hc_constants(m: int, sublayer):
@@ -343,6 +363,9 @@ class DepthArchLayer(eqx.Module):
                     h = hax.where(first, h + f, cast(Any, post)(h * float(2 * L) + f))
                 else:
                     h = cast(Any, post)(h * jnp.where(first, 1.0, float(2 * L)).astype(h.dtype) + f)
+            elif getattr(self.config, "depth_preln_leak", False):
+                g = _sum_gain(self.config, 2 * (layer.array if isinstance(layer, NamedArray) else layer) + j)
+                h = (g * h.astype(jnp.float32)).astype(h.dtype) + f
             else:
                 h = h + f
         return h
@@ -398,8 +421,14 @@ class DepthArchLayer(eqx.Module):
             if res_mode == "sumshrink":  # the stream sum gets the fixed gain g; every difference between streams keeps gain 1
                 S_ = H.resolve_axis("stream")
                 Hf = f32(H)
-                g = jnp.asarray(HC_SUM_GAIN, jnp.float32)[2 * li + j]
+                g = _sum_gain(self.config, 2 * li + j)
                 H = (Hf - (1.0 - g) * hax.mean(Hf, axis=S_).broadcast_axis(S_)).astype(H.dtype) + upd.rename({"stream_out": "stream"})
+                continue
+            if res_mode == "move":  # non-negative outflows that sum to 1 per input stream: the sum stays and no mode can grow
+                So_ = res.resolve_axis("stream_out")
+                pos = hax.nn.relu(res + HC_MOVE_SEED) + 1e-6 * c_res  # 1e-6: a row with no positive entry keeps its own stream
+                res = pos / hax.sum(pos, axis=So_).broadcast_axis(So_)
+                H = (hax.dot(res, f32(H), axis="stream").astype(H.dtype) + upd).rename({"stream_out": "stream"})
                 continue
             if res_mode == "sum":  # every input stream's outflow sums to 1, so the mixing leaves the stream sum unchanged
                 So_ = res.resolve_axis("stream_out")
@@ -500,8 +529,8 @@ def _hc_rw_sigmoid(config) -> bool:
 
 def _hc_res(config) -> str:
     res = getattr(config, "depth_hc_res", "learned")
-    if res not in ("learned", "identity", "sum", "scalar", "sumshrink"):
-        raise ValueError(f"depth_hc_res must be 'learned', 'identity', 'sum', 'scalar' or 'sumshrink', got {res!r}")
+    if res not in ("learned", "identity", "sum", "scalar", "sumshrink", "move"):
+        raise ValueError(f"depth_hc_res must be 'learned', 'identity', 'sum', 'scalar', 'sumshrink' or 'move', got {res!r}")
     return res
 
 
@@ -639,8 +668,14 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
         if _hc_res(config) != "learned" and arch != "hc":
             raise ValueError(f"depth_hc_res={_hc_res(config)!r} needs hc, got {arch!r}")
-        if _hc_res(config) == "sumshrink" and config.num_layers > len(HC_SUM_GAIN) // 2:
-            raise ValueError(f"depth_hc_res='sumshrink' has gains for {len(HC_SUM_GAIN) // 2} layers, got {config.num_layers}")
+        leak = bool(getattr(config, "depth_preln_leak", False))
+        power = float(getattr(config, "depth_shrink_power", 1.0))
+        if leak and arch != "preln":
+            raise ValueError(f"depth_preln_leak needs preln, got {arch!r}")
+        if power <= 0 or (power != 1.0 and not (leak or _hc_res(config) == "sumshrink")):
+            raise ValueError(f"depth_shrink_power={power} must be positive and needs depth_preln_leak or depth_hc_res='sumshrink'")
+        if (leak or _hc_res(config) == "sumshrink") and config.num_layers > len(HC_SUM_GAIN) // 2:
+            raise ValueError(f"the fixed gains cover {len(HC_SUM_GAIN) // 2} layers, got {config.num_layers}")
         if _hc_rw_joint(config) and (arch != "hc" or _static(config) or _hc_rw_sigmoid(config) or _hc_write_shared(config)):
             raise ValueError(f"depth_hc_rwdyn='joint' needs hc with dynamic routing, linear read/write and per-stream writes, got {arch!r}")
         if static and arch != "attnres":

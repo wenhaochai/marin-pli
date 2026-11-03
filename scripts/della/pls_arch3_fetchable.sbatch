@@ -88,6 +88,10 @@
 #   arch3-hcshrink-{sep,probes}  HC whose mixing only shrinks the stream sum (HC_RES=sumshrink), fixed gains; owner popup 2026-11-03: is
 #                                shrinking alone enough for HC's advantage in the middle layers and for its low cost? At layer 12 and
 #                                step 2,200: HC 3.92, hcid 5.23. Cost: HC 0.047, hcid 0.169
+#   arch3-hcmove-{sep,probes}    HC whose mixing only moves content between streams and keeps the stream sum (HC_RES=move), the moving arm
+#                                of the 2 x 2 (hcid: neither; hcshrink: shrink; HC: both). arch3-hcshrink05-{sep,probes} half the dose,
+#                                g ** 0.5: between hcshrink and hcid if shrinking is the cause. arch3-plleak-{sep,probes} Pre-LN with h <- g h + F,
+#                                the same gains: does shrinking need HC's streams? Pre-LN's cost 0.084. Owner popup 2026-11-03.
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -137,6 +141,9 @@ case $DESIGN in
   arch3-hcsum) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sum";;
   arch3-hcscalar) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=scalar";;
   arch3-hcshrink) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink";;
+  arch3-hcmove) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=move";;
+  arch3-hcshrink05) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink SHRINK_POWER=0.5";;
+  arch3-plleak) S="$base LAYERS=48 PDP=4 ARCH=preln PRELN_LEAK=1";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
