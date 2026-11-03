@@ -108,8 +108,8 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            entries in [0, 1]: no mode can grow. The shift keeps the mixing at I at init: the zeros of I map to 1.5e-4 of the row, so a
                            difference between streams gets gain 0.9994 per sublayer. With beta 20 and no shift they map to 0.031 and the gain is 0.874, a
                            built-in average of the streams that hc does not have (audit 2026-11-03). Beta 20 with shift 0.3 keeps I, and its entries stay
-                           under the knee for too long: positive off-diagonal mass 0.04 at step 1,000 of the small replay, about 0.003 in layers 13-24.
-                           Beta 50 with shift 0.1: 0.08, with every layer group open by step 400 (HC 0.21; HC's final checkpoint at full scale 0.03-0.23).
+                           under the knee for too long: positive off-diagonal mass 0.040 at step 940 of the small replay, 0.003 in layers 13-24.
+                           Beta 50 with shift 0.1: 0.084, with every layer group open by step 400 (HC 0.19; HC's final checkpoint at full scale 0.03-0.23).
                            sp leaves a gradient below 0 (relu kills it: Adam then gets no gradient). Same parameters as hc, mixed in float32. At init the
                            streams are equal, so this is hc's function.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
