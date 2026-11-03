@@ -17,6 +17,9 @@ full-attention Qwen3 layers within each document. The pieces follow hnet/models/
    near the default's). p is 1 at a document's first byte, as before, and 0 at its second byte, which has no earlier pair
    inside the document (it joins the first byte's chunk). The rest (chunk vector = the opening byte's encoder state, EMA,
    STE, residual, ratio loss) is unchanged.
+   ``route="fixed"`` (2026-11-03, owner popup "全部 7 组") removes the learned routing, to measure what it is worth: a chunk
+   opens every round(chunk_ratio) bytes from each document's first byte, with p = 1 there and 0 elsewhere. The EMA then
+   passes each chunk through, the STE factor is 1, and the ratio loss is a constant, so q and k get no gradient.
 3. Chunking: the opening bytes' encoder states, in order, fill ``chunk_slots`` slots (JAX needs a static length; a row
    with more boundaries than slots keeps its first ``chunk_slots``, and the later bytes join the last chunk).
 4. The main network (``num_layers`` layers and a final norm) on the chunks, causal within each document.
@@ -56,6 +59,7 @@ class HNetRoute(StrEnum):
 
     START = "start"     # (h_{t-1}, h_t): the original H-Net, which reads the opening byte itself
     CAUSAL = "causal"   # (h_{t-2}, h_{t-1}): bytes before t only
+    FIXED = "fixed"     # every round(chunk_ratio) bytes from a document's first byte: nothing learned
 
 
 @LmConfig.register_subclass("qwen3_hnet")
@@ -165,6 +169,10 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
                 second = jnp.concatenate([jnp.zeros_like(start[..., :1]), start[..., :-1]], axis=-1) & ~start
                 p = jnp.where(second, 0.0, p)
             p = jnp.where(start, 1.0, p)
+        if cfg.route == HNetRoute.FIXED:
+            t = jnp.arange(L)
+            opened = jax.lax.cummax(jnp.where(start, t, 0), axis=start.ndim - 1) if seg is not None else 0
+            p = jnp.broadcast_to(((t - opened) % round(cfg.chunk_ratio) == 0).astype(p.dtype), p.shape)
         b_raw = p > 0.5
         b = b_raw & (jnp.cumsum(b_raw, axis=-1) <= M)   # chunks past the slots join the last one
         t = jnp.arange(L)
