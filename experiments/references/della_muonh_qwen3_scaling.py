@@ -70,6 +70,7 @@ from experiments.references.objective_qwen3 import ObjectiveQwen3Config
 from experiments.references.composed_vocab_qwen3 import ComposedVocabQwen3Config
 from experiments.references.freeze_rows_muonh import FreezeRowsMuonHConfig
 from experiments.references.dropout_qwen3 import InputNoiseQwen3Config, ResidualDropoutQwen3Config
+from experiments.references.hnet_freeze_muonh import FreezeChunkerMuonHConfig
 from experiments.references.hnet_qwen3 import HNetQwen3Config, HNetRoute
 from experiments.references.unismooth_qwen3 import UniSmoothQwen3Config
 from experiments.references.selfkd_qwen3 import SelfKDMuonHConfig, SelfKDQwen3Config
@@ -527,10 +528,10 @@ def _small_vocab_data(k: int, train_names, validation_names):
     components, weights = {}, {}
     for name in train_names:
         assert name == "fineweb-edu-10B", name
-        components[name], weights[name] = comp(f"{_PREFIX}/fineweb-edu-10B-{VOCAB_SET or 'v' + str(k)}/train"), 1.0
+        components[name], weights[name] = comp(f"{_PREFIX}/fineweb-edu-10B-{BYTE_CACHE or VOCAB_SET or 'v' + str(k)}/train"), 1.0
     for name in validation_names:   # paloma/<subset>-marin-tokenizer
         sub = name.split("/", 1)[1].rsplit("-marin-tokenizer", 1)[0]
-        components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-{VOCAB_SET or 'v' + str(k)}/{sub}/validation"), 0.0
+        components[name], weights[name] = comp(f"{_PREFIX}/tokenized/paloma-{BYTE_CACHE or VOCAB_SET or 'v' + str(k)}/{sub}/validation"), 0.0
     return LmDataConfig(components=components, train_weights=weights, tokenizer=f"{_PREFIX}/tokenizers/marin-small/{VOCAB_SET or 'v' + str(k)}",
                         cache_dir=None, shuffle=True, permutation_type="linear")
 if VARIANT in ("cv", "fo", "fop", "fip", "lr", "rm", "cvr") and VOCAB_K:
@@ -586,6 +587,24 @@ HNET_N = float(os.environ.get("HNET_N", "4.74"))
 HNET_ROUTE = HNetRoute(os.environ.get("HNET_ROUTE", "start"))
 if HNET_ROUTE != HNetRoute.START and VARIANT != "hnet":
     raise ValueError("HNET_ROUTE needs VARIANT=hnet")
+# H-Net ablations (owner popup 2026-11-03; hnet_qwen3.py docstring), tags after -hnet<enc>x<dec>n<N>[-r<route>]:
+# HNET_ROUTE=space: a chunk after every whitespace byte (tag -rspace). HNET_ROUTE=bpe: the 128K Marin tokenizer's tokens as
+# chunks, from the token-start caches fineweb-edu-10B-v256ts / paloma-v256ts (convert_token_start_cache.py; tag -rbpe).
+# HNET_FREEZE_FROM_PASS=p: the chunker (byte embedding, encoder, q_proj, k_proj) stops from update round(steps / 8) * (p - 1),
+# in the unique-text run too (hnet_freeze_muonh.py; tag -chfz<p>). HNET_NO_ROUTE_GRAD=1: only the ratio loss trains q and k
+# (tag -nrg). HNET_NO_RESIDUAL=1: no R h_t (tag -nores). HNET_NO_EMA=1: z_j = c_j (tag -noema). HNET_SLOT_MARGIN: main-network
+# slots per window = window / N x margin, rounded up to 128 (tag -sm<m> when it is not 1.25).
+HNET_FREEZE_FROM_PASS = int(os.environ.get("HNET_FREEZE_FROM_PASS", "0"))
+HNET_NO_ROUTE_GRAD = os.environ.get("HNET_NO_ROUTE_GRAD", "0") == "1"
+HNET_NO_RESIDUAL = os.environ.get("HNET_NO_RESIDUAL", "0") == "1"
+HNET_NO_EMA = os.environ.get("HNET_NO_EMA", "0") == "1"
+HNET_SLOT_MARGIN = float(os.environ.get("HNET_SLOT_MARGIN", "1.25"))
+if (HNET_FREEZE_FROM_PASS or HNET_NO_ROUTE_GRAD or HNET_NO_RESIDUAL or HNET_NO_EMA or HNET_SLOT_MARGIN != 1.25) and VARIANT != "hnet":
+    raise ValueError("HNET_FREEZE_FROM_PASS, HNET_NO_ROUTE_GRAD, HNET_NO_RESIDUAL, HNET_NO_EMA and HNET_SLOT_MARGIN need VARIANT=hnet")
+if HNET_FREEZE_FROM_PASS and not 2 <= HNET_FREEZE_FROM_PASS <= 8:
+    raise ValueError(f"HNET_FREEZE_FROM_PASS={HNET_FREEZE_FROM_PASS}: 2..8 (the chunker learns in pass 1)")
+# route=bpe reads the token-start caches (byte ids, + 512 where a Marin token starts) under the bytes' component names
+BYTE_CACHE = "v256ts" if VARIANT == "hnet" and HNET_ROUTE == HNetRoute.BPE else ""
 OPT = os.environ.get("OPT", "muonh")
 MUON_WD = float(os.environ.get("MUON_WD", "0.1"))
 # MUON_LR_MULT (2026-10-30, stage 2 of the test of Baron et al. 2026, arXiv 2610.37842, whose eta is a multiplier on every
@@ -706,6 +725,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-in{INOISE_MODE}{INOISE_P:g}" + (f"-r{INOISE_RAND_MAX // 1000}k" if INOISE_RAND_MAX else "") + (f"-fp{INOISE_FROM_PASS}" if INOISE_FROM_PASS else "")
     if VARIANT == "hnet":
         variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}" + ("" if HNET_ROUTE == HNetRoute.START else f"-r{HNET_ROUTE.value}")
+        variant_tags += (f"-sm{HNET_SLOT_MARGIN:g}" if HNET_SLOT_MARGIN != 1.25 else "") + (f"-chfz{HNET_FREEZE_FROM_PASS}" if HNET_FREEZE_FROM_PASS else "")
+        variant_tags += ("-nrg" if HNET_NO_ROUTE_GRAD else "") + ("-nores" if HNET_NO_RESIDUAL else "") + ("-noema" if HNET_NO_EMA else "")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
@@ -864,7 +885,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif VARIANT == "hnet":
         if VOCAB_K != 256 or ATTN_BACKEND == "fa4thd" or TIE:
             raise ValueError("VARIANT=hnet: VOCAB_K=256, ATTN_BACKEND fa4 or jax_flash, untied tables")
-        model_cls, model_extra = HNetQwen3Config, dict(enc_layers=HNET_ENC, dec_layers=HNET_DEC, chunk_ratio=HNET_N, route=HNET_ROUTE)
+        model_cls, model_extra = HNetQwen3Config, dict(enc_layers=HNET_ENC, dec_layers=HNET_DEC, chunk_ratio=HNET_N, route=HNET_ROUTE,
+                                                       slot_margin=HNET_SLOT_MARGIN, no_route_grad=HNET_NO_ROUTE_GRAD,
+                                                       no_residual=HNET_NO_RESIDUAL, no_ema=HNET_NO_EMA)
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)
@@ -1001,6 +1024,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if opt_cls is not MuonHConfig:
             raise ValueError("VARIANT=selfkd: the plain MuonH optimizer only (no other optimizer change)")
         opt_cls, opt_extra = SelfKDMuonHConfig, dict(kd_from_step=model_extra["kd_from_step"])
+    if HNET_FREEZE_FROM_PASS:   # the chunker stops at the pass length of the 8-pass run, in the unique-text run as well
+        if opt_cls is not MuonHConfig or OPT != "muonh" or PASS_DATA.startswith(("bpd", "rsplit")) or DATA_EPOCHS not in (0, 1, 8):
+            raise ValueError("HNET_FREEZE_FROM_PASS: the plain MuonH optimizer, unique tokens or 8 equal passes")
+        opt_cls, opt_extra = FreezeChunkerMuonHConfig, dict(freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (HNET_FREEZE_FROM_PASS - 1))
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
