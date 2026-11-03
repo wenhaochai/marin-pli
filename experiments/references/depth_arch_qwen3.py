@@ -74,6 +74,15 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
                            read/write, beats every hc run; does hc's learned, input-dependent mixing cost its ordinary
                            model?). Read and write stay hc's; the res offsets and w_res get no gradient. At init hc's res
                            is I, so this is hc's function.
+    depth_hc_res="sum"     hc whose mixing keeps the stream sum (owner popup 2026-11-02: hc's static mixing shrinks the stream
+                           sum, 0.49-0.59 times per layer over layers 2-11 of the ordinary models, and identity and Sinkhorn
+                           mixing never change it; is that why hc differs?). A[i, o] <- A[i, o] - (sum_o' A[i, o'] - 1) / m for hc's
+                           whole mixing A (static plus dynamic), so every input stream's outflow sums to 1 and the mixing moves
+                           state between streams only. Same parameters as hc, mixed in float32. At init A = I, hc's function.
+    depth_hc_res="scalar"  hc whose mixing is one learned number per sublayer, H <- g H + w (x) F(RN(x)), g = the mean of the
+                           diagonal of I + res (same popup: the mixing shrinks or grows the state and moves nothing between
+                           streams). Off-diagonal res offsets and w_res get no gradient. Mixed in float32. At init g = 1, hc's
+                           function. Tests for both: scripts/della/depth_arch_hcsum_test.py.
     depth_hc_rwdyn="joint"  hc whose read and write take their dynamic terms from mhc's computation (owner popup 2026-11-02:
                            with the mixing fixed to I, hc's ordinary model closes about half of its gap to mhc's; is the
                            other half how the read / write dynamic terms are computed?): one projection rw_phi of the
@@ -358,8 +367,18 @@ class DepthArchLayer(eqx.Module):
             x = hax.dot(read.astype(H.dtype), H, axis="stream")
             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
-            if _hc_res_identity(self.config):  # the residual mixing fixed to the identity: every stream keeps itself
+            res_mode = _hc_res(self.config)
+            if res_mode == "identity":  # the residual mixing fixed to the identity: every stream keeps itself
                 H = H + upd.rename({"stream_out": "stream"})
+                continue
+            if res_mode == "scalar":  # one learned number per sublayer scales the whole state; nothing moves between streams
+                g = hax.sum(c_res * (c_res + f32(p.res))) / m
+                H = (g * f32(H)).astype(H.dtype) + upd.rename({"stream_out": "stream"})
+                continue
+            if res_mode == "sum":  # every input stream's outflow sums to 1, so the mixing leaves the stream sum unchanged
+                So_ = res.resolve_axis("stream_out")
+                res = res - ((hax.sum(res, axis=So_) - 1.0) / m).broadcast_axis(So_)
+                H = (hax.dot(res, f32(H), axis="stream").astype(H.dtype) + upd).rename({"stream_out": "stream"})
                 continue
             H = (hax.dot(res.astype(H.dtype), H, axis="stream") + upd).rename({"stream_out": "stream"})
         return H
@@ -453,11 +472,11 @@ def _hc_rw_sigmoid(config) -> bool:
     return rw == "sigmoid"
 
 
-def _hc_res_identity(config) -> bool:
+def _hc_res(config) -> str:
     res = getattr(config, "depth_hc_res", "learned")
-    if res not in ("learned", "identity"):
-        raise ValueError(f"depth_hc_res must be 'learned' or 'identity', got {res!r}")
-    return res == "identity"
+    if res not in ("learned", "identity", "sum", "scalar"):
+        raise ValueError(f"depth_hc_res must be 'learned', 'identity', 'sum' or 'scalar', got {res!r}")
+    return res
 
 
 def _hc_rw_joint(config) -> bool:
@@ -592,8 +611,8 @@ class DepthArchTransformer(eqx.Module):
             raise ValueError(f"depth_mhc_rw='linear' needs mhc, got {arch!r}")
         if _hc_write_shared(config) and arch != "hc":
             raise ValueError(f"depth_hc_write='shared' needs hc, got {arch!r}")
-        if _hc_res_identity(config) and arch != "hc":
-            raise ValueError(f"depth_hc_res='identity' needs hc, got {arch!r}")
+        if _hc_res(config) != "learned" and arch != "hc":
+            raise ValueError(f"depth_hc_res={_hc_res(config)!r} needs hc, got {arch!r}")
         if _hc_rw_joint(config) and (arch != "hc" or _static(config) or _hc_rw_sigmoid(config) or _hc_write_shared(config)):
             raise ValueError(f"depth_hc_rwdyn='joint' needs hc with dynamic routing, linear read/write and per-stream writes, got {arch!r}")
         if static and arch != "attnres":

@@ -80,6 +80,11 @@
 #   arch3-hc-s1-probes, arch3-hcid-s1-probes, arch3-mhcidlin-s1-probes  seed 1 of the three ordinary models on today's stack
 #                                (fa4thd; owner popup 2026-11-02: the two halves, 0.021 and 0.015 nats, are below HC's seed
 #                                spread 0.023); arch3-hcid-s1-sep (same popup: does hcid's late separate-heads rise repeat?)
+#   arch3-hcsum-{sep,probes}     HC whose mixing keeps the stream sum (HC_RES=sum), arch3-hcscalar-{sep,probes} HC whose mixing is
+#                                one learned number per sublayer (HC_RES=scalar); owner popup 2026-11-02: is the mixing's effect
+#                                on the stream sum what makes HC differ? Compare with hcid and HC. Shrinking the sum: hcsum like
+#                                hcid, hcscalar like HC. Moving between streams: both like hcid. Another property: hcsum like
+#                                HC, hcscalar like hcid (probes at layer 24: HC 3.12-3.36, hcid 4.43; layer 48 too)
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -126,6 +131,8 @@ case $DESIGN in
   arch3-hcrwj) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RWDYN=joint";;
   arch3-hcid-s1) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=identity SEED=1";;
   arch3-mhcidlin-s1) S="$base LAYERS=48 PDP=4 ARCH=mhc MHC_RES=identity MHC_RW=linear SEED=1";;
+  arch3-hcsum) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sum";;
+  arch3-hcscalar) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=scalar";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
