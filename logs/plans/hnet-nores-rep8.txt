@@ -1,0 +1,4 @@
+# owner 2026-11-03 (popup "4 项分析 + 6 组消融"; "从这个动态tokenizer本身入手"): H-Net ablation. Reference w605 (2 encoder + 12 main + 2 decoder layers, target 4.74 bytes per chunk, window 19456, one run): unique 1.3733, 8 passes 1.4043, regret 0.031, 6.0 h per run; plain bytes w35 1.3477 / 1.3652, regret 0.0175; 128K 1.3853 / 1.4667, regret 0.081. ablation 5: no residual R h_t. PDP 8 as w592 (78 GB of 80); steps, batch and learning rates are unchanged. Split from w1045 to start on a free 4-GPU block.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=VARIANT=hnet+HNET_NO_RESIDUAL=1+VOCAB_K=256+SEQ_LEN=19456+PDP=8+ATTN_BACKEND=fa4+DATA_EPOCHS=8
+par hanores-rep8 300m-della4xh100-hnet2x2n4.74-nores-bytes-rep8-sl19456 main 4 450m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m VARIANT=hnet VOCAB_K=256 SEQ_LEN=19456 ATTN_BACKEND=fa4 EVAL_EVERY=400 HNET_NO_RESIDUAL=1 PDP=8 DATA_EPOCHS=8
+wait
