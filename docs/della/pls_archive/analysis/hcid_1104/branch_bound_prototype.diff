@@ -1,0 +1,61 @@
+diff --git a/experiments/references/depth_arch_qwen3.py b/experiments/references/depth_arch_qwen3.py
+index 0bff67967f..d3ac15f1b9 100644
+--- a/experiments/references/depth_arch_qwen3.py
++++ b/experiments/references/depth_arch_qwen3.py
+@@ -95,6 +95,8 @@ Two more (owner popup 2026-10-22; tests: scripts/della/depth_arch_variant3_test.
+                            steps. The read input goes to the branch and the stream sum to the readouts in the compute dtype. No new parameters.
+                            The read and the mixing use Precision.HIGHEST: by default a float32 dot on A100 / H100 rounds both operands to TF32 (10 mantissa
+                            bits), which on an A40 loses the sum at differences 1e4 times the sum (relative error 2.4 after one mixing, 2.2e-4 with HIGHEST).
++    DepthConfig.depth_branch_bound = c  hc: per token, a branch output with norm above c is scaled down to norm c, before the write (docs pls.md item 22: with mixing = I and separate
++                           heads a few MLPs grow an isolated high-gain direction, a token's state then follows one write, and tokens on the edge send very large gradients to the layers above). No new parameters. 0: off.
+     DepthConfig.depth_shrink_power = p  g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (owner popup 2026-11-03: half the dose,
+                            p = 0.5; if shrinking is the cause, the layer-12 loss and the cost should fall between p = 1 and identity mixing).
+     depth_preln_leak       Pre-LN whose running sum leaks, h <- g h + F, with the gains of depth_hc_res="sumshrink" (owner popup 2026-11-03:
+@@ -234,6 +236,15 @@ HC_SUM_GAIN = (
+ )
+ 
+ 
++def _bound_norm(f: NamedArray, Embed: Axis, bound: float) -> NamedArray:
++    """DepthConfig.depth_branch_bound: per token, scale a branch output with norm above bound down to norm bound. Below the bound the value is unchanged
++    and no gradient flows through the scale. The norm in float32: a bfloat16 sum of squares rounds it."""
++    ff = f.astype(jnp.float32)
++    n = hax.sqrt(hax.sum(ff * ff, axis=Embed) + 1e-12)
++    scale = hax.named(jnp.minimum(1.0, bound / n.array), n.axes)
++    return (ff * scale).astype(f.dtype)
++
++
+ HC_MOVE_BETA = 50.0  # depth_hc_res="move": the sharpness of the soft non-negativity
+ HC_MOVE_SHIFT = 0.1  # depth_hc_res="move": an entry of A at 0 maps to softplus(-5) / 50 = 1.3e-4, an entry at 1 to 0.9
+ 
+@@ -425,6 +436,9 @@ class DepthArchLayer(eqx.Module):
+             if state_f32:  # the streams alone are in float32: the branch runs in the compute dtype
+                 x = x.astype(p.res.dtype)
+             f = self.branch(j, x, mask, key=keys[j], pos_ids=pos_ids)
++            bound = float(getattr(self.config, "depth_branch_bound", 0.0))
++            if bound > 0:
++                f = _bound_norm(f, Embed, bound)
+             upd = write.astype(H.dtype) * f.broadcast_axis(write.resolve_axis("stream_out"))
+             res_mode = _hc_res(self.config)
+             if res_mode == "identity":  # the residual mixing fixed to the identity: every stream keeps itself
+@@ -686,6 +700,9 @@ class DepthArchTransformer(eqx.Module):
+             raise ValueError(f"depth_hc_res={_hc_res(config)!r} needs hc, got {arch!r}")
+         if getattr(config, "depth_hc_state_f32", False) and (arch != "hc" or _hc_res(config) != "sum"):
+             raise ValueError(f"depth_hc_state_f32 needs hc with depth_hc_res='sum', got {arch!r}, {_hc_res(config)!r}")
++        branch_bound = float(getattr(config, "depth_branch_bound", 0.0))
++        if branch_bound < 0 or (branch_bound > 0 and arch != "hc"):
++            raise ValueError(f"depth_branch_bound={branch_bound} must be >= 0 and needs hc, got {arch!r}")
+         leak = bool(getattr(config, "depth_preln_leak", False))
+         power = float(getattr(config, "depth_shrink_power", 1.0))
+         if leak and arch != "preln":
+diff --git a/experiments/references/per_layer_qwen3.py b/experiments/references/per_layer_qwen3.py
+index 31a0452503..73cf3e4a3c 100644
+--- a/experiments/references/per_layer_qwen3.py
++++ b/experiments/references/per_layer_qwen3.py
+@@ -256,6 +256,7 @@ class PerLayerQwen3Config(Qwen3Config):
+     depth_hc_res: str = "learned"  # "identity": hc's mixing fixed to I; "sum": mixing keeps the stream sum; "scalar": one learned number per sublayer; "sumshrink": fixed gains on the stream sum only; "move": non-negative outflows that sum to 1 (depth_arch_qwen3 docstring)
+     depth_hc_state_f32: bool = False  # with depth_hc_res="sum": the streams in float32, the rest in the compute dtype (depth_arch_qwen3 docstring)
+     depth_shrink_power: float = 1.0  # g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (depth_arch_qwen3 docstring)
++    depth_branch_bound: float = 0.0  # hc: per token, a branch output with norm above this is scaled down to this norm; 0: off (depth_arch_qwen3 docstring)
+     depth_preln_leak: bool = False  # preln with h <- g h + F, the same fixed gains (depth_arch_qwen3 docstring)
+     depth_hc_rwdyn: str = "stream"  # "joint": hc's read / write dynamic terms from mhc's joint projection (depth_arch_qwen3 docstring)
+     depth_attnres_vnorm: bool = False  # attnres: every source enters the mix at unit RMS (depth_arch_qwen3 docstring)

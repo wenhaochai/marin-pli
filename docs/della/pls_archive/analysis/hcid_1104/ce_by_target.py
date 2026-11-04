@@ -33,6 +33,8 @@ ck = sorted(glob.glob(f"{S_}{tag}/*/checkpoints/step-*") + glob.glob(f"{T_}{tag}
 print("checkpoint", ck, flush=True)
 wcfg = json.load(open(f"/scratch/gpfs/GROUP/USER/tmp/pls_paths/cfg{tag}.json"))["model"]
 kw = {k: v for k, v in wcfg.items() if k in fields and not isinstance(v, (dict, list)) and v is not None and k not in ("attn_backend", "max_seq_len", "tokenizer", "reference_checkpoint", "scan_layers")}
+if "BOUND" in os.environ:
+    kw["depth_branch_bound"] = float(os.environ["BOUND"])
 cfg = PerLayerQwen3Config(max_seq_len=T, attn_backend=AttentionBackend.VANILLA, scan_layers=True, **kw)
 model = load_checkpoint(eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, cfg, key=jrandom.PRNGKey(0)), ck, subpath="model")
 mc = mp.cast_to_compute(model)
@@ -53,5 +55,5 @@ for b in range(N):
     CE.append(np.asarray(c, np.float32)); NR.append(np.asarray(n, np.float32))
     if b < 2 or (b + 1) % 32 == 0:
         print(f"batch {b + 1}/{N} {time.time() - t0:.0f} s", flush=True)
-np.savez(f"/scratch/gpfs/GROUP/USER/tmp/pls_hcid/fw_ce_by_target{tag}.npz", ce=np.concatenate(CE, 1), nr=np.concatenate(NR, 1), tok=ids.reshape(N * B, T), heads=np.array(HEADS), ck=ck)
+np.savez(f"/scratch/gpfs/GROUP/USER/tmp/pls_hcid/fw_ce_by_target{tag}{os.environ.get('OUT_TAG', '')}.npz", ce=np.concatenate(CE, 1), nr=np.concatenate(NR, 1), tok=ids.reshape(N * B, T), heads=np.array(HEADS), ck=ck)
 print("saved", time.time() - t0, flush=True)

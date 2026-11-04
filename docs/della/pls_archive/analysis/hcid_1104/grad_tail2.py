@@ -37,6 +37,8 @@ ck = sorted(glob.glob(f"{S_}{tag}/*/checkpoints/step-*") + glob.glob(f"{T_}{tag}
 print("checkpoint", ck, flush=True)
 wcfg = json.load(open(f"/scratch/gpfs/GROUP/USER/tmp/pls_paths/cfg{tag}.json"))["model"]
 kw = {k: v for k, v in wcfg.items() if k in fields and not isinstance(v, (dict, list)) and v is not None and k not in ("attn_backend", "max_seq_len", "tokenizer", "reference_checkpoint", "scan_layers")}
+if "BOUND" in os.environ:
+    kw["depth_branch_bound"] = float(os.environ["BOUND"])
 cfg = PerLayerQwen3Config(max_seq_len=T, attn_backend=AttentionBackend.VANILLA, scan_layers=True, **kw)
 print({k: kw.get(k) for k in ("depth_arch", "depth_hc_res", "pls_weight", "pls_separate", "pls_detach_backbone", "pls_serial_readouts", "pls_fold_norm", "gradient_checkpointing", "hc_streams", "num_layers")}, flush=True)
 model = load_checkpoint(eqx.filter_eval_shape(PerLayerQwen3LMHeadModel.init, Vocab, cfg, key=jrandom.PRNGKey(0)), ck, subpath="model")
