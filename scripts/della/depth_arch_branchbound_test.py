@@ -121,7 +121,10 @@ for li in range(L):
         n = np.linalg.norm(np.asarray(raw.rearrange((Batch, Pos, Embed)).array, np.float64), axis=-1)
         nclip += int((n > bound).sum())
         fb = _bound_norm(raw, Embed, bound)
-        maxn = max(maxn, float(np.linalg.norm(np.asarray(fb.rearrange((Batch, Pos, Embed)).array, np.float64), axis=-1).max()))
+        # the formula by hand, without _bound_norm (audit 2026-11-04: the reference must not call the code under test)
+        by_hand = np.asarray(raw.rearrange((Batch, Pos, Embed)).array, np.float64) * np.minimum(1.0, bound / np.maximum(n, 1e-30))[..., None]
+        assert np.allclose(np.asarray(fb.rearrange((Batch, Pos, Embed)).array, np.float64), by_hand, rtol=1e-5, atol=1e-6), (li, j)
+        maxn = max(maxn, float(np.linalg.norm(by_hand, axis=-1).max()))
         H = H + (write.astype(H.dtype) * fb.broadcast_axis(write.resolve_axis("stream_out"))).rename({"stream_out": "stream"})
     want = np.asarray(hax.sum(H, axis="stream").rearrange((Batch, Pos, Embed)).array)
     assert np.allclose(got[li], want, rtol=1e-4, atol=1e-4), (li, np.abs(got[li] - want).max())
@@ -155,9 +158,11 @@ try:
 except ImportError:
     from experiments.references.della_muonh_qwen3_scaling import DepthArchMuonHConfig
 opt = DepthArchMuonHConfig(learning_rate=0.02, adam_lr=0.008, beta1=0.9, beta2=0.98, epsilon=1e-20, momentum=0.95, nesterov=True, backend_steps=5, muon_epsilon=1e-5, max_grad_norm=1.0, weight_decay=0.1, lr_schedule="linear", decay=0.8, warmup=0, min_lr_ratio=0.0, coefficient_type="simple").build(4959)
-m = model(depth_hc_res="identity", depth_branch_bound=20.0)
+m = model(depth_hc_res="identity", depth_branch_bound=1.0)  # 1.0 acts on most tokens (test 3); the audit of 2026-11-04 found that 20 never acted
+m_far = model(depth_hc_res="identity", depth_branch_bound=1e9)
 params = eqx.filter(m, eqx.is_inexact_array)
 state = opt.init(params)
+state_far = opt.init(eqx.filter(m_far, eqx.is_inexact_array))
 
 
 @eqx.filter_jit
@@ -168,12 +173,15 @@ def train_step(m_, st):
     return eqx.apply_updates(m_, up), st, l_
 
 
-hist = []
+hist, far = [], []
 for s in range(12):
     m, state, l_ = train_step(m, state)
+    m_far, state_far, l2_ = train_step(m_far, state_far)
     hist.append(float(l_))
+    far.append(float(l2_))
 assert np.all(np.isfinite(hist)) and hist[-1] < hist[0], hist
-print(f"ok 5 real optimizer, bfloat16 compute, 12 steps on one batch: loss {hist[0]:.3f} -> {hist[-1]:.3f}")
+assert hist != far, "the bound did not act"
+print(f"ok 5 real optimizer, bfloat16 compute, 12 steps on one batch: bound 1 loss {hist[0]:.3f} -> {hist[-1]:.3f}; far bound {far[0]:.3f} -> {far[-1]:.3f}")
 
 # 6. validation ----------------------------------------------------------------------------------------------------------------
 for arch, kw in (("preln", dict(depth_branch_bound=100.0)), ("mhc", dict(depth_branch_bound=100.0)), ("hc", dict(depth_branch_bound=-1.0))):
