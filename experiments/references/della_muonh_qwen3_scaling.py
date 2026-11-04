@@ -511,7 +511,7 @@ def _vs_schedule(size: str, batch: int) -> dict:
     """PASS_DATA=vs*: vs_ks, vs_steps and vs_eval_k from the cache's meta.json. A pass of one view runs at its K from its first
     step on; with several views in a pass every row stays in the softmax. A smoke scales the cuts into its own steps."""
     m = _pass_data_meta(size)
-    if any(len(p) > 1 for p in m["schedule"]):
+    if m.get("wide") or any(len(p) > 1 for p in m["schedule"]):
         return dict(vs_ks="128000", vs_steps="0", vs_eval_k=m["eval_k"])
     ks, steps, done = [], [], 0
     for views, n in zip(m["schedule"], m["pass_sequences"]):
@@ -953,8 +953,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         names = ["flash_o", "flash_ell", "mlp_gate"] + (["mlp_up", "mlp_gu"] if REMAT != "fgate" else []) + (["mlp_out"] if REMAT in ("fmlpo", "fmlpoa") else []) + (["attn_out"] if REMAT == "fmlpoa" else [])
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=names))
     if PASS_DATA.startswith("vs"):
-        if VARIANT != "baseline" or VOCAB_K or TIE or DATA_EPOCHS != 8:
-            raise ValueError("PASS_DATA=vs*: the plain 128K model at 8 passes, untied tables")
+        if VARIANT != "baseline" or VOCAB_K or DATA_EPOCHS != 8 or (TIE and _vs_schedule(size, s["batch"])["vs_ks"] != "128000"):
+            raise ValueError("PASS_DATA=vs*: the plain 128K model at 8 passes; tied tables only when every row stays in the softmax")
         from experiments.references.vocab_shrink_qwen3 import VocabShrinkQwen3Config
         model_cls, model_extra = VocabShrinkQwen3Config, dict(model_extra, **_vs_schedule(size, s["batch"]))
     if TIE:
@@ -1054,7 +1054,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if opt_cls is not MuonHConfig or OPT != "muonh" or PASS_DATA.startswith(("bpd", "rsplit")) or DATA_EPOCHS not in (0, 1, 8):
             raise ValueError("HNET_FREEZE_FROM_PASS: the plain MuonH optimizer, unique tokens or 8 equal passes")
         opt_cls, opt_extra = FreezeChunkerMuonHConfig, dict(freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (HNET_FREEZE_FROM_PASS - 1))
-    if PASS_DATA.startswith("vs"):
+    if PASS_DATA.startswith("vs") and not TIE:   # tied tables: every row stays in the softmax, so no cut and no head to step apart
         if opt_cls is not MuonHConfig or OPT != "muonh":
             raise ValueError("PASS_DATA=vs*: the plain MuonH optimizer")
         from experiments.references.vocab_shrink_qwen3 import VocabShrinkMuonHConfig
