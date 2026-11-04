@@ -9,7 +9,9 @@ specials, at K's equal-text window by default, and writes per subset the mean lo
 macro bits per byte (the page's formula, loss x T / (ln 2 x B) per subset), to OUT as JSON. The tables must count the same
 targets (checked).
 
-    CKPT=<.../step-N> EVAL_K=32000 OUT=<file.json> [SEQ_LEN=4480] [EVAL_BATCH=8] [ONLY=ptb] [MAX_WINDOWS=n] python -m experiments.references.vocab_shrink_eval
+    CKPT=<.../step-N> EVAL_K=32000 OUT=<file.json> [SEQ_LEN=4480] [EVAL_BATCH=8] [ONLY=ptb] [MAX_WINDOWS=n] [TIE=1] [EMA=1] python -m experiments.references.vocab_shrink_eval
+
+TIE=1: a run with tied tables. EMA=1: the checkpoint's moving average (a run with EMA_BETA) in place of its weights.
 """
 
 import glob
@@ -18,6 +20,7 @@ import math
 import os
 import time
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jmp
@@ -30,8 +33,10 @@ from levanter.data.loader import DataLoader
 from levanter.data.text.datasets import DatasetComponent, LmDataConfig, UrlDatasetSourceConfig
 from levanter.data.text.formats import TextLmDatasetFormat
 from levanter.layers.attention import AttentionBackend
+from levanter.checkpoint import load_checkpoint
 from levanter.model_loading import load_levanter_checkpoint
 from levanter.trainer import TrainerConfig
+from levanter.utils.jax_utils import use_cpu_device
 from levanter.utils.mesh import MeshConfig
 from levanter.utils.tree_utils import inference_mode
 
@@ -43,6 +48,8 @@ SEQ_LEN = int(os.environ.get("SEQ_LEN", EQW[K]))
 EVAL_BATCH = int(os.environ.get("EVAL_BATCH", "8"))
 ONLY = os.environ.get("ONLY", "").split()
 MAX_WINDOWS = int(os.environ.get("MAX_WINDOWS", "0"))
+TIE = os.environ.get("TIE") == "1"
+EMA = os.environ.get("EMA") == "1"
 PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
 TABLES = os.environ.get("BPB_TABLES", "/scratch/gpfs/GROUP/USER/tmp_plots/vocab/bpb_exact_tables.json")
 TOK = "/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/a5ca45f2feb6c959bd87b81689aa7279b5bdcaa2"
@@ -69,7 +76,7 @@ def data_config() -> LmDataConfig:
 
 def main():
     cfg = VocabShrinkQwen3Config(max_seq_len=SEQ_LEN, hidden_dim=768, intermediate_dim=2688, num_layers=12, num_heads=12, num_kv_heads=12, hybrid_norm=True,
-                                 attn_backend=AttentionBackend.JAX_FLASH, flash_attention_block_size=128, vs_eval_k=K)   # every equal-text window is a multiple of 128
+                                 attn_backend=AttentionBackend.JAX_FLASH, flash_attention_block_size=128, vs_eval_k=K, tie_word_embeddings=TIE)   # every equal-text window is a multiple of 128
     Pos = Axis("position", SEQ_LEN)
     trainer = TrainerConfig(mp=jmp.get_policy("p=f32,c=bfloat16"), per_device_eval_parallelism=EVAL_BATCH,
                             mesh=MeshConfig(axes={"data": -1, "replica": 1, "model": 1},
@@ -82,6 +89,10 @@ def main():
         Vocab = round_axis_for_partitioning(Axis("vocab", len(data.the_tokenizer)), trainer.parameter_axis_mapping)
         assert Vocab.size == 128256, Vocab
         model = inference_mode(load_levanter_checkpoint(cfg, CKPT, Vocab=Vocab, axis_mapping=trainer.parameter_axis_mapping, key=jax.random.PRNGKey(0)), True)
+        if EMA:
+            with use_cpu_device():
+                ema = load_checkpoint(eqx.filter_eval_shape(cfg.build, Vocab, key=jax.random.PRNGKey(0)), CKPT, subpath="model_averaging/model")
+            model = inference_mode(hax.shard_with_axis_mapping(ema, trainer.parameter_axis_mapping), True)
         mp = trainer.mp
 
         @hax.named_jit(axis_resources=trainer.compute_axis_mapping)

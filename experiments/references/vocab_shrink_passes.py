@@ -92,9 +92,20 @@ ARMS = {
     "vs128k16k": ([{128000: 0.5, 16000: 0.5}] * 8, 4992, 16000),    # two views, one of them large
     "vs16k8k": ([{16000: 0.5, 8000: 0.5}] * 8, 4992, 16000),    # two views, no large one: do the large views matter?
     "vsuniq": ([_mean(_mix(8.0))] * 8, 4992, 16000),    # vsconst on 8 times the text, no window twice: is the gain a lower regret or a better level?
+    # Follow-ups of w1086 (the mix's regret stays near 0.02 at every K with a new view on each pass, and its score on unique tokens is about flat over K).
+    "vs16kw": (_one([16000] * 8), 4992, 16000),    # vsfix16k's windows with every row in the softmax and the optimizer step, as in a mix: does that width change a small K's score?
+    "vs16kwu": (_one([16000] * 8), 4992, 16000),    # vs16kw on 8 times the text
+    "vs128k16ku": ([{128000: 0.5, 16000: 0.5}] * 8, 4992, 16000),    # vs128k16k on 8 times the text: do large views lower a small K's score on unique tokens?
+    "vs16k8ku": ([{16000: 0.5, 8000: 0.5}] * 8, 4992, 16000),    # vs16k8k on 8 times the text: the same without a large view
+    "vsp50": ([{128000: 0.5, 64000: 0.125, 32000: 0.125, 16000: 0.125, 8000: 0.125}] * 8, 4992, 16000),    # half the windows at 128K, the rest spread: how much of a mix does 128K need?
+    "vsp80": ([{128000: 0.8, 64000: 0.05, 32000: 0.05, 16000: 0.05, 8000: 0.05}] * 8, 4992, 16000),
+    "vsl128": (_one([128000] * 4) + [_mean(_mix(8.0))] * 4, 4992, 16000),    # 128K on passes 1-4, while the regret is near 0 (gap_timing.py), then the no-shift mix: can 128K keep its rows' training and lose the regret?
+    "vsp50u": ([{128000: 0.5, 64000: 0.125, 32000: 0.125, 16000: 0.125, 8000: 0.125}] * 8, 4992, 16000),    # vsp50 on 8 times the text
+    "vsp80u": ([{128000: 0.8, 64000: 0.05, 32000: 0.05, 16000: 0.05, 8000: 0.05}] * 8, 4992, 16000),    # vsp80 on 8 times the text
 }
 FROZEN = ("vsfrozen",)   # one draw of views, for all passes
-UNIQUE = ("vsuniq",)   # each pass reads the next 183,040 windows of the plain unique-token run's order
+UNIQUE = ("vsuniq", "vs16kwu", "vs128k16ku", "vs16k8ku", "vsp50u", "vsp80u")   # each pass reads the next 183,040 windows of the plain unique-token run's order
+WIDE = ("vs16kw", "vs16kwu")   # one view, but every row stays in the softmax and the optimizer step (della_muonh_qwen3_scaling._vs_schedule)
 
 
 def expansions(keys):
@@ -223,7 +234,7 @@ def build(arm, sub, ex):
     first = None
     out = f"{PREFIX}/materialized/300m-rep8-{arm}"
     os.makedirs(out, exist_ok=True)
-    meta = dict(arm=arm, source=SOURCE, subset_sequences=n, seq_len=seq, eval_k=eval_k, schedule=[{str(k): v for k, v in p.items()} for p in views], pass_sequences=[], view_windows=[])
+    meta = dict(arm=arm, source=SOURCE, subset_sequences=n, seq_len=seq, eval_k=eval_k, wide=arm in WIDE, schedule=[{str(k): v for k, v in p.items()} for p in views], pass_sequences=[], view_windows=[])
     with SerialCacheWriter(f"{out}/train", EX, metadata=CacheMetadata.empty()) as w:
         for e, shares in enumerate(views, 1):
             ks = list(shares)
