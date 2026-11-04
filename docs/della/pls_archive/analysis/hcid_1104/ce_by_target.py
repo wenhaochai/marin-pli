@@ -43,8 +43,10 @@ def fwd(m_, ex):
     outs = m_.layer_outputs(ex.tokens, ex.attn_mask, key=None)
     Block = m_.transformer.layers.Block.name
     ces = jnp.stack([m_._readout_ce(outs, k, ex, reduction=None, reduction_axis=(), dtype=jnp.float32, logsumexp_weight=None, logit_soft_cap=None).rearrange((Batch, Pos)).array.astype(jnp.float32) for k in HEADS])
-    hf = outs.astype(jnp.float32)
-    return ces, hax.sqrt(hax.sum(hf * hf, axis=cfg.Embed)).rearrange((Block, Batch, Pos)).array
+    hf = outs.astype(jnp.float32)   # the norm scaled by the largest coordinate: a plain sum of squares overflows float32 above 1.8e19 (w890, 2026-11-04)
+    big = hax.named(jnp.max(jnp.abs(hf.array), axis=hf.axes.index(cfg.Embed), keepdims=False), tuple(a for a in hf.axes if a != cfg.Embed))
+    safe = hf / hax.where(big > 0, big, 1.0).broadcast_axis(cfg.Embed).rearrange(hf.axes)
+    return ces, (big * hax.sqrt(hax.sum(safe * safe, axis=cfg.Embed))).rearrange((Block, Batch, Pos)).array
 CE, NR = [], []
 t0 = time.time()
 for b in range(N):
