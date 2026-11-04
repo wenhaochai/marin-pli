@@ -28,10 +28,10 @@ S=$MARIN_PREFIX/speedrun
 nvidia-smi -L
 echo "START $(date +%H:%M:%S) code $(git -C $CODE log --oneline -1 | cut -c1-60)"
 IFS=, read -r -a GPUS <<<"${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
-SHARDS=("m2d2_s2orc_unsplit,ptb,wikitext_103,twitterAAE_HELM_fixed"
-        "c4_100_domains,dolma_100_programing_languages,gab,4chan"
-        "dolma_100_subreddits,m2d2_wikipedia_unsplit,falcon-refinedweb,c4_en"
-        "dolma-v1_5,manosphere_meta_sep,mc4,redpajama")
+SHARDS=("m2d2_s2orc_unsplit"
+        "c4_100_domains,dolma-v1_5,manosphere_meta_sep"
+        "dolma_100_subreddits,m2d2_wikipedia_unsplit"
+        "dolma_100_programing_languages,c4_en,falcon-refinedweb,mc4,gab,4chan,redpajama,twitterAAE_HELM_fixed,wikitext_103,ptb")
 fail=0
 score() {   # tag, unique run, 8-epoch run
   export RUN_U=$2 CKPT_U=$S/$2/2026.09.13/checkpoints/step-11420 CKPT_R=$S/$3/2026.09.13/checkpoints/step-11420
