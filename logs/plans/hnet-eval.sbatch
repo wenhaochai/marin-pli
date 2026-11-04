@@ -12,7 +12,7 @@
 #SBATCH --time=02:45:00
 #SBATCH --output=/scratch/gpfs/GROUP/USER/project/marin/logs/slurm/%x_%j.out
 #FETCHABLE self-contained: needs nothing from the submitting shell
-H-Net boundary diagnosis (owner popup 2026-11-03). experiments/references/hnet_eval.py on the 300m
+# H-Net boundary diagnosis (owner popup 2026-11-03). experiments/references/hnet_eval.py on the 300m
 # H-Net pair (unique text w605 / 8 epochs), four processes, one GPU each, four Paloma subsets each (balanced by windows),
 # then the merge; one more process routes the repeated eighth of the training text with both models. Reads the two
 # checkpoints only; writes logs/hnet_eval/<pair>/.
