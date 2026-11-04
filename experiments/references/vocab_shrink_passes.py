@@ -74,6 +74,8 @@ ARMS = {
     # name: (views per pass, SEQ_LEN, the K that evaluation in training uses)
     "vsfix32k": (_one([32000] * 8), 4480, 32000),
     "vsfix16k": (_one([16000] * 8), 4992, 16000),
+    "vsfix64k": (_one([64000] * 8), 4224, 64000),    # with vsfix8k, the same text at the other K a mixed run is scored at
+    "vsfix8k": (_one([8000] * 8), 5504, 8000),
     # the figure's rule on our 8 passes: cut at epochs 2 and 4 (8 ends the run)
     "vscut32k": (_one([128000, 64000, 64000, 32000, 32000, 32000, 32000, 32000]), 4480, 32000),
     # the same rule one doubling earlier, so that the last half runs at 16K, as in the figure's 16 epochs
