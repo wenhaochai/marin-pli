@@ -468,8 +468,11 @@ INOISE_FROM_PASS = int(os.environ.get("INOISE_FROM_PASS", "0"))
 # INOISE_RAND_MAX=n (owner popup 2026-10-23): rand draws only ids below n (8000: the 8K truncation's tokens). Tag -r<n/1000>k.
 INOISE_RAND_MAX = int(os.environ.get("INOISE_RAND_MAX", "0"))
 PASS_DATA = os.environ.get("PASS_DATA", "")
-if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1) or (PASS_DATA.startswith("rsplit") and 0 < float(PASS_DATA[6:]) <= 1)):
+if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bpd") and 0 < float(PASS_DATA[3:]) < 1) or (PASS_DATA.startswith("rsplit") and 0 < float(PASS_DATA[6:]) <= 1) or PASS_DATA.startswith("vs")):
     raise ValueError(f"PASS_DATA={PASS_DATA!r}: rs or bpd<p> with 0 < p < 1")
+# PASS_DATA=vs<arm> (owner 2026-11-04, a friend's two ideas): a vocabulary that shrinks as data repeats. The cache holds the Marin
+# tokenizer's repeated eighth with each pass or window tokenized at some K (vocab_shrink_passes.py); the run's model and optimizer
+# take their K schedule from its meta.json (vocab_shrink_qwen3.py), and evaluation reads Paloma at the arm's K (paloma-v<K>m).
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
 _PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
@@ -502,6 +505,24 @@ def _pass_data_meta(size: str) -> dict:
     if not os.path.exists(p):
         raise FileNotFoundError(f"{p} is missing: build the passes first (vocab_materialize_passes.py)")
     return json.load(open(p))
+
+
+def _vs_schedule(size: str, batch: int) -> dict:
+    """PASS_DATA=vs*: vs_ks, vs_steps and vs_eval_k from the cache's meta.json. A pass of one view runs at its K from its first
+    step on; with several views in a pass every row stays in the softmax. A smoke scales the cuts into its own steps."""
+    m = _pass_data_meta(size)
+    if any(len(p) > 1 for p in m["schedule"]):
+        return dict(vs_ks="128000", vs_steps="0", vs_eval_k=m["eval_k"])
+    ks, steps, done = [], [], 0
+    for views, n in zip(m["schedule"], m["pass_sequences"]):
+        k = int(next(iter(views)))
+        if not ks or ks[-1] != k:
+            ks.append(k)
+            steps.append(done // batch)
+        done += n
+    if SMOKE_STEPS:
+        steps = [round(x * SMOKE_STEPS / (m["sequences"] // batch)) for x in steps]
+    return dict(vs_ks=",".join(map(str, ks)), vs_steps=",".join(map(str, steps)), vs_eval_k=m["eval_k"])
 
 
 def _cache_component(path):
@@ -761,7 +782,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if DATA_EPOCHS != 8:
             raise ValueError("PASS_DATA builds the 8 passes of DATA_EPOCHS=8")
         variant_tags += f"-{PASS_DATA}"
-        if PASS_DATA.startswith(("bpd", "rsplit")) and not SMOKE_STEPS:   # every pass of text: the cache's sequences in steps of batch
+        if PASS_DATA.startswith(("bpd", "rsplit", "vs")) and not SMOKE_STEPS:   # every pass of text: the cache's sequences in steps of batch
             s = dict(s, steps=_pass_data_meta(size)["sequences"] // s["batch"])
     if EMA_BETA > 0:
         variant_tags += f"-ema{EMA_BETA:g}"
@@ -931,6 +952,11 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     elif REMAT in ("fgate", "fmlp", "fmlpo", "fmlpoa"):
         names = ["flash_o", "flash_ell", "mlp_gate"] + (["mlp_up", "mlp_gu"] if REMAT != "fgate" else []) + (["mlp_out"] if REMAT in ("fmlpo", "fmlpoa") else []) + (["attn_out"] if REMAT == "fmlpoa" else [])
         model_extra = dict(model_extra, gradient_checkpointing=ScanCheckpointPolicy(save_block_internals=names))
+    if PASS_DATA.startswith("vs"):
+        if VARIANT != "baseline" or VOCAB_K or TIE or DATA_EPOCHS != 8:
+            raise ValueError("PASS_DATA=vs*: the plain 128K model at 8 passes, untied tables")
+        from experiments.references.vocab_shrink_qwen3 import VocabShrinkQwen3Config
+        model_cls, model_extra = VocabShrinkQwen3Config, dict(model_extra, **_vs_schedule(size, s["batch"]))
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     # SCAN_LAYERS=0 (speed test, 2026-10-26): the layers unrolled (BlockSeq) instead of one scan (Stacked): no copies of
@@ -1028,6 +1054,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if opt_cls is not MuonHConfig or OPT != "muonh" or PASS_DATA.startswith(("bpd", "rsplit")) or DATA_EPOCHS not in (0, 1, 8):
             raise ValueError("HNET_FREEZE_FROM_PASS: the plain MuonH optimizer, unique tokens or 8 equal passes")
         opt_cls, opt_extra = FreezeChunkerMuonHConfig, dict(freeze_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (HNET_FREEZE_FROM_PASS - 1))
+    if PASS_DATA.startswith("vs"):
+        if opt_cls is not MuonHConfig or OPT != "muonh":
+            raise ValueError("PASS_DATA=vs*: the plain MuonH optimizer")
+        from experiments.references.vocab_shrink_qwen3 import VocabShrinkMuonHConfig
+        _vs = _vs_schedule(size, s["batch"])
+        opt_cls, opt_extra = VocabShrinkMuonHConfig, dict(vs_ks=_vs["vs_ks"], vs_steps=_vs["vs_steps"])
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(
@@ -1089,6 +1121,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             name = names[0]
             data = dataclasses.replace(data, components={**data.components, name: _cache_component(_pass_data_dir(size) + "/train")},
                                        shuffle=False, max_train_batches=None)
+            if PASS_DATA.startswith("vs") and _pass_data_meta(size)["eval_k"] != 128000:   # Paloma at the arm's K, in Marin ids
+                _ek = _pass_data_meta(size)["eval_k"]
+                data = dataclasses.replace(data, components={n: (_cache_component(f"{_PREFIX}/tokenized/paloma-v{_ek}m/{n.split('/', 1)[1].rsplit('-marin-tokenizer', 1)[0]}/validation") if n.startswith("paloma/") else c)
+                                                             for n, c in data.components.items()})
         elif DATA_EPOCHS > 0:
             steps = SMOKE_STEPS or TOTAL_STEPS or s["steps"]
             data = dataclasses.replace(data, max_train_batches={d.name: round(steps / DATA_EPOCHS) for d in train})
