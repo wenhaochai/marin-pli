@@ -13,7 +13,7 @@ equal views in later passes are equal windows, as in a plain 8-pass run; a pass 
 8192 source windows (seed 30000 + pass), so batches mix them.
 
 Arms (ARMS below): vsfix<K> K on all 8 passes (the control, on the same text as the other arms); vscut<K> path 2, one view per
-pass, cut when the epoch count doubles; vsmix<e> path 1, the friend's shifting shares (read off their figure) on all five
+pass, cut when the epoch count doubles; vslate<K> one late cut, 128K for passes 1-4 and K for passes 5-8; vsmix<e> path 1, the friend's shifting shares (read off their figure) on all five
 vocabularies, with the eighth pass at the figure's epoch <e>.
 
     python -m experiments.references.vocab_shrink_passes check                 (expansion against the K caches of Paloma)
@@ -73,6 +73,9 @@ ARMS = {
     "vscut32k": (_one([128000, 64000, 64000, 32000, 32000, 32000, 32000, 32000]), 4480, 32000),
     # the same rule one doubling earlier, so that the last half runs at 16K, as in the figure's 16 epochs
     "vscut16k": (_one([128000, 64000, 32000, 32000, 16000, 16000, 16000, 16000]), 4992, 16000),
+    # 128K while the regret is near 0 (it opens from about pass 5 at every K, tmp_plots/vocab/hnet_diag/gap_timing.py), then one cut
+    "vslate32k": (_one([128000] * 4 + [32000] * 4), 4480, 32000),
+    "vslate16k": (_one([128000] * 4 + [16000] * 4), 4992, 16000),
     "vsmix8": (_mix(8.0), 4992, 16000),    # the figure's real epoch count
     "vsmix4": (_mix(4.0), 4992, 16000),    # a slower shift: the eighth pass at the figure's epoch 4
 }
