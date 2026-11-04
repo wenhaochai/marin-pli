@@ -1,0 +1,4 @@
+# owner 2026-11-04 (a friend's two ideas, "你看看能不能尝试一些"): at 128K the regret of the no-shift mix is 0.024 with a new view on each pass and 0.076 when a window keeps its view; the fixed 128K has 0.080 (w1079, w1080, w1081, w1086). The mix scores 0.036 below the fixed 16K on unique tokens and 0.038 above the fixed 128K. the same on 8 times the text.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vs16kwu+SEQ_LEN=4992+DATA_EPOCHS=8
+par vs16kwu 300m-della4xh100-rep8-vs16kwu-sl4992 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4992 DATA_EPOCHS=8 PASS_DATA=vs16kwu
+wait
