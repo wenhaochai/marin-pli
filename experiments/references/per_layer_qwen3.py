@@ -256,6 +256,7 @@ class PerLayerQwen3Config(Qwen3Config):
     depth_hc_res: str = "learned"  # "identity": hc's mixing fixed to I; "sum": mixing keeps the stream sum; "scalar": one learned number per sublayer; "sumshrink": fixed gains on the stream sum only; "move": non-negative outflows that sum to 1 (depth_arch_qwen3 docstring)
     depth_hc_state_f32: bool = False  # with depth_hc_res="sum": the streams in float32, the rest in the compute dtype (depth_arch_qwen3 docstring)
     depth_shrink_power: float = 1.0  # g <- g ** p in depth_hc_res="sumshrink" and depth_preln_leak (depth_arch_qwen3 docstring)
+    depth_branch_bound: float = 0.0  # hc: per token, a branch output with norm above this is scaled down to this norm; 0: off (depth_arch_qwen3 docstring)
     depth_preln_leak: bool = False  # preln with h <- g h + F, the same fixed gains (depth_arch_qwen3 docstring)
     depth_hc_rwdyn: str = "stream"  # "joint": hc's read / write dynamic terms from mhc's joint projection (depth_arch_qwen3 docstring)
     depth_attnres_vnorm: bool = False  # attnres: every source enters the mix at unit RMS (depth_arch_qwen3 docstring)

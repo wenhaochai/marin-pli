@@ -147,6 +147,7 @@ case $DESIGN in
   arch3-hcsumf32) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sum HC_STATE_F32=1";;
   arch3-hcshrink05) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink SHRINK_POWER=0.5";;
   arch3-plleak) S="$base LAYERS=48 PDP=4 ARCH=preln PRELN_LEAK=1";;
+  arch3-hcidfb100) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=identity BRANCH_BOUND=100";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
