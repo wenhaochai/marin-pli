@@ -55,11 +55,12 @@ TINY = os.environ.get("TEST_TINY") == "1"
 REP_STRIDE = int(os.environ.get("REP_STRIDE", "1"))
 REP_MAX = int(os.environ.get("REP_MAX", "0"))   # test: at most this many repeated-eighth windows
 REP_ONLY = os.environ.get("REP_ONLY") == "1"    # only the repeated-eighth routing (a job runs it after the Paloma shards)
+SUMMARY_ONLY = os.environ.get("SUMMARY_ONLY") == "1"   # no per-byte npz files, only the summaries (a rescore of a pair)
 STORE = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
 TABLES = os.environ.get("BPB_TABLES", "/scratch/gpfs/GROUP/USER/tmp_plots/vocab/bpb_exact_tables.json")
 
 # the run's environment, from its id (the H-Net run ids of della_muonh_qwen3_scaling.py)
-m = re.fullmatch(r"muonh-qwen3-(\w+)-della(\d)xh100-hnet(\d+)x(\d+)n([\d.]+)((?:-[a-z][\w.]*?)*)-bytes-sl(\d+)", RUN_U)
+m = re.fullmatch(r"muonh-qwen3-(\w+)-della(\d)xh100-hnet(\d+)x(\d+)n([\d.]+)((?:-[a-z][\w.]*?)*)-bytes-sl(\d+)(?:-s(\d+))?", RUN_U)
 if not m:
     raise ValueError(f"RUN_U={RUN_U}: not a unique-text H-Net run id")
 SIZE, SEQ_LEN = m.group(1), int(m.group(7))
@@ -71,6 +72,8 @@ if EVAL_ATTN not in ("fa4", "jax_flash", "vanilla"):
     raise ValueError(f"EVAL_ATTN={EVAL_ATTN}: fa4, jax_flash or vanilla")
 ENV = dict(SIZE=SIZE, VARIANT="hnet", VOCAB_K="256", SEQ_LEN=str(SEQ_LEN), ATTN_BACKEND="fa4", HNET_ENC=m.group(3),
            HNET_DEC=m.group(4), HNET_N=m.group(5), NUM_GPUS=m.group(2), DRY_RUN="1", MEMSTATS_EVERY="0")
+if m.group(8):
+    ENV["SEED"] = m.group(8)
 for t in TAGS:
     if t.startswith("r"):
         ENV["HNET_ROUTE"] = t[1:]
@@ -209,8 +212,9 @@ def main():
             T = float(w.sum())
             loss = {c: float(-(lp[i] * w).sum() / T) for i, c in enumerate(CONDITIONS)}
             over_u, over_r = bu_.sum(1) - cfg.slots, br_.sum(1) - cfg.slots
-            np.savez(f"{OUT}/{sub}.npz", logp=lp.astype(np.float32), conditions=np.array(CONDITIONS), weight=w.astype(np.float16),
-                     tokens=tok.astype(np.int16), b_u=bu_, b_r=br_, slots=cfg.slots)
+            if not SUMMARY_ONLY:
+                np.savez(f"{OUT}/{sub}.npz", logp=lp.astype(np.float32), conditions=np.array(CONDITIONS), weight=w.astype(np.float16),
+                         tokens=tok.astype(np.int16), b_u=bu_, b_r=br_, slots=cfg.slots)
             summary[sub] = dict(windows=n, scored=T, scored_bytes=float((w * (np.roll(tok, -1, axis=1) < 256)).sum()), loss=loss, overflow_windows_u=int((over_u > 0).sum()), overflow_windows_r=int((over_r > 0).sum()),
                                 bytes_per_chunk_u=float(bu_.size / bu_.sum()), bytes_per_chunk_r=float(br_.size / br_.sum()))
             print(f"{sub}: {n} windows, {T:.0f} scored bytes, loss (nats/byte) " + " ".join(f"{c} {v:.4f}" for c, v in loss.items())
@@ -322,7 +326,7 @@ def print_bpb(summary, tables):
         print(f"no exact table for a {SEQ_LEN}-byte window: bits per byte over the scored targets (a test only)", flush=True)
         tables = {s: (v["scored"], v["scored_bytes"]) for s, v in summary.items()}
     for s in summary:
-        assert abs(summary[s]["scored"] - tables[s][0]) < 0.5, (s, summary[s]["scored"], tables[s][0])
+        assert abs(summary[s]["scored"] - tables[s][0]) < 1e-6 * tables[s][0], (s, summary[s]["scored"], tables[s][0])   # "scored" is a float32 sum, which rounds near 4e7
     for c in CONDITIONS:
         out[c] = sum(summary[s]["loss"][c] * tables[s][0] / (math.log(2) * tables[s][1]) for s in summary) / len(summary)
     print("exact macro bits per byte: " + " ".join(f"{c} {v:.4f}" for c, v in out.items()), flush=True)
