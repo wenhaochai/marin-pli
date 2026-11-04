@@ -1,0 +1,4 @@
+# owner 2026-11-04 (a friend's two ideas, "你看看能不能尝试一些"): the mixed runs w1067 and w1068 end at 1.4227 and 1.4239 at 16K, against 1.4653 for 16K on all 8 passes of the same text (w1070). Caches from vocab_shrink_passes.py; every row stays in the softmax of a mixed run; evaluation at 16K on Paloma in Marin ids; batch 128, the steps cover the cache. vsmix8's overall shares with no shift, 18/16/19/21/26 percent of 128K/64K/32K/16K/8K on every pass: does the shift matter?.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vsconst+SEQ_LEN=4992+DATA_EPOCHS=8
+par vsconst 300m-della4xh100-rep8-vsconst-sl4992 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4992 DATA_EPOCHS=8 PASS_DATA=vsconst
+wait

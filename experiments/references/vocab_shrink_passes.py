@@ -14,7 +14,7 @@ equal views in later passes are equal windows, as in a plain 8-pass run; a pass 
 
 Arms (ARMS below): vsfix<K> K on all 8 passes (the control, on the same text as the other arms); vscut<K> path 2, one view per
 pass, cut when the epoch count doubles; vslate<K> one late cut, 128K for passes 1-4 and K for passes 5-8; vsmix<e> path 1, the friend's shifting shares (read off their figure) on all five
-vocabularies, with the eighth pass at the figure's epoch <e>.
+vocabularies, with the eighth pass at the figure's epoch <e>. vsconst, vsgrow, vsfrozen, vs128k16k, vs16k8k and vsuniq ask what in path 1 does the work (comments in ARMS).
 
     python -m experiments.references.vocab_shrink_passes check                 (expansion against the K caches of Paloma)
     python -m experiments.references.vocab_shrink_passes paloma 64000 32000 16000 8000  (Paloma caches of K in Marin ids: tokenized/paloma-v<K>m)
@@ -65,6 +65,11 @@ def _one(ks):
     return [{k: 1.0} for k in ks]
 
 
+def _mean(views):
+    """The shares of a schedule over its passes, as one pass."""
+    return {k: round(sum(p.get(k, 0.0) for p in views) / len(views), 4) for k in VIEWS if any(k in p for p in views)}
+
+
 ARMS = {
     # name: (views per pass, SEQ_LEN, the K that evaluation in training uses)
     "vsfix32k": (_one([32000] * 8), 4480, 32000),
@@ -78,7 +83,16 @@ ARMS = {
     "vslate16k": (_one([128000] * 4 + [16000] * 4), 4992, 16000),
     "vsmix8": (_mix(8.0), 4992, 16000),    # the figure's real epoch count
     "vsmix4": (_mix(4.0), 4992, 16000),    # a slower shift: the eighth pass at the figure's epoch 4
+    # What in path 1 does the work? The two mixed runs end 0.04 below 16K on the same text (w1067, w1068, w1070).
+    "vsconst": ([_mean(_mix(8.0))] * 8, 4992, 16000),    # vsmix8's overall shares with no shift: does the shift matter?
+    "vsgrow": (list(reversed(_mix(8.0))), 4992, 16000),    # vsmix8's shift reversed: toward large vocabularies as data repeats
+    "vsfrozen": ([_mean(_mix(8.0))] * 8, 4992, 16000),    # vsconst, but a window keeps its view on every pass, so its tokens repeat exactly: does the redraw matter?
+    "vs128k16k": ([{128000: 0.5, 16000: 0.5}] * 8, 4992, 16000),    # two views, one of them large
+    "vs16k8k": ([{16000: 0.5, 8000: 0.5}] * 8, 4992, 16000),    # two views, no large one: do the large views matter?
+    "vsuniq": ([_mean(_mix(8.0))] * 8, 4992, 16000),    # vsconst on 8 times the text, no window twice: is the gain a lower regret or a better level?
 }
+FROZEN = ("vsfrozen",)   # one draw of views, for all passes
+UNIQUE = ("vsuniq",)   # each pass reads the next 183,040 windows of the plain unique-token run's order
 
 
 def expansions(keys):
@@ -161,10 +175,50 @@ def source_subset():
     return rows
 
 
+def unique_reader(first_block):
+    """Reads windows of 4096 Marin tokens of the plain unique-token run, in its order (vocab_materialize_passes.subset, with no repeats). Its first windows are checked against the repeated eighth."""
+    import asyncio  # noqa: PLC0415
+    import dataclasses  # noqa: PLC0415
+    import glob  # noqa: PLC0415
+    from unittest import mock  # noqa: PLC0415
+
+    import jax  # noqa: PLC0415
+    from haliax import Axis  # noqa: PLC0415
+
+    for k in ("PASS_DATA", "VARIANT", "SMOKE_STEPS", "TOTAL_STEPS", "SEQ_LEN", "BATCH", "TPP", "SEED"):
+        os.environ.pop(k, None)
+    os.environ.update(SIZE="300m", DATA_EPOCHS="1", DRY_RUN="1", MEMSTATS_EVERY="0")
+    from experiments.references import della_muonh_qwen3_scaling as scaling  # noqa: PLC0415
+
+    tc = scaling.muonh_qwen3_run("300m").build_config(mock.MagicMock()).train_config
+    batch, data = tc.trainer.train_batch_size, tc.data
+    (name, _), = data.max_train_batches.items()
+    tok = os.path.dirname(glob.glob("/scratch/gpfs/GROUP/USER/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/*/tokenizer.json")[0])
+    data = dataclasses.replace(data, tokenizer=tok, components={**data.components, name: scaling._cache_component(f"{PREFIX}/fineweb-edu-10B/2026.06.28/train")})
+    _, shuffle_key = jax.random.split(jax.random.PRNGKey(tc.data_seed))
+    ds = data.train_sets(Axis("position", 4096), key=shuffle_key, initial_batch_size=batch)[name]
+
+    def read(a, b):
+        out = np.zeros((b - a, 4096), np.int32)
+
+        async def go():
+            for i in range(a, b, 2048):
+                got = await ds.get_batch(list(range(i, min(b, i + 2048))))
+                out[i - a:i - a + len(got)] = np.stack([np.asarray(x["input_ids"] if isinstance(x, dict) else x.tokens) for x in got])
+        asyncio.run(go())
+        return out
+
+    same = int((read(0, 2048) == first_block[:2048]).all(axis=1).sum())
+    print(f"unique source: {same} of the first 2048 windows equal the repeated eighth's", flush=True)
+    return read
+
+
 def build(arm, sub, ex):
     t0 = time.time()
     views, seq, eval_k = ARMS[arm]
     n = len(sub)
+    read = unique_reader(sub) if arm in UNIQUE else None
+    first = None
     out = f"{PREFIX}/materialized/300m-rep8-{arm}"
     os.makedirs(out, exist_ok=True)
     meta = dict(arm=arm, source=SOURCE, subset_sequences=n, seq_len=seq, eval_k=eval_k, schedule=[{str(k): v for k, v in p.items()} for p in views], pass_sequences=[], view_windows=[])
@@ -172,7 +226,10 @@ def build(arm, sub, ex):
         for e, shares in enumerate(views, 1):
             ks = list(shares)
             rng = np.random.default_rng(30000 + e)
-            draw = rng.choice(ks, size=n, p=np.asarray([shares[k] for k in ks]) / sum(shares.values())) if len(ks) > 1 else np.full(n, ks[0])
+            if read:
+                sub = read((e - 1) * n, e * n)
+            draw_rng = np.random.default_rng(30000) if arm in FROZEN else rng
+            draw = draw_rng.choice(ks, size=n, p=np.asarray([shares[k] for k in ks]) / sum(shares.values())) if len(ks) > 1 else np.full(n, ks[0])
             carry = {k: np.zeros(0, np.int32) for k in ks}
             counts = {k: 0 for k in ks}
             for a in range(0, n, 8192):
@@ -193,6 +250,10 @@ def build(arm, sub, ex):
                 if not parts:
                     continue
                 win = np.concatenate(parts)
+                if arm in FROZEN and a == 0:   # one draw of views: the first chunk's windows repeat exactly on every pass
+                    got = sorted(r.tobytes() for r in win)
+                    first = first or got
+                    assert got == first, (arm, e)
                 if len(ks) > 1:
                     win = win[rng.permutation(len(win))]
                 w.write_batch([{"input_ids": r} for r in win])
