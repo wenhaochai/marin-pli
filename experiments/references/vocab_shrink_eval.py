@@ -69,7 +69,7 @@ def data_config() -> LmDataConfig:
 
 def main():
     cfg = VocabShrinkQwen3Config(max_seq_len=SEQ_LEN, hidden_dim=768, intermediate_dim=2688, num_layers=12, num_heads=12, num_kv_heads=12, hybrid_norm=True,
-                                 attn_backend=AttentionBackend.JAX_FLASH, vs_eval_k=K)
+                                 attn_backend=AttentionBackend.JAX_FLASH, flash_attention_block_size=128, vs_eval_k=K)   # every equal-text window is a multiple of 128
     Pos = Axis("position", SEQ_LEN)
     trainer = TrainerConfig(mp=jmp.get_policy("p=f32,c=bfloat16"), per_device_eval_parallelism=EVAL_BATCH,
                             mesh=MeshConfig(axes={"data": -1, "replica": 1, "model": 1},
