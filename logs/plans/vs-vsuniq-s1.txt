@@ -1,0 +1,4 @@
+# owner 2026-11-04 (a friend's two ideas, "你看看能不能尝试一些"): at 128K the regret of the mix with no shift is 0.024 (w1079 1.4470, w1081 1.4231, w1086), of the same mix when a window keeps its view 0.076 (w1080 1.4994), of the fixed 128K 0.080. Second seeds of these runs; seed noise is up to about 0.01 (w1076). no shift, 8 times the text, no window twice.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vsuniq+SEQ_LEN=4992+DATA_EPOCHS=8+SEED=1
+par vsuniq-s1 300m-della4xh100-rep8-vsuniq-sl4992-s1 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4992 DATA_EPOCHS=8 PASS_DATA=vsuniq SEED=1
+wait
