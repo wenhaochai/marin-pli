@@ -1,0 +1,22 @@
+0, 23418 MiB, 57 %
+1, 5729 MiB, 99 %
+learned arch hc streams 1 res learned route dynamic leak False power 1.0 layers 48 width 512 detach False sep False
+  loss 12.009, gradient leaves 28, non-finite 0, largest backbone gradient element 1.816e-01; 15 s
+  CE at layer 48 at initialisation: [12.008999824523926] ln V 11.762
+  OK
+identity arch hc streams 1 res identity route dynamic leak False power 1.0 layers 48 width 512 detach False sep False
+  loss 12.009, gradient leaves 28, non-finite 0, largest backbone gradient element 1.816e-01; 14 s
+  CE at layer 48 at initialisation: [12.008999824523926] ln V 11.762
+  OK
+scalar arch hc streams 1 res scalar route dynamic leak False power 1.0 layers 48 width 512 detach False sep False
+  loss 12.009, gradient leaves 28, non-finite 0, largest backbone gradient element 1.816e-01; 15 s
+  CE at layer 48 at initialisation: [12.008999824523926] ln V 11.762
+  OK
+static arch hc streams 1 res learned route static leak False power 1.0 layers 48 width 512 detach False sep False
+  loss 12.008, gradient leaves 28, non-finite 0, largest backbone gradient element 1.816e-01; 15 s
+  CE at layer 48 at initialisation: [12.008000373840332] ln V 11.762
+  OK
+leak arch preln streams 1 res learned route dynamic leak True power 0.1 layers 48 width 512 detach False sep False
+  loss 12.068, gradient leaves 14, non-finite 0, largest backbone gradient element 2.197e-01; 13 s
+  CE at layer 48 at initialisation: [12.067000389099121] ln V 11.762
+  OK
