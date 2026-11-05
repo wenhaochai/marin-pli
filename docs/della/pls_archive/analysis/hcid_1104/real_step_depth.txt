@@ -1,0 +1,40 @@
+L 12 res identity arch hc streams 4 layers 12 width 512 detach True sep True weight 1
+  loss 146.980; gradient leaves 50, non-finite 0; 16 s
+  full loss 146.980, last layer alone 12.247 (ln V 11.762); largest backbone gradient difference 9.77e-04
+  largest gradient of res: 0.00e+00
+  largest gradient of w_res: 0.00e+00
+  largest gradient of write: 5.76e-02
+  largest gradient of read: 3.96e-02
+  OK
+L 12 res learned arch hc streams 4 layers 12 width 512 detach True sep True weight 1
+  loss 146.981; gradient leaves 50, non-finite 0; 16 s
+  full loss 146.981, last layer alone 12.247 (ln V 11.762); largest backbone gradient difference 9.77e-04
+  largest gradient of res: 8.79e-02
+  largest gradient of w_res: 9.03e-03
+  largest gradient of write: 5.76e-02
+  largest gradient of read: 3.91e-02
+  OK
+L 24 res identity arch hc streams 4 layers 24 width 512 detach True sep True weight 1
+  loss 293.965; gradient leaves 74, non-finite 0; 20 s
+  full loss 293.965, last layer alone 12.073 (ln V 11.762); largest backbone gradient difference 9.77e-04
+  largest gradient of res: 0.00e+00
+  largest gradient of w_res: 0.00e+00
+  largest gradient of write: 9.86e-02
+  largest gradient of read: 4.08e-02
+  OK
+L 24 res learned arch hc streams 4 layers 24 width 512 detach True sep True weight 1
+  loss 293.966; gradient leaves 74, non-finite 0; 21 s
+  full loss 293.966, last layer alone 12.073 (ln V 11.762); largest backbone gradient difference 0.00e+00
+  largest gradient of res: 1.10e-01
+  largest gradient of w_res: 8.67e-03
+  largest gradient of write: 9.91e-02
+  largest gradient of read: 4.08e-02
+  OK
+L 12 res identity arch hc streams 4 layers 12 width 512 detach True sep True weight 1
+  loss 146.980; gradient leaves 50, non-finite 0; 67 s
+  full loss 146.980, last layer alone 12.247 (ln V 11.762); largest backbone gradient difference 9.77e-04
+  OK
+L 24 res identity arch hc streams 4 layers 24 width 512 detach True sep True weight 1
+  loss 293.965; gradient leaves 74, non-finite 0; 75 s
+  full loss 293.965, last layer alone 12.073 (ln V 11.762); largest backbone gradient difference 9.77e-04
+  OK

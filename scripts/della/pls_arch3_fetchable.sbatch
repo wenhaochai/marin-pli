@@ -94,6 +94,7 @@
 #                                the same gains: does shrinking need HC's streams? Pre-LN's cost 0.084. Owner popup 2026-11-03.
 #   arch3-hcsumf32-{sep,probes}  arch3-hcsum with the streams in float32 (HC_STATE_F32=1); w959 diverged at step 27 with bfloat16 streams. HC's mixing
 #                                without its shrink of the sum: the other arm of the 2 x 2 with hcshrink. Owner popup 2026-11-03.
+#   arch3-hcid-d{12,24}-probes   HC with mixing = I at 12 and 24 layers, ordinary model (owner popup 2026-11-04): does learned mixing help shallow models and hurt deep ones? HC, mHC, AttnRes and MUDDFormer report that removing it hurts at 16 to 30 layers; at 48 layers here it helps. Compare with arch3-hc-d{12,24}-probes on the same code.
 # Resumable: submit with --partial. Runs pls_h100x8_single.sbatch (smoke copy with the readout gate, then the run).
 set -euo pipefail
 cd /scratch/gpfs/GROUP/USER/project/marin-pls
@@ -148,6 +149,8 @@ case $DESIGN in
   arch3-hcshrink05) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=sumshrink SHRINK_POWER=0.5";;
   arch3-plleak) S="$base LAYERS=48 PDP=4 ARCH=preln PRELN_LEAK=1";;
   arch3-hcidfb100) S="$base LAYERS=48 PDP=4 ARCH=hc HC_RES=identity BRANCH_BOUND=100";;
+  arch3-hcid-d12) S="$base LAYERS=12 PDP=4 ARCH=hc HC_RES=identity";;
+  arch3-hcid-d24) S="$base LAYERS=24 PDP=4 ARCH=hc HC_RES=identity";;
   *) echo "unknown arch3 design '$DESIGN'"; exit 2;;
 esac
 export SINGLE=$S SINGLE_SMOKE_MIN=45 SINGLE_FIRST_STEP_MIN=40
