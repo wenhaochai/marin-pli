@@ -102,9 +102,12 @@ ARMS = {
     "vsl128": (_one([128000] * 4) + [_mean(_mix(8.0))] * 4, 4992, 16000),    # 128K on passes 1-4, while the regret is near 0 (gap_timing.py), then the no-shift mix: can 128K keep its rows' training and lose the regret?
     "vsp50u": ([{128000: 0.5, 64000: 0.125, 32000: 0.125, 16000: 0.125, 8000: 0.125}] * 8, 4992, 16000),    # vsp50 on 8 times the text
     "vsp80u": ([{128000: 0.8, 64000: 0.05, 32000: 0.05, 16000: 0.05, 8000: 0.05}] * 8, 4992, 16000),    # vsp80 on 8 times the text
+    # The regret of Qian Liu's two proposals themselves (owner popup 2026-11-05): each schedule on 8 times the text, no window twice.
+    "vsmix8u": (_mix(8.0), 4992, 16000),    # vsmix8 on 8 times the text
+    "vscut32ku": (_one([128000, 64000, 64000, 32000, 32000, 32000, 32000, 32000]), 4480, 32000),    # vscut32k on 8 times the text
 }
 FROZEN = ("vsfrozen",)   # one draw of views, for all passes
-UNIQUE = ("vsuniq", "vs16kwu", "vs128k16ku", "vs16k8ku", "vsp50u", "vsp80u")   # each pass reads the next 183,040 windows of the plain unique-token run's order
+UNIQUE = ("vsuniq", "vs16kwu", "vs128k16ku", "vs16k8ku", "vsp50u", "vsp80u", "vsmix8u", "vscut32ku")   # each pass reads the next 183,040 windows of the plain unique-token run's order
 WIDE = ("vs16kw", "vs16kwu")   # one view, but every row stays in the softmax and the optimizer step (della_muonh_qwen3_scaling._vs_schedule)
 
 

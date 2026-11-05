@@ -619,15 +619,17 @@ if HNET_ROUTE != HNetRoute.START and VARIANT != "hnet":
 # chunks, from the token-start caches fineweb-edu-10B-v256ts / paloma-v256ts (convert_token_start_cache.py; tag -rbpe).
 # HNET_FREEZE_FROM_PASS=p: the chunker (byte embedding, encoder, q_proj, k_proj) stops from update round(steps / 8) * (p - 1),
 # in the unique-text run too (hnet_freeze_muonh.py; tag -chfz<p>). HNET_NO_ROUTE_GRAD=1: only the ratio loss trains q and k
-# (tag -nrg). HNET_NO_RESIDUAL=1: no R h_t (tag -nores). HNET_NO_EMA=1: z_j = c_j (tag -noema). HNET_SLOT_MARGIN: main-network
+# (tag -nrg). HNET_NO_RESIDUAL=1: no R h_t (tag -nores). HNET_NO_EMA=1: z_j = c_j (tag -noema). HNET_EMA_STOP=1: the EMA blends and
+# passes no gradient to the routing (tag -emastop; owner popup 2026-11-05). HNET_SLOT_MARGIN: main-network
 # slots per window = window / N x margin, rounded up to 128 (tag -sm<m> when it is not 1.25).
 HNET_FREEZE_FROM_PASS = int(os.environ.get("HNET_FREEZE_FROM_PASS", "0"))
 HNET_NO_ROUTE_GRAD = os.environ.get("HNET_NO_ROUTE_GRAD", "0") == "1"
 HNET_NO_RESIDUAL = os.environ.get("HNET_NO_RESIDUAL", "0") == "1"
 HNET_NO_EMA = os.environ.get("HNET_NO_EMA", "0") == "1"
+HNET_EMA_STOP = os.environ.get("HNET_EMA_STOP", "0") == "1"
 HNET_SLOT_MARGIN = float(os.environ.get("HNET_SLOT_MARGIN", "1.25"))
-if (HNET_FREEZE_FROM_PASS or HNET_NO_ROUTE_GRAD or HNET_NO_RESIDUAL or HNET_NO_EMA or HNET_SLOT_MARGIN != 1.25) and VARIANT != "hnet":
-    raise ValueError("HNET_FREEZE_FROM_PASS, HNET_NO_ROUTE_GRAD, HNET_NO_RESIDUAL, HNET_NO_EMA and HNET_SLOT_MARGIN need VARIANT=hnet")
+if (HNET_FREEZE_FROM_PASS or HNET_NO_ROUTE_GRAD or HNET_NO_RESIDUAL or HNET_NO_EMA or HNET_EMA_STOP or HNET_SLOT_MARGIN != 1.25) and VARIANT != "hnet":
+    raise ValueError("HNET_FREEZE_FROM_PASS, HNET_NO_ROUTE_GRAD, HNET_NO_RESIDUAL, HNET_NO_EMA, HNET_EMA_STOP and HNET_SLOT_MARGIN need VARIANT=hnet")
 if HNET_FREEZE_FROM_PASS and not 2 <= HNET_FREEZE_FROM_PASS <= 8:
     raise ValueError(f"HNET_FREEZE_FROM_PASS={HNET_FREEZE_FROM_PASS}: 2..8 (the chunker learns in pass 1)")
 # route=bpe reads the token-start caches (byte ids, + 512 where a Marin token starts) under the bytes' component names
@@ -753,7 +755,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
     if VARIANT == "hnet":
         variant_tags += f"-hnet{HNET_ENC}x{HNET_DEC}n{HNET_N:g}" + ("" if HNET_ROUTE == HNetRoute.START else f"-r{HNET_ROUTE.value}")
         variant_tags += (f"-sm{HNET_SLOT_MARGIN:g}" if HNET_SLOT_MARGIN != 1.25 else "") + (f"-chfz{HNET_FREEZE_FROM_PASS}" if HNET_FREEZE_FROM_PASS else "")
-        variant_tags += ("-nrg" if HNET_NO_ROUTE_GRAD else "") + ("-nores" if HNET_NO_RESIDUAL else "") + ("-noema" if HNET_NO_EMA else "")
+        variant_tags += ("-nrg" if HNET_NO_ROUTE_GRAD else "") + ("-nores" if HNET_NO_RESIDUAL else "") + ("-noema" if HNET_NO_EMA else "") + ("-emastop" if HNET_EMA_STOP else "")
     if VARIANT == "drop":
         variant_tags += f"-drop{DROP_P:g}" + (f"-fp{DROP_FROM_PASS}" if DROP_FROM_PASS else "")
     if VARIANT == "unismooth":
@@ -918,7 +920,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError("VARIANT=hnet: VOCAB_K=256, ATTN_BACKEND fa4 or jax_flash, untied tables")
         model_cls, model_extra = HNetQwen3Config, dict(enc_layers=HNET_ENC, dec_layers=HNET_DEC, chunk_ratio=HNET_N, route=HNET_ROUTE,
                                                        slot_margin=HNET_SLOT_MARGIN, no_route_grad=HNET_NO_ROUTE_GRAD,
-                                                       no_residual=HNET_NO_RESIDUAL, no_ema=HNET_NO_EMA)
+                                                       no_residual=HNET_NO_RESIDUAL, no_ema=HNET_NO_EMA, ema_stop_grad=HNET_EMA_STOP)
     elif VARIANT == "drop":
         model_cls, model_extra = ResidualDropoutQwen3Config, dict(drop_p=DROP_P,
                                                                   drop_from_step=round((SMOKE_STEPS or TOTAL_STEPS or s["steps"]) / 8) * (DROP_FROM_PASS - 1) if DROP_FROM_PASS else 0)

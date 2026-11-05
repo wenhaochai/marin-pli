@@ -81,8 +81,8 @@ for t in TAGS:
         ENV["HNET_SLOT_MARGIN"] = t[2:]
     elif t.startswith("chfz"):
         ENV["HNET_FREEZE_FROM_PASS"] = t[4:]
-    elif t in ("nrg", "nores", "noema"):
-        ENV[{"nrg": "HNET_NO_ROUTE_GRAD", "nores": "HNET_NO_RESIDUAL", "noema": "HNET_NO_EMA"}[t]] = "1"
+    elif t in ("nrg", "nores", "noema", "emastop"):
+        ENV[{"nrg": "HNET_NO_ROUTE_GRAD", "nores": "HNET_NO_RESIDUAL", "noema": "HNET_NO_EMA", "emastop": "HNET_EMA_STOP"}[t]] = "1"
     else:
         raise ValueError(f"RUN_U={RUN_U}: unknown tag -{t}")
 for k in ("DATA_EPOCHS", "PASS_DATA", "SMOKE_STEPS", "TOTAL_STEPS", "BATCH", "TPP", "SEED", "VOCAB_SET", "EMA_BETA", "RUN_TAG", "PDP"):

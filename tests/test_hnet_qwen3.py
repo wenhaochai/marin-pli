@@ -386,6 +386,24 @@ try:
 except ValueError:
     check("no_route_grad with a data route fails", True)
 
+# ema_stop_grad: the forward pass does not change, the task gradient into q and k comes through the STE factor alone
+_, smodel = make(128, ema_stop_grad=True)
+g_stop = eqx.filter_grad(lambda m: jnp.sum(train_fwd(m, ids)[0].rearrange((Batch, Pos, m.config.Embed)).array * w_))(smodel)
+check("ema_stop_grad: forward equals the default's", np.array_equal(np.asarray(smodel.activations(ids, mask, key=None).array), base))
+check("ema_stop_grad: task gradient into q and k is nonzero and differs from the default's", fnorm(g_stop.q_proj) > 0 and fnorm(g_stop.k_proj) > 0 and fnorm(g_stop.q_proj) != fnorm(g_task_def.q_proj),
+      f"q {fnorm(g_stop.q_proj):.2e}, default {fnorm(g_task_def.q_proj):.2e}")
+for kw in (dict(no_ema=True), dict(no_route_grad=True)):
+    try:
+        make(128, ema_stop_grad=True, **kw)
+        check(f"ema_stop_grad with {kw} fails", False)
+    except ValueError:
+        check(f"ema_stop_grad with {kw} fails", True)
+try:
+    make(128, HNetRoute.FIXED, ema_stop_grad=True)
+    check("ema_stop_grad with a data route fails", False)
+except ValueError:
+    check("ema_stop_grad with a data route fails", True)
+
 # no_residual: R h_t is gone (a nonzero R changes the default model, not this one); R gets a zero gradient and a zero step
 R = hax.named(0.05 * jrandom.normal(jrandom.PRNGKey(4), model.residual_proj.array.shape), model.residual_proj.axes)
 _, rmodel = make(128, no_residual=True)
