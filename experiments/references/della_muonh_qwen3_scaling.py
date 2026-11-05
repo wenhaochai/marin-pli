@@ -615,7 +615,8 @@ HNET_ROUTE = HNetRoute(os.environ.get("HNET_ROUTE", "start"))
 if HNET_ROUTE != HNetRoute.START and VARIANT != "hnet":
     raise ValueError("HNET_ROUTE needs VARIANT=hnet")
 # H-Net ablations (owner popup 2026-11-03; hnet_qwen3.py docstring), tags after -hnet<enc>x<dec>n<N>[-r<route>]:
-# HNET_ROUTE=space: a chunk after every whitespace byte (tag -rspace). HNET_ROUTE=bpe: the 128K Marin tokenizer's tokens as
+# HNET_ROUTE=space: a chunk after every whitespace byte (tag -rspace). HNET_ROUTE=word: as space, but a run of whitespace joins the
+# chunk before it (tag -rword; owner popup 2026-11-05 "跑"). HNET_ROUTE=bpe: the 128K Marin tokenizer's tokens as
 # chunks, from the token-start caches fineweb-edu-10B-v256ts / paloma-v256ts (convert_token_start_cache.py; tag -rbpe).
 # HNET_FREEZE_FROM_PASS=p: the chunker (byte embedding, encoder, q_proj, k_proj) stops from update round(steps / 8) * (p - 1),
 # in the unique-text run too (hnet_freeze_muonh.py; tag -chfz<p>). HNET_NO_ROUTE_GRAD=1: only the ratio loss trains q and k
