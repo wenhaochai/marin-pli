@@ -1,0 +1,4 @@
+# owner popup 2026-11-04 (test the cause of the gain of 16K windows with every row in the softmax, 1.4427 against 1.4700 for the fixed 16K, w1118): that run ends with the used head rows at 0.55 of their norm and turning 1.6 to 2.1 times as fast relative to their norm (tmp_plots/vocab/hnet_diag/head_norms.py). This arm gives a fixed 16K both, its kept head rows' step times 2 and its head at init times 0.55.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vsfix16k+SEQ_LEN=4992+DATA_EPOCHS=8+VS_HEAD_RATE=2+VS_HEAD_SCALE=0.55
+par vsfix16k-hr2-hs0.55 300m-della4xh100-rep8-vsfix16k-hr2-hs0.55-sl4992 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4992 DATA_EPOCHS=8 PASS_DATA=vsfix16k VS_HEAD_RATE=2 VS_HEAD_SCALE=0.55
+wait
