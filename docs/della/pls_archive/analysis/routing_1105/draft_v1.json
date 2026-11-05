@@ -1,0 +1,360 @@
+{
+  "title": {
+    "en": "Deeper Models Gain from Residual Paths, Not from Learned Routing",
+    "zh": "更深的模型靠残差通路获益，而不是学到的路由"
+  },
+  "standfirst": {
+    "en": "At 12, 24 and 48 layers, extra residual paths lower the held-out loss. Learned mixing between the paths pays a little at 12 layers and costs at 48.",
+    "zh": "在 12、24 和 48 层模型中，额外的残差通路都会降低留出损失。通路之间学到的混合在 12 层有一点收益，到 48 层反而带来损失。"
+  },
+  "sections": [
+    {
+      "id": "opening-video",
+      "heading": {
+        "en": "",
+        "zh": ""
+      },
+      "paras": [],
+      "figure": null
+    },
+    {
+      "id": "motivation",
+      "heading": {
+        "en": "Removing learned routing lowers the held-out loss at 48 layers",
+        "zh": "在 48 层去掉学到的路由能降低留出损失"
+      },
+      "paras": [
+        {
+          "en": "Manifold-Constrained Hyper-Connections (mHC)<sup class=\"fn\">2</sup> is Hyper-Connections (HC)<sup class=\"fn\">1</sup> with a constraint on its mixing matrix, and at 48 layers it reaches a lower held-out loss than HC. We expected the constraint to be the reason. So we replaced HC's learned mixing with the identity and trained again from scratch. As Figure 1 shows, HC then reached mHC's held-out loss, 0.03 to 0.08 nats lower than with learned mixing. Removing the mixing from mHC itself moves the held-out loss by 0.006 nats. In Attention Residuals (AttnRes)<sup class=\"fn\">4</sup>, replacing the token-dependent weights with weights that ignore the token lowers the held-out loss by 0.08 to 0.18 nats. All of these differences come from full trainings. Yet the papers that introduced these designs report the opposite at up to 24 layers: removing the routing raises the loss by 0.012 to 0.022 nats, with 0.021 in HC at 16 layers<sup class=\"fn\">1</sup>, 0.022 in mHC<sup class=\"fn\">2</sup>, and 0.012 in AttnRes at 16 blocks<sup class=\"fn\">4</sup>. What decides whether learned routing pays?",
+          "zh": "流形约束超连接（mHC）<sup class=\"fn\">2</sup>在超连接（HC）<sup class=\"fn\">1</sup>的混合矩阵上加了约束。在 48 层模型里，mHC 的留出损失比 HC 更低。我们原本以为这是因为那个约束。于是我们把 HC 里学到的混合换成单位阵，再从头训练。如图 1 所示，这样改过之后，HC 直接达到了 mHC 的留出损失，比保留学到的混合时低 0.03 到 0.08 nats。把 mHC 自己的混合去掉，留出损失只变动 0.006 nats。在注意力残差（AttnRes）<sup class=\"fn\">4</sup>里，把依赖 token 的权重换成不看 token 的权重，留出损失也会降低 0.08 到 0.18 nats。这些差值都来自从头训练的完整模型。但是提出这些设计的论文在最多 24 层的实验里报告了相反的结果：去掉路由会让 loss 上升 0.012 到 0.022 nats，其中 16 层 HC 上升 0.021<sup class=\"fn\">1</sup>，mHC 上升 0.022<sup class=\"fn\">2</sup>，16 个块的 AttnRes 上升 0.012<sup class=\"fn\">4</sup>。到底是什么决定了学到的路由有没有收益？"
+        }
+      ],
+      "figure": "rr-removal"
+    },
+    {
+      "id": "background",
+      "heading": {
+        "en": "Residual designs add paths and route between them",
+        "zh": "残差设计增加残差通路并在通路之间做路由"
+      },
+      "paras": [
+        {
+          "en": "Each Transformer layer has two sublayers, attention and MLP, and each sublayer produces an output $F$. In Pre-LN, a single state $h$ keeps a running sum $h \\leftarrow h + F(\\text{RN}(h))$, where RN is RMSNorm, and the readout reads that sum. A path is a way for an earlier sublayer output to reach a later layer without passing through the layers in between. Pre-LN has one path, the running sum.",
+          "zh": "每个 Transformer 层包含注意力和 MLP 两个子层，每个子层输出 $F$。在 Pre-LN 中，单一状态 $h$ 维护一个累加和 $h \\leftarrow h + F(\\text{RN}(h))$，其中 RN 是 RMSNorm，读出头直接读取这个累加和。如果前序子层的输出能够不经过中间各层、直接传到后面的层，这条路线就叫做一条残差通路。Pre-LN 只有一条残差通路，就是这个累加和。"
+        },
+        {
+          "en": "Figure 2 shows how recent designs add paths and route between them. HC keeps $m$ parallel copies of the state called streams, with $m = 4$ here. At each sublayer, HC reads a weighted sum of the streams, writes $F$ into each stream with its own weight, and mixes the streams with an $m \\times m$ matrix $A$. The head reads the sum of the streams, which we call the stream sum. We compare learned mixing, where $A$ is learned, against no mixing, where $A$ is fixed to the identity while read and write weights stay learned. mHC forces $A$ to be doubly stochastic with Sinkhorn iterations, so its entries are non-negative and every row and column sums to 1, leaving the stream sum unchanged. In AttnRes, each sublayer reads a softmax-weighted sum of every earlier sublayer output, with weights computed from a learned query and the current token's keys. Routing means the weights that decide what goes where: in this post, it has two parts, the mixing matrix $A$ and the dependence of the weights on the token.",
+          "zh": "图 2 展示了近期几种设计怎样增加残差通路并在通路之间做路由。HC 维护 $m$ 个并行的状态副本，称为流，这里取 $m = 4$。在每个子层，HC 先读取各流的加权和，再用各自的权重把 $F$ 写入每条流，最后用一个 $m \\times m$ 的矩阵 $A$ 对各流做混合。读出头读取所有流的总和，我们称之为流之和。我们对比两种设置：学到的混合让模型自己学习 $A$，没有混合则把 $A$ 固定为单位阵，但两者的读写权重都继续学习。mHC 用 Sinkhorn 迭代把 $A$ 约束为双随机矩阵，所有元素非负且每行每列之和都是 1，所以流之和保持不变。在 AttnRes 中，每个子层读取之前所有子层输出的 softmax 加权和，权重由学到的 query 和当前 token 的 key 算出。路由就是决定信息流向的权重。在这篇文章里，路由包含两部分：混合矩阵 $A$，以及权重对当前 token 的依赖。"
+        },
+        {
+          "en": "Take HC's learned mixing at the MLP sublayer of layer 12 in the 48-layer model as our running example. Its four row sums tell how much of each stream goes on into the stream sum: 0.81, 0.10, -0.47 and 0.86. One is negative, so that stream is subtracted.",
+          "zh": "我们拿 48 层模型第 12 层 MLP 子层里 HC 学到的混合作为贯穿全文的例子。它的四个行和表示每条流有多少比例会进入流之和，数值分别是 0.81、0.10、-0.47 和 0.86。其中一个是负数，说明那条流在流之和里是相减的。"
+        }
+      ],
+      "figure": "schematic"
+    },
+    {
+      "id": "setup",
+      "heading": {
+        "en": "Models at 12, 24 and 48 layers train on the same 2.6B-token recipe",
+        "zh": "12、24 和 48 层模型在相同的 2.6B token 配方下从头训练"
+      },
+      "paras": [
+        {
+          "en": "We train ordinary models, which optimize only the last layer's next-token loss, at 12, 24 and 48 layers with width 512 and MLP width 1792, so the deeper models have more parameters: 177M, 223M and 314M. Every model trains from scratch for the same 4,959 steps on 2.6B tokens of FineWeb-Edu in the same data order using the MuonH recipe of the Marin speedrun. Held-out text is Paloma C4, where we report the last layer's next-token cross-entropy in nats as the held-out loss, and carry one quantity through the post: the gain from learned mixing, defined as held-out loss with no mixing minus held-out loss with learned mixing at the same depth.",
+          "zh": "我们在 12、24 和 48 层三个深度下训练普通模型，也就是只优化最后一层下一个 token 的 loss；模型宽度为 512，MLP 宽度为 1792，因此更深的模型参数量更多，分别是 177M、223M 和 314M。每个模型都采用 Marin speedrun 的 MuonH 配方，按完全相同的数据顺序在 2.6B 个 FineWeb-Edu token 上从头训练相同的 4,959 步。留出文本是 Paloma C4，我们把最后一层在上面的下一个 token 交叉熵（单位为 nats）记作留出损失，并全文追踪同一个量：学到的混合带来的收益，定义为同一深度下没有混合的留出损失减去学到的混合的留出损失。"
+        }
+      ],
+      "figure": null
+    },
+    {
+      "id": "depth",
+      "heading": {
+        "en": "The deeper the model, the less learned mixing pays",
+        "zh": "模型越深，学到的混合带来的收益越小"
+      },
+      "paras": [
+        {
+          "en": "In Figure 3, the gain from learned mixing is +0.016 nats at 12 layers, -0.020 at 24 layers and -0.056 at 48 layers. At 12 layers this agrees with the papers: HC reports 0.021 at 16 layers<sup class=\"fn\">1</sup>, and AttnRes reports 0.012 at 16 blocks<sup class=\"fn\">4</sup>. So the two results do not contradict each other. Before the 12- and 24-layer trainings started, we wrote down at least +0.01 and about 0. At all five evaluation points during training, the three depths keep the same order, and at every depth the gain ends lower at step 4,958 than at step 1,000 (+0.067 to +0.016 at 12 layers, +0.033 to -0.020 at 24, and -0.032 to -0.056 at 48). <span class=\"chk\">We read a difference under 0.03 nats as no effect, so the claim rests on the trend across depth, not on the 24-layer point alone.</span> Back at layer 12 of the 48-layer model, what is this mixing doing that costs more the deeper the model is?",
+          "zh": "在图 3 中，学到的混合带来的收益在 12 层是 +0.016 nats，在 24 层是 -0.020，在 48 层是 -0.056。在 12 层上，这一结果与论文一致：HC 在 16 层报告了 0.021<sup class=\"fn\">1</sup>，AttnRes 在 16 个块报告了 0.012<sup class=\"fn\">4</sup>。所以两边的实验结果并不矛盾。在 12 层和 24 层开始训练之前，我们预先写下的预期分别是至少 +0.01 和接近 0。在训练过程的全部 5 个评测点上，三个深度的排序保持不变，而且在每个深度下，第 4,958 步的收益都比第 1,000 步更低（12 层从 +0.067 降到 +0.016，24 层从 +0.033 降到 -0.020，48 层从 -0.032 降到 -0.056）。<span class=\"chk\">我们把小于 0.03 nats 的差值视为没有效果，所以结论建立在跨深度的趋势上，而不是单靠 24 层那一个点。</span>回到 48 层模型的第 12 层：这里的混合到底做了什么，才会让模型越深代价越大？"
+        }
+      ],
+      "figure": "rr-depth"
+    },
+    {
+      "id": "controls",
+      "heading": {
+        "en": "The controls do not explain it",
+        "zh": "常见控制变量无法解释这一现象"
+      },
+      "paras": [
+        {
+          "en": "Four controls rule out simpler explanations. First, the 12- and 24-layer pairs share code, data order and steps, and differ only in the mixing. Second, at 48 layers parameter counts match within 0.2 percent across designs, from 3,400.2M to 3,404.9M.",
+          "zh": "四组对照实验排除了更简单的解释。第一，12 层和 24 层的成对模型共用代码、数据顺序和训练步数，唯一区别就是混合。第二，在 48 层上，各设计的参数量相差不到 0.2%，都在 3,400.2M 到 3,404.9M 之间。"
+        },
+        {
+          "en": "Third, is the mixing simply unused? No. On 16,380 FineWeb-Edu tokens, mHC's mixing moves about 3 percent per sublayer (mean off-diagonal weight 0.029 per row), and replacing every $A$ with the identity after training raises the loss from 2.873 to 3.480 on those FineWeb-Edu tokens, a different text from the Paloma C4 held-out numbers. A model trained with mixing relies on it. A model trained without it does as well. So the removal has to be done before training.",
+          "zh": "第三，是不是学到的混合根本没被用上？不是。在 16,380 个 FineWeb-Edu token 上，mHC 的混合在每个子层搬移大约 3% 的权重（每行非对角元素均值 0.029）；如果在训练后把所有 $A$ 换成单位阵，这些 FineWeb-Edu token 上的 loss 会从 2.873 升到 3.480（这里测的是 FineWeb-Edu 文本，不同于测留出损失用的 Paloma C4）。带着混合训练的模型确实依赖混合；而从头不用混合训练的模型表现一样好。所以必须在训练前就把混合去掉。"
+        },
+        {
+          "en": "Fourth, AttnRes's loss spikes explain only part of its gap. At 48 layers, the last layer's training loss jumps by up to 10.44 nats above its running median, while with weights that ignore the token there is no such jump (at most 0.10 nats). With sources scaled to unit RMS, AttnRes has 0 spikes and reaches a held-out loss of 3.611, still above the 3.562 of weights that ignore the token.",
+          "zh": "第四，AttnRes 的 loss 尖峰只能解释一部分差距。在 48 层上，AttnRes 最后一层的训练 loss 会比滑动中位数跳升最多 10.44 nats，而改用不看 token 的权重后就没有这种跳升（最高仅 0.10 nats）。把输入源缩放到单位 RMS 后，AttnRes 的尖峰次数降为 0，留出损失降到 3.611，但仍然高于不看 token 的权重（3.562）。"
+        }
+      ],
+      "figure": null
+    },
+    {
+      "id": "mechanism",
+      "heading": {
+        "en": "The cost comes from changing the scale, not from moving content",
+        "zh": "代价来自改变尺度，而不是搬移内容"
+      },
+      "paras": [
+        {
+          "en": "Return to our running example at layer 12 of the 48-layer model: the four row sums average 0.33, so this sublayer shrinks the stream sum to a third. Learned mixing does two things: it moves content between streams, and it changes the scale of the stream sum. Figure 4 trains each one alone from scratch at 48 layers.",
+          "zh": "回到 48 层模型第 12 层的例子：那四个行和的平均值为 0.33，所以这一个子层就把流之和缩小到了原来的三分之一。学到的混合同时做了两件事：在流之间搬移内容，以及改变流之和的尺度。图 4 在 48 层上把这两件事拆开，分别从头训练模型。"
+        },
+        {
+          "en": "Mixing that only moves content and keeps the stream sum reaches a held-out loss of 3.578 with non-negative weights and 3.591 with signed weights, against 3.579 and 3.581 with no mixing. So moving content neither helps nor hurts. Mixing that only shrinks, using fixed gains taken from a trained HC model, reaches 3.687, and 3.676 at half the dose, above learned mixing at 3.615 to 3.656. A learned scale is not the problem by itself: one learned number per sublayer reaches 3.565, and its stream sum norm at the last layer stays at 363, close to the 667 it has with no mixing. So what costs is a scale that keeps changing.",
+          "zh": "只搬移内容但保持流之和不变的混合，在非负权重下留出损失为 3.578，在带符号权重下为 3.591，而没有混合时是 3.579 和 3.581。所以搬移内容既没有帮助也没有害处。反过来，只做收缩的混合（固定使用从训练好的 HC 模型里取出的增益）留出损失达到 3.687，把收缩剂量减半也是 3.676，都比学到的混合（3.615 到 3.656）更高。学一个缩放系数本身并不是问题：每个子层只学一个标量时留出损失能到 3.565，而且最后一层流之和的范数保持在 363，接近没有混合时的 667。真正带来代价的，是不断变化的尺度。"
+        }
+      ],
+      "figure": "rr-mixing"
+    },
+    {
+      "id": "scale",
+      "heading": {
+        "en": "The scale change compounds with depth",
+        "zh": "尺度变化随着深度成倍累积"
+      },
+      "paras": [
+        {
+          "en": "Each sublayer multiplies the stream sum by its gain, so depth multiplies the effect. In Figure 5, the stream sum changes scale across about 1.7 orders of magnitude at 12 layers, 1.9 at 24 layers and 4.6 at 48 layers. Its median norm at the last layer is 114 at 12 layers, 455 at 24 layers and about 10 million (10,289,532) at 48 layers, against 311, 398 and 667 with no mixing. The last write is 0.30, 0.10 and about 0.00001 (0.000012) of the new stream sum at 12, 24 and 48 layers, against 0.40, 0.29 and 0.29 with no mixing. RMSNorm reads only the direction, so nothing in the loss limits the size of the state. <span class=\"chk\">We think this is why depth hurts: when the state is that large, a late write barely changes its direction, so the late layers can do little. We did not test this directly.</span>",
+          "zh": "每个子层都会把流之和乘上自己的增益，所以深度会把这一效应成倍放大。在图 5 中，流之和的尺度在 12 层跨越约 1.7 个数量级，在 24 层跨越 1.9 个数量级，在 48 层跨越 4.6 个数量级。最后一层流之和范数的中位数在 12、24 和 48 层分别是 114、455 和约 1000 万（10,289,532），而没有混合时分别是 311、398 和 667。最后一次写入占新流之和的比例在 12、24 和 48 层分别是 0.30、0.10 和约 0.00001（0.000012），而没有混合时分别是 0.40、0.29 和 0.29。RMSNorm 只读取方向，所以 loss 里没有任何机制限制状态的大小。<span class=\"chk\">我们认为这就是深度带来伤害的原因：当状态大到这种程度时，后期的写入几乎改变不了它的方向，所以后面的层很难发挥作用。我们没有直接做实验检验这一点。</span>"
+        },
+        {
+          "en": "<span class=\"chk\">Once the growth did not stop:</span> from step 4,408 the state norm passes about $1.8 \\times 10^{19}$, where a float32 sum of squares overflows. RMSNorm then returns zero, the readout gives a uniform prediction for 70 percent (70.1 percent) of the tokens, and the held-out loss ends at 9.885. The gradient norm stays flat at a median of 0.97, so gradient monitors see nothing.",
+          "zh": "<span class=\"chk\">有一次这种增长没有停下来：</span>从第 4,408 步开始，状态范数超过约 $1.8 \\times 10^{19}$，此时 float32 的平方和发生溢出。随后 RMSNorm 输出零，读出头对 70%（70.1%）的 token 给出均匀预测，留出损失最终停在 9.885。梯度范数的中位数则平稳地保持在 0.97，所以梯度监控什么也看不出来。"
+        }
+      ],
+      "figure": "rr-scale"
+    },
+    {
+      "id": "paths",
+      "heading": {
+        "en": "The gain comes from the paths",
+        "zh": "收益来自残差通路"
+      },
+      "paras": [
+        {
+          "en": "We define the gain from paths as the held-out loss of Pre-LN minus the held-out loss with no mixing at the same depth. In the left panel of Figure 3, the gain from paths is +0.061 nats at 12 layers, +0.085 at 24 layers and +0.090 at 48 layers. So paths pay at every depth, and they pay more as the model gets deeper while learned mixing pays less.",
+          "zh": "我们把通路带来的收益定义为同一深度下 Pre-LN 的留出损失减去没有混合时的留出损失。在图 3 左图中，通路带来的收益在 12 层是 +0.061 nats，在 24 层是 +0.085，在 48 层是 +0.090。所以残差通路在每个深度都有收益，而且模型越深，通路带来的收益越大，学到的混合带来的收益则越小。"
+        },
+        {
+          "en": "In Figure 6, at 48 layers one path reaches 3.660 to 3.691 held-out loss, and several paths with no mixing reach 3.562 to 3.582. HC with 1 stream has learned read and write scales and no second path: it reaches 3.675, the same as Pre-LN. So learned scales alone do not pay. With learned mixing kept, going from 1 to 2 streams lowers the held-out loss from 3.675 to 3.632, and 4 streams (3.615 to 3.656) or 8 streams (3.643) add nothing clear. <span class=\"chk\">At 12 and 24 layers no mixing still keeps learned read and write, and we did not train a model with those gone at these depths.</span>",
+          "zh": "在图 6 的 48 层结果中，单条残差通路的留出损失在 3.660 到 3.691 之间，而没有混合的多条残差通路在 3.562 到 3.582 之间。只有 1 条流的 HC 具备学到的读写缩放、但没有第二条残差通路：它的留出损失是 3.675，与 Pre-LN 相同。所以单靠学到的缩放并没有收益。在保留学到的混合时，从 1 条流增加到 2 条流把留出损失从 3.675 降到 3.632，而 4 条流（3.615 到 3.656）或 8 条流（3.643）没有带来明确的进一步下降。<span class=\"chk\">在 12 层和 24 层上，没有混合仍然保留了学到的读写权重，我们没有在这两个深度下训练去掉读写权重的模型。</span>"
+        }
+      ],
+      "figure": "rr-paths"
+    },
+    {
+      "id": "limitations",
+      "heading": {
+        "en": "Limitations",
+        "zh": "局限性"
+      },
+      "paras": [
+        {
+          "en": "<span class=\"chk\">All trainings use one optimizer (MuonH), one held-out text (Paloma C4) and one budget of 2.6B tokens against up to 500B tokens in the papers, and at every depth the gain from learned mixing falls during training, so the depth where it crosses zero may move with the budget.</span> <span class=\"chk\">Depth and parameter count move together here from 177M to 314M.</span> <span class=\"chk\">At 12 and 24 layers we removed only the mixing.</span> <span class=\"chk\">Larger models such as Kimi K3<sup class=\"fn\">10</sup> are not tested and may differ.</span>",
+          "zh": "<span class=\"chk\">所有训练都只使用一种优化器（MuonH）、一种留出文本（Paloma C4）以及 2.6B token 的预算（而论文里最高用到 500B token）；并且在每个深度下，学到的混合带来的收益都会在训练过程中下降，因此它跨过零点的深度可能会随训练预算而移动。</span> <span class=\"chk\">这里的深度和参数量（177M 到 314M）是一起变化的。</span> <span class=\"chk\">在 12 层和 24 层我们只去掉了混合。</span> <span class=\"chk\">像 Kimi K3<sup class=\"fn\">10</sup> 这样更大的模型尚未测试，结果可能会有所不同。</span>"
+        }
+      ],
+      "figure": null
+    },
+    {
+      "id": "takeaways",
+      "heading": {
+        "en": "Takeaways",
+        "zh": "结论与建议"
+      },
+      "paras": [
+        {
+          "en": "To sum up, extra residual paths lower held-out loss across 12, 24 and 48 layers, and their gain grows with depth. Learned mixing between the paths helps slightly at 12 layers (+0.016 nats) and hurts at 48 layers (-0.056 nats), because changing the scale of the stream sum compounds across layers.",
+          "zh": "总结来说，额外的残差通路在 12、24 和 48 层都能降低留出损失，而且通路带来的收益随深度增加而扩大。通路之间学到的混合在 12 层有一点帮助（+0.016 nats），到 48 层反而带来损失（-0.056 nats），因为流之和的尺度变化会跨层成倍累积。"
+        },
+        {
+          "en": "Practical advice: at 24 layers or more, start with a few streams and no mixing, and add learned routing only if it beats that baseline on your scale. If you keep a learned mixing, keep the scale of the stream sum fixed. Watch the state norm, since the loss does not show its growth until it overflows.",
+          "zh": "实用建议：在 24 层或更深的模型上，先从几条没有混合的流开始，只有当学到的路由在你的规模下确实赢过这个基线时才加上它。如果保留学到的混合，请保持流之和的尺度固定。注意监控状态范数，因为在发生溢出之前，loss 并不会反映出状态范数的增长。"
+        }
+      ],
+      "figure": null
+    },
+    {
+      "id": "open-questions",
+      "heading": {
+        "en": "Open questions",
+        "zh": "开放问题"
+      },
+      "paras": [
+        {
+          "en": "Does the crossing move with the optimizer and the budget? The papers at 16 layers<sup class=\"fn\">1</sup><sup class=\"fn\">4</sup> use other training recipes and up to 500B tokens, and at every depth our gain falls during training. <span class=\"chk\">Experiment: train 16 layers under both recipes for ten times the tokens (26B).</span>",
+          "zh": "收益跨过零点的位置会随优化器和训练预算而移动吗？16 层的相关论文<sup class=\"fn\">1</sup><sup class=\"fn\">4</sup>使用了不同的训练配方和最高 500B token，而在我们的每个深度下，收益都会在训练过程中下降。<span class=\"chk\">待做实验：在 16 层下用两种配方分别训练十倍的 token 量（26B）。</span>"
+        },
+        {
+          "en": "Is the size of the state the cause? <span class=\"chk\">Experiment: keep HC's learned mixing, rescale the stream sum to a fixed norm after each sublayer at 48 layers, and see whether the cost disappears.</span>",
+          "zh": "状态的大小是直接原因吗？<span class=\"chk\">待做实验：在 48 层保留 HC 学到的混合，在每个子层之后把流之和重新缩放到固定范数，看代价是否消失。</span>"
+        },
+        {
+          "en": "With a next-token loss at every layer, HC's mixing becomes useful, and that is a different story on the <a href=\"https://wenhaochai.com/pls-routing/\">experiment page</a>.",
+          "zh": "如果给每一层都加上下一个 token 的 loss，HC 的混合就会变得有用，那是<a href=\"https://wenhaochai.com/pls-routing/\">实验主页</a>上的另一个故事。"
+        }
+      ],
+      "figure": null
+    },
+    {
+      "id": "related-work",
+      "heading": {
+        "en": "Related work",
+        "zh": "相关工作"
+      },
+      "paras": [
+        {
+          "en": "Srivastava, Greff and Schmidhuber<sup class=\"fn\">7</sup> introduced input-dependent gates on shortcuts in Highway Networks and argued from gate visualizations that dynamic routing is part of the trained computation, though without comparing against fixed shortcuts. He, Zhang, Ren and Sun<sup class=\"fn\">6</sup> then tested that comparison on 110-layer ResNets and found that every multiplicative gate, scaling or $1 \\times 1$ convolution on the shortcut raises training and test error above the plain identity shortcut, matching our finding that identity mixing beats unconstrained learned mixing at depth.",
+          "zh": "Srivastava、Greff 和 Schmidhuber<sup class=\"fn\">7</sup> 在 Highway Networks 中给捷径引入了依赖输入的门控，并基于门控可视化认为动态路由参与了训练后的计算，但没有与固定捷径直接对比。He、Zhang、Ren 和 Sun<sup class=\"fn\">6</sup> 随后在 110 层 ResNet 上做了这一对比，发现捷径上的任何乘法门控、缩放或 $1 \\times 1$ 卷积都会让训练和测试误差高于恒等捷径，这与我们在深层发现单位阵混合优于无约束学到的混合一致。"
+        },
+        {
+          "en": "Huang, Liu, van der Maaten and Weinberger<sup class=\"fn\">8</sup> connected each layer to all later layers by fixed concatenation in DenseNet, attributing the gain to short gradient and feature paths rather than learned routing. Pagliardini, Mohtashami, Fleuret and Jaggi<sup class=\"fn\">9</sup> brought input-independent depth-weighted averaging to Transformers in DenseFormer and found that static scalar weights over earlier layers lower perplexity by 0.77 at 48 blocks (matching a 72-block baseline), which aligns with our 48-layer static AttnRes result.",
+          "zh": "Huang、Liu、van der Maaten 和 Weinberger<sup class=\"fn\">8</sup> 在 DenseNet 中用固定拼接把每一层连向后续各层，将收益归因于更短的梯度与特征通路，而非学到的路由。Pagliardini、Mohtashami、Fleuret 和 Jaggi<sup class=\"fn\">9</sup> 在 DenseFormer 中把不看输入的深度加权平均引入 Transformer，发现在 48 个块上用静态标量权重汇聚前序各层可把困惑度降低 0.77（追平 72 个块的基线），这与我们在 48 层上静态 AttnRes 的结果一致。"
+        },
+        {
+          "en": "Among the routed residual designs tested here, Zhu et al.<sup class=\"fn\">1</sup> introduced Hyper-Connections and reported that freezing width connections at their initialization raises loss by 0.021 on 16-layer OLMo-1B at 500B tokens, matching our 12-layer sign and opposite to our 48-layer sign. Xie et al.<sup class=\"fn\">2</sup> projected HC's mixing matrix onto doubly stochastic matrices via Sinkhorn iterations in mHC and reported a 0.022 loss rise from identity mixing in an unconstrained HC table where depth is not stated, whereas our 48-layer trainings show identity mixing matches Sinkhorn mixing. Yang and Gao<sup class=\"fn\">3</sup> built exact doubly stochastic mixing as convex combinations of permutation matrices in mHC-lite and found that unconstrained HC loses its gain by 24 layers on OpenWebText and FineWeb-Edu, consistent with our depth trend. The Kimi Team<sup class=\"fn\">4</sup> replaced stream mixing with softmax attention over earlier outputs in Attention Residuals and reported a 0.012 loss rise from input-independent weights at 16 blocks on 87.9B tokens, whereas at 48 layers we find weights that ignore the token lower held-out loss by 0.08 to 0.18 nats. Xiao, Meng, Li and Yuan<sup class=\"fn\">11</sup> added multiway dynamic dense connections in MUDDFormer and found a 0.35 perplexity rise when replacing dynamic weights with static ones at 24 layers on 7B tokens, whereas our 48-layer MuonH trainings favor no mixing. Wang et al.<sup class=\"fn\">5</sup> compared Pre-LN, HC, mHC and AttnRes across depths up to 70 layers in DepthBench and observed that mHC's doubly stochastic products converge toward a rank-1 average, though without testing identity or static routing.",
+          "zh": "在本文测试的路由残差设计中，Zhu 等人<sup class=\"fn\">1</sup>提出了 Hyper-Connections，报告在 500B token 的 16 层 OLMo-1B 上冻结宽度连接会让 loss 上升 0.021，这与我们在 12 层的方向一致、与 48 层相反。Xie 等人<sup class=\"fn\">2</sup>在 mHC 中用 Sinkhorn 迭代把 HC 的混合矩阵投影为双随机矩阵，并在未注明层数的无约束 HC 表格中报告单位阵混合会让 loss 上升 0.022，而我们的 48 层训练表明单位阵混合能追平 Sinkhorn 混合。Yang 和 Gao<sup class=\"fn\">3</sup> 在 mHC-lite 中用置换矩阵的凸组合构造精确双随机混合，发现无约束 HC 到 24 层时在 OpenWebText 和 FineWeb-Edu 上失去收益，与我们的深度趋势一致。Kimi Team<sup class=\"fn\">4</sup> 在 Attention Residuals 中用对前序输出的 softmax 注意力替代流混合，报告在 87.9B token 的 16 个块模型上改用不看输入的权重会让 loss 上升 0.012，而在 48 层上我们发现不看 token 的权重能把留出损失降低 0.08 到 0.18 nats。Xiao、Meng、Li 和 Yuan<sup class=\"fn\">11</sup> 在 MUDDFormer 中加入多路动态密集连接，发现在 7B token 的 24 层模型上把动态权重换成静态权重会让困惑度上升 0.35，而我们的 48 层 MuonH 训练支持没有混合。Wang 等人<sup class=\"fn\">5</sup>在 DepthBench 中把 Pre-LN、HC、mHC 和 AttnRes 对比到了 70 层，观察到 mHC 的双随机乘积会收敛向秩为 1 的平均矩阵，但没有测试单位阵或静态路由。"
+        },
+        {
+          "en": "Jianlin Su<sup class=\"fn\">10</sup> noted in his AttnRes retrospective that a data-independent query beats more complex query designs and cited a concurrent report that identity mixing is good enough for mHC, while our trainings measure both directly across depth. What this post adds is one controlled setting that reproduces the papers' gain at 12 layers and shows it reversing by 48.",
+          "zh": "苏剑林<sup class=\"fn\">10</sup>在 AttnRes 回忆录中指出数据无关的静态 query 优于更复杂的设计，并引述同期实验称 mHC 的混合直接设为单位阵就足够好，而我们的训练跨深度直接测量了这两点。本文新增的贡献是在同一个受控设置下复现了论文在 12 层的收益，并展示这一收益到 48 层发生反转。"
+        }
+      ],
+      "figure": null
+    }
+  ],
+  "figures": {
+    "rr-removal": {
+      "dek": {
+        "en": "At 48 layers, removing learned mixing or token dependence lowers held-out loss in HC and AttnRes and leaves mHC unchanged.",
+        "zh": "在 48 层模型中，去掉学到的混合或对 token 的依赖能降低 HC 和 AttnRes 的留出损失，而 mHC 保持不变。"
+      },
+      "cap": {
+        "en": "Held-out loss on Paloma C4 at the final step of full trainings at the deepest model setting, comparing each residual design with its learned routing intact against a variant without it.",
+        "zh": "最深模型设置下从头完整训练至最后一步时在 Paloma C4 上的留出损失，对比保留与去掉学到的路由的各残差设计。"
+      }
+    },
+    "schematic": {
+      "dek": {
+        "en": "Pre-LN keeps one running sum, whereas HC, mHC and AttnRes add parallel streams or direct reads across earlier sublayers.",
+        "zh": "Pre-LN 只维护一个累加和，而 HC、mHC 和 AttnRes 增加了并行流或跨前序子层的直接读取。"
+      },
+      "cap": {
+        "en": "Update rules for one sublayer in Pre-LN, Hyper-Connections, Manifold-Constrained Hyper-Connections and Attention Residuals, with column sums shown for a trained middle-layer MLP mixing matrix.",
+        "zh": "Pre-LN、HC、mHC 和 AttnRes 在单个子层的更新规则，以及训练后中间层 MLP 混合矩阵的列和。"
+      }
+    },
+    "rr-depth": {
+      "dek": {
+        "en": "As depth grows, the gain from extra paths rises while the gain from learned mixing turns negative.",
+        "zh": "随着模型加深，残差通路带来的收益上升，而学到的混合带来的收益转为负值。"
+      },
+      "cap": {
+        "en": "Held-out loss differences on Paloma C4 across three model depths, showing Pre-LN minus no mixing on the left and no mixing minus learned mixing over training checkpoints on the right.",
+        "zh": "三个模型深度下 Paloma C4 留出损失的差值：左图为 Pre-LN 减去没有混合，右图为各评测点上没有混合减去学到的混合。"
+      }
+    },
+    "rr-mixing": {
+      "dek": {
+        "en": "Moving content between streams has no effect on held-out loss, whereas shrinking the stream sum raises it.",
+        "zh": "在流之间搬移内容不影响留出损失，而缩小流之和会让留出损失升高。"
+      },
+      "cap": {
+        "en": "Held-out loss on Paloma C4 for full trainings at the deepest setting that isolate stream-sum-preserving content movement, fixed-gain stream shrinking, and a single learned scalar per sublayer.",
+        "zh": "最深设置下从头训练的 Paloma C4 留出损失，分别拆出保持流之和的内容搬移、固定增益收缩，以及每子层单一学到的标量。"
+      }
+    },
+    "rr-scale": {
+      "dek": {
+        "en": "Unconstrained learned mixing blows up the stream sum norm in deeper models until late sublayer writes become negligible.",
+        "zh": "无约束的学到的混合在深层模型中会放大流之和的范数，使后期子层的写入占比变得微乎其微。"
+      },
+      "cap": {
+        "en": "Median stream sum norm and median ratio of the sublayer write norm to the updated stream sum norm across layers on FineWeb-Edu tokens at the final checkpoint, comparing learned mixing with no mixing.",
+        "zh": "最终检查点在 FineWeb-Edu token 上各层流之和范数的中位数，以及子层写入范数占新流之和范数比例的中位数。"
+      }
+    },
+    "rr-paths": {
+      "dek": {
+        "en": "Every design with multiple residual paths and no learned mixing beats every single-path baseline at 48 layers.",
+        "zh": "在 48 层模型中，所有包含多条残差通路且没有混合的设计都优于单通路基线。"
+      },
+      "cap": {
+        "en": "Held-out loss on Paloma C4 at the final checkpoint for single-path baselines, multi-path designs without mixing, and Hyper-Connections across different stream counts.",
+        "zh": "单通路基线、没有混合的多通路设计，以及不同流数的 HC 在最终检查点的 Paloma C4 留出损失。"
+      }
+    }
+  },
+  "notes": [
+    {
+      "n": 1,
+      "en": "Defa Zhu, Hongzhi Huang, Zihao Huang, Yutao Zeng, Yunyao Mao, Banggu Wu, Qiyang Min, and Xun Zhou. <a href=\"https://arxiv.org/abs/2409.19606\">Hyper-Connections</a>. arXiv 2024.",
+      "used_in": "motivation"
+    },
+    {
+      "n": 2,
+      "en": "Zhenda Xie, Yixuan Wei, Huanqi Cao, Chenggang Zhao, Chengqi Deng, Jiashi Li, Damai Dai, Huazuo Gao, Jiang Chang, Kuai Yu, Liang Zhao, Shangyan Zhou, Zhean Xu, Zhengyan Zhang, Wangding Zeng, Shengding Hu, Yuqing Wang, Jingyuan Yuan, Lean Wang, and Wenfeng Liang. <a href=\"https://arxiv.org/abs/2512.24880\">mHC: Manifold-Constrained Hyper-Connections</a>. arXiv 2025.",
+      "used_in": "motivation"
+    },
+    {
+      "n": 3,
+      "en": "Yongyi Yang and Jianyang Gao. <a href=\"https://arxiv.org/abs/2601.05732\">mHC-lite: You Don't Need 20 Sinkhorn-Knopp Iterations</a>. arXiv 2026.",
+      "used_in": "related-work"
+    },
+    {
+      "n": 4,
+      "en": "Kimi Team, Guangyu Chen, Yu Zhang, Jianlin Su, Weixin Xu, Siyuan Pan, Yaoyu Wang, Yucheng Wang, Guanduo Chen, Bohong Yin, Yutian Chen, Junjie Yan, Ming Wei, Y. Zhang, Fanqing Meng, Chao Hong, Xiaotong Xie, Shaowei Liu, Enzhe Lu, Yunpeng Tai, Yanru Chen, Xin Men, Haiqing Guo, Y. Charles, Haoyu Lu, Lin Sui, Jinguo Zhu, Zaida Zhou, Weiran He, Weixiao Huang, Xinran Xu, Yuzhi Wang, Guokun Lai, Yulun Du, Yuxin Wu, Zhilin Yang, and Xinyu Zhou. <a href=\"https://arxiv.org/abs/2603.15031\">Attention Residuals</a>. arXiv 2026.",
+      "used_in": "motivation"
+    },
+    {
+      "n": 5,
+      "en": "Keyu Wang, Yangyi Huang, Jiale Kang, David González-Martínez, Weiyang Liu, and Shiwei Liu. <a href=\"https://arxiv.org/abs/2609.32534\">DepthBench: Measuring How Residual Connections Enable More Computational Depth</a>. arXiv 2026.",
+      "used_in": "related-work"
+    },
+    {
+      "n": 6,
+      "en": "Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. <a href=\"https://arxiv.org/abs/1603.05027\">Identity Mappings in Deep Residual Networks</a>. ECCV 2016.",
+      "used_in": "related-work"
+    },
+    {
+      "n": 7,
+      "en": "Rupesh Kumar Srivastava, Klaus Greff, and Jürgen Schmidhuber. <a href=\"https://arxiv.org/abs/1507.06228\">Training Very Deep Networks</a>. NeurIPS 2015.",
+      "used_in": "related-work"
+    },
+    {
+      "n": 8,
+      "en": "Gao Huang, Zhuang Liu, Laurens van der Maaten, and Kilian Q. Weinberger. <a href=\"https://arxiv.org/abs/1608.06993\">Densely Connected Convolutional Networks</a>. CVPR 2017.",
+      "used_in": "related-work"
+    },
+    {
+      "n": 9,
+      "en": "Matteo Pagliardini, Amirkeivan Mohtashami, Francois Fleuret, and Martin Jaggi. <a href=\"https://arxiv.org/abs/2402.02622\">DenseFormer: Enhancing Information Flow in Transformers via Depth Weighted Averaging</a>. arXiv 2024.",
+      "used_in": "related-work"
+    },
+    {
+      "n": 10,
+      "en": "Jianlin Su. <a href=\"https://kexue.fm/archives/11664\">Attention Residuals 回忆录</a>. 科学空间 (kexue.fm) 2026.",
+      "used_in": "limitations"
+    },
+    {
+      "n": 11,
+      "en": "Da Xiao, Qingye Meng, Shengping Li, and Xingyuan Yuan. <a href=\"https://arxiv.org/abs/2502.12170\">MUDDFormer: Breaking Residual Bottlenecks in Transformers via Multiway Dynamic Dense Connections</a>. ICML 2025.",
+      "used_in": "related-work"
+    }
+  ]
+}

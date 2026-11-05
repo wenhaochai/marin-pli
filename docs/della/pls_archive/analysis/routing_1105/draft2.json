@@ -1,0 +1,114 @@
+{
+  "motivation": {
+    "en": "Manifold-Constrained Hyper-Connections (mHC)<sup class=\"fn\">2</sup> is Hyper-Connections (HC)<sup class=\"fn\">1</sup> with a constraint on its mixing matrix, and at 48 layers it reaches a lower held-out loss than HC. We expected the constraint to be the reason. So we replaced HC's learned mixing with the identity and trained again from scratch. In Figure 1, HC then reaches mHC's held-out loss, 0.03 to 0.08 nats lower than with learned mixing. Removing the mixing from mHC itself moves the held-out loss by 0.006 nats. In Attention Residuals (AttnRes)<sup class=\"fn\">4</sup>, replacing the token-dependent weights with weights that ignore the token lowers it by 0.08 to 0.18 nats. Yet the papers that introduced these designs report the opposite. Removing the routing raises the loss by 0.021 in HC at 16 layers, by 0.012 in AttnRes at 16 blocks, and by 0.022 in mHC's table of HC at a size it does not state. What decides whether learned routing pays?",
+    "zh": "Manifold-Constrained Hyper-Connections (mHC)<sup class=\"fn\">2</sup> 是在 Hyper-Connections (HC)<sup class=\"fn\">1</sup> 的混合矩阵上加了约束，在 48 层模型上它的留出损失比 HC 更低。我们原本以为原因是这个约束。所以我们把 HC 里学到的混合换成单位矩阵，再从头训练。在图 1 中，这样改过之后 HC 达到了 mHC 的留出损失，比用学到的混合时低 0.03 到 0.08 nats。把 mHC 自己的混合去掉，留出损失只变动 0.006 nats。在 Attention Residuals (AttnRes)<sup class=\"fn\">4</sup> 中，把依赖 token 的权重换成不看 token 的权重，留出损失也会降低 0.08 到 0.18 nats。但是提出这些设计的论文报告了相反的结果。去掉路由在 16 层 HC 中会让 loss 上升 0.021，在 16 个块的 AttnRes 中上升 0.012，在 mHC 论文里未注明规模的 HC 表格中上升 0.022。到底是什么决定了学到的路由有没有收益？"
+  },
+  "setup": {
+    "en": "We train ordinary models, which optimize only the last layer's next-token loss, at 12, 24 and 48 layers. Width is 512 and the MLP width is 1792 at every depth, so the deeper models have more parameters: 177M, 223M and 314M. Every model trains from scratch for the same 4,959 steps on 2.6B tokens of FineWeb-Edu, in the same data order, with the MuonH recipe of the Marin speedrun. The held-out loss is the last layer's next-token cross-entropy on Paloma C4, in nats. One quantity runs through the post: the gain from learned mixing, which is the held-out loss with no mixing minus the held-out loss with learned mixing at the same depth.",
+    "zh": "我们在 12、24 和 48 层训练普通模型，也就是只优化最后一层下一个 token 的 loss。每个深度的模型宽度都是 512，MLP 宽度都是 1792，所以越深的模型参数越多，分别是 177M、223M 和 314M。每个模型都采用 Marin speedrun 的 MuonH 配方，按相同的数据顺序在 2.6B 个 FineWeb-Edu token 上从头训练相同的 4,959 步。留出损失是最后一层在 Paloma C4 上的下一个 token 交叉熵，单位是 nats。全文贯穿同一个量，即学到的混合带来的收益，定义为同一深度下没有混合的留出损失减去学到的混合的留出损失。"
+  },
+  "depth": {
+    "en": "In Figure 3, the gain from learned mixing is +0.016 nats at 12 layers, −0.020 at 24 layers and −0.056 at 48 layers. At 12 layers this has the size the papers report. So the papers and our 48-layer result need not contradict each other. Before the 12- and 24-layer trainings started, we wrote down at least +0.01 and about 0. At all five evaluation points the three depths keep the same order, and at every depth the gain ends lower than it was at step 1,000. <span class=\"chk\">We read a difference under 0.03 nats as no effect, so the claim rests on the trend across depth, not on the 24-layer point alone.</span> Back at layer 12 of the 48-layer model, what is this mixing doing that costs more the deeper the model is?",
+    "zh": "在图 3 中，学到的混合带来的收益在 12 层是 +0.016 nats，在 24 层是 −0.020，在 48 层是 −0.056。在 12 层上，这个数值的大小与论文报告的一致。所以论文的结果和我们在 48 层的结果并不矛盾。在 12 层和 24 层开始训练之前，我们预先写下的预期是至少 +0.01 和大约 0。在全部五个评估点上，三个深度的排序保持不变，而且每个深度下的最终收益都低于第 1,000 步时的水平。<span class=\"chk\">我们把小于 0.03 nats 的差值视为没有效果，所以结论建立在跨深度的趋势上，而不是单靠 24 层那一个点。</span>回到 48 层模型的第 12 层，这里的混合到底做了什么，才让模型越深代价越大？"
+  },
+  "controls_1": {
+    "en": "Four controls rule out simpler explanations. First, the 12- and 24-layer pairs share code, data order and steps, and differ only in the mixing. Second, at 48 layers the parameter count differs by at most 0.1 percent within each comparison and at most 1.5 percent across designs.",
+    "zh": "四组对照实验排除了更简单的解释。第一，12 层和 24 层的成对模型共用代码、数据顺序和训练步数，只在混合上有区别。第二，在 48 层上，每组对比内部的参数量差距不超过 0.1%，不同设计之间的差距也不超过 1.5%。"
+  },
+  "scale_heading": {
+    "en": "The mixing's change of scale compounds with depth",
+    "zh": "混合造成的尺度变化随深度累积"
+  },
+  "scale_1": {
+    "en": "Return to layer 12 of the 48-layer model. The four row sums average 0.33, so this sublayer shrinks the stream sum to a third. Every sublayer multiplies the stream sum by such a gain, so depth multiplies the effect. Figure 4 plots the product of these gains, layer by layer. It spans about 1.7 orders of magnitude at 12 layers, 1.9 at 24 and 4.6 at 48. In the 48-layer model the product falls below one ten-thousandth by layer 23, then climbs back to about 1 at the last layer.",
+    "zh": "回到 48 层模型的第 12 层。四个行和的平均值是 0.33，所以这个子层会把流之和缩小到三分之一。每个子层都会把流之和乘上这样一个增益，因此深度会让这一效应连乘放大。图 4 逐层画出了这些增益的乘积。它在 12 层跨越约 1.7 个数量级，在 24 层跨越 1.9 个数量级，在 48 层跨越 4.6 个数量级。在 48 层模型中，这个乘积到第 23 层时跌破万分之一，随后在最后一层回升到 1 左右。"
+  },
+  "scale_2": {
+    "en": "The state shows the result. With learned mixing, the median norm of the stream sum at the last layer is 114, 455 and about 10 million at the three depths, against 311, 398 and 667 with no mixing. The last write is 0.30, 0.10 and about 0.00001 of the new stream sum, against 0.40, 0.29 and 0.29. RMSNorm reads only the direction, so nothing in the loss limits the size of the state.",
+    "zh": "状态本身直接反映出这一结果。使用学到的混合时，最后一层流之和范数的中位数在三个深度下分别是 114、455 和约 1000 万，而没有混合时分别是 311、398 和 667。最后一次写入占新流之和的比例分别是 0.30、0.10 和约 0.00001，而没有混合时分别是 0.40、0.29 和 0.29。因为 RMSNorm 只读取方向，所以 loss 里没有任何机制限制状态的大小。"
+  },
+  "scale_3": {
+    "en": "<span class=\"chk\">Once the growth did not stop.</span> From step 4,408 the state norm passes about 1.8e19, where a float32 sum of squares overflows. RMSNorm then returns zero, the readout gives a uniform prediction for 70 percent of the tokens, and the held-out loss ends at 9.885. The gradient norm stays flat, so gradient monitors see nothing.",
+    "zh": "<span class=\"chk\">有一次这种增长没有停下来。</span>从第 4,408 步起，状态范数超过约 1.8e19，导致 float32 的平方和溢出。随后 RMSNorm 输出零，读出头对 70% 的 token 给出均匀预测，留出损失最终停在 9.885。此时梯度范数保持平稳，所以梯度监控什么也发现不了。"
+  },
+  "cost_heading": {
+    "en": "The cost follows the change of scale, not the moving of content",
+    "zh": "代价紧随尺度变化，而不是移动内容"
+  },
+  "cost_1": {
+    "en": "Learned mixing does two things: it moves content between streams, and it changes the scale of the stream sum. We trained each one alone from scratch at 48 layers. Mixing that only moves content and keeps the stream sum reaches a held-out loss of 3.578 with non-negative weights and 3.591 with signed weights, against 3.579 and 3.581 with no mixing. So moving content neither helps nor hurts. Mixing that moves nothing and applies a fixed gain per sublayer, taken from a trained HC model, reaches 3.687, and 3.676 at half the dose, above learned mixing at 3.615 to 3.656.",
+    "zh": "学到的混合做两件事：在流之间移动内容，以及改变流之和的尺度。我们在 48 层把这两件事拆开，分别从头训练。只移动内容并保持流之和不变的混合，在非负权重下留出损失为 3.578，在带符号权重下为 3.591，而没有混合时是 3.579 和 3.581。所以移动内容既没有帮助也没有害处。反过来，完全不移动内容、只在每个子层乘上从训练好的 HC 模型中取出的固定增益，留出损失达到 3.687，剂量减半时也是 3.676，都高于学到的混合的 3.615 到 3.656。"
+  },
+  "cost_2": {
+    "en": "Figure 5 puts these beside the depth test. Its horizontal axis is the number of orders of magnitude that the product of gains spans. At 1.7 orders or fewer the gain from mixing is near zero or slightly positive: +0.015 with one learned number per sublayer and +0.016 with learned mixing at 12 layers. From 1.8 orders on it is negative: −0.029 with constant mixing, −0.020 with learned mixing at 24 layers, −0.056 at 48 layers, −0.096 at half dose and −0.107 with fixed gains. The points come from different depths and different kinds of mixing, and they fall in about one order. The order is not perfect: the half dose costs more than learned mixing at 48 layers, which changes the scale more.",
+    "zh": "图 5 把这些实验和深度实验放在一起。横轴是增益乘积跨越的数量级个数。在 1.7 个数量级以内，混合带来的收益接近零或略微为正：每个子层学一个数时是 +0.015，12 层学到的混合是 +0.016。从 1.8 个数量级开始，收益变为负数：常数混合是 −0.029，24 层学到的混合是 −0.020，48 层是 −0.056，半剂量固定增益是 −0.096，全剂量固定增益是 −0.107。这些点来自不同深度和不同种类的混合，却大致排成同一个顺序。这个顺序并不完全严格：半剂量固定增益的代价比 48 层学到的混合更大，尽管后者的尺度变化更大。"
+  },
+  "cost_3": {
+    "en": "<span class=\"chk\">We think this is why depth hurts. A write reaches the stream sum only through the gains after it. When those gains multiply to thousands, some layers' writes count thousands of times more than others, so the mixing in effect closes paths. That would explain the late writes above, and the early writes in the model with fixed gains. We did not test it directly.</span>",
+    "zh": "<span class=\"chk\">我们认为这就是深度带来代价的原因。一次写入只有经过后续各层的增益才能到达流之和。当那些增益连乘到上千倍时，某些层的写入在流之和里的比重会比其他层大上千倍，于是混合实际上关掉了部分残差通路。这能同时解释前文后期写入占比极小的现象，以及固定增益模型中早期写入的变化。我们没有直接做实验验证这一点。</span>"
+  },
+  "paths_1": {
+    "en": "The gain from paths is the held-out loss of Pre-LN minus the held-out loss with no mixing at the same depth. In the left panel of Figure 3 it is +0.061 nats at 12 layers, +0.085 at 24 and +0.090 at 48. So paths pay at every depth, while learned mixing stops paying.",
+    "zh": "通路带来的收益定义为同一深度下 Pre-LN 的留出损失减去没有混合时的留出损失。在图 3 左图中，它在 12 层是 +0.061 nats，在 24 层是 +0.085，在 48 层是 +0.090。所以残差通路在每个深度都有收益，而学到的混合则不再有收益。"
+  },
+  "limitations": {
+    "en": "<span class=\"chk\">All trainings use one optimizer (MuonH), one held-out text (Paloma C4) and one budget of 2.6B tokens against up to 500B tokens in the papers, and at every depth the gain from learned mixing falls during training, so the depth where it crosses zero may move with the budget.</span> <span class=\"chk\">Depth and parameter count move together here, from 177M to 314M.</span> <span class=\"chk\">At 12 and 24 layers we removed only the mixing, and the link between the change of scale and the cost across depths is a correlation; only the 48-layer variants change the scale by construction.</span> <span class=\"chk\">Larger models such as Kimi K3 are not tested and may differ.</span>",
+    "zh": "<span class=\"chk\">所有训练都只用一种优化器（MuonH）、一种留出文本（Paloma C4）和 2.6B token 的预算（论文里最高用到 500B token），而且在每个深度下，学到的混合带来的收益都会在训练过程中下降，所以它跨过零点的深度可能会随训练预算移动。</span> <span class=\"chk\">这里的深度和参数量（从 177M 到 314M）是一起变化的。</span> <span class=\"chk\">在 12 层和 24 层我们只去掉了混合，跨深度的尺度变化与代价之间的联系只是相关性，只有 48 层的变体是在构造上直接改变尺度的。</span> <span class=\"chk\">像 Kimi K3 这样更大的模型还没有测试，结果可能会有所不同。</span>"
+  },
+  "takeaways_1": {
+    "en": "To sum up, extra residual paths lower the held-out loss at 12, 24 and 48 layers. Learned mixing between the paths helps slightly at 12 layers (+0.016 nats) and hurts at 48 (−0.056 nats). Its cost follows its change of scale, which compounds with depth, and moving content between streams does not pay at 48 layers.",
+    "zh": "总结来说，额外的残差通路在 12、24 和 48 层都能降低留出损失。通路之间学到的混合在 12 层有一点帮助（+0.016 nats），到 48 层反而带来损失（−0.056 nats）。它的代价紧随它造成的尺度变化，这种尺度变化会随深度累积，而在 48 层模型的流之间移动内容并没有收益。"
+  },
+  "related_mhc": {
+    "en": "Xie et al.<sup class=\"fn\">2</sup> projected HC's mixing matrix onto doubly stochastic matrices via Sinkhorn iterations in mHC, reported that this lowers the composite gain from nearly 3000 in HC to about 1.6, and reported a 0.022 loss rise from identity mixing in a table of HC whose size is not stated, whereas our 48-layer trainings show identity mixing matches Sinkhorn mixing.",
+    "zh": "Xie 等人<sup class=\"fn\">2</sup>在 mHC 中用 Sinkhorn 迭代把 HC 的混合矩阵投影到双随机矩阵上，报告这一约束把复合增益从 HC 的近 3000 降到约 1.6，并在未注明规模的 HC 表格中报告单位矩阵混合会让 loss 上升 0.022，而我们的 48 层训练表明单位矩阵混合能追平 Sinkhorn 混合。"
+  },
+  "related_depthbench": {
+    "en": "Wang et al.<sup class=\"fn\">5</sup> compared Pre-LN, HC, mHC and AttnRes across depths up to 70 layers in DepthBench with AdamW, found that HC keeps gaining from depth up to 32 layers, from 2.729 at 16 layers to 2.699, and observed that mHC's products converge toward a rank-1 average, without testing identity or static routing.",
+    "zh": "Wang 等人<sup class=\"fn\">5</sup>在 DepthBench 中用 AdamW 把 Pre-LN、HC、mHC 和 AttnRes 对比到最高 70 层，发现 HC 直到 32 层都能从深度中获益（从 16 层的 2.729 降到 2.699），并观察到 mHC 的乘积收敛向秩为 1 的平均矩阵，但没有测试单位矩阵或静态路由。"
+  },
+  "related_su": {
+    "en": "Jianlin Su<sup class=\"fn\">10</sup> noted in his AttnRes retrospective that a data-independent query beats more complex query designs, and that multiplying HC's matrices risks explosion or collapse, and he cited a concurrent report that identity mixing is good enough for mHC; we measure identity mixing at three depths.",
+    "zh": "苏剑林<sup class=\"fn\">10</sup>在他的 AttnRes 回忆录中指出，不依赖数据的 query 优于更复杂的 query 设计，HC 的矩阵连乘有爆炸或坍缩的风险，他还引述同期报告称 mHC 用单位矩阵混合就足够好，而我们在三个深度下测量了单位矩阵混合。"
+  },
+  "dek_removal": {
+    "en": "At 48 layers, removing learned mixing or token dependence lowers the held-out loss in HC and AttnRes and leaves mHC about the same.",
+    "zh": "在 48 层模型中，去掉学到的混合或对 token 的依赖能降低 HC 和 AttnRes 的留出损失，而 mHC 基本不变。"
+  },
+  "cap_removal": {
+    "en": "Held-out loss on Paloma C4 at the end of training, for each residual design with its learned routing and with that routing removed from the start.",
+    "zh": "各残差设计保留学到的路由与从头去掉该路由时，在训练结束时的 Paloma C4 留出损失。"
+  },
+  "dek_depth": {
+    "en": "Extra paths pay at every depth, and the gain from learned mixing turns negative as the model gets deeper.",
+    "zh": "额外的残差通路在每个深度都有收益，而学到的混合带来的收益随模型加深变为负值。"
+  },
+  "cap_depth": {
+    "en": "Left: final held-out loss on Paloma C4 at each depth. Right: no mixing minus learned mixing at each evaluation during training.",
+    "zh": "左：各深度最终的 Paloma C4 留出损失。右：训练各评估点上没有混合减去学到的混合。"
+  },
+  "dek_scale": {
+    "en": "The deeper the model, the wider the product of the learned mixing's gains swings.",
+    "zh": "模型越深，学到的混合的增益乘积摆动幅度越大。"
+  },
+  "cap_scale": {
+    "en": "Product of the gains that the learned mixing applies to the stream sum, up to each layer: median over training tokens at the final checkpoint.",
+    "zh": "最终检查点在训练 token 上的中位数：截至每一层，学到的混合作用在流之和上的增益乘积。"
+  },
+  "dek_cost": {
+    "en": "The larger the change of scale, the lower the gain over no mixing, across depths and kinds of mixing.",
+    "zh": "跨不同深度和不同混合方式，尺度变化越大，相对没有混合的收益就越低。"
+  },
+  "cap_cost": {
+    "en": "Each dot is one kind of mixing at one depth: its held-out gain over no mixing against the orders of magnitude that the product of its gains spans.",
+    "zh": "每个点代表一个深度下的一种混合：相对没有混合的留出收益与增益乘积跨越的数量级。"
+  },
+  "dek_paths": {
+    "en": "At 48 layers, every design with several paths and no mixing beats every design with one path.",
+    "zh": "在 48 层模型中，所有具有多条残差通路且没有混合的设计都优于单条残差通路的设计。"
+  },
+  "cap_paths": {
+    "en": "Held-out loss on Paloma C4 at the end of training, for designs with one path and designs with several paths and no mixing.",
+    "zh": "单条残差通路设计与没有混合的多条残差通路设计在训练结束时的 Paloma C4 留出损失。"
+  }
+}

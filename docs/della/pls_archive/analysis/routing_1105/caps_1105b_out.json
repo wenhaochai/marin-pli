@@ -1,0 +1,16 @@
+{
+  "f38_scalar_en": "It pays 0.157 nats.",
+  "f38_scalar_zh": "它的代价是 0.157 nats。",
+  "f38_empty_en": "The bars of the second and fifth variants are still empty, because their separate-heads models are still training. So far, scalar mixing, half-dose shrinking and moving-only mixing all pay more than the 0.047 nats of full learned mixing.",
+  "f38_empty_zh": "第二和第五个变体的柱子还是空的，因为它们的独立头模型还在训练。到目前为止，标量混合、半剂量缩小和只移动混合的代价都高于完整学到混合的 0.047 nats。",
+  "f50_cap_en": "Identity, scalar or moving-only mixing brings its ordinary model near mHC's and raises its separate-heads loss.",
+  "f50_cap_zh": "单位混合、标量混合或只移动混合让它的普通模型接近 mHC，同时抬高独立头模型的损失。",
+  "f50_range_en": "apart from the Hyper-Connections rows with identity, scalar, half-dose or moving-only mixing described below.",
+  "f50_range_zh": "（下文讨论的采用单位混合、标量混合、半剂量或只移动混合的 Hyper-Connections 除外）",
+  "f50_gain_en": "It is 359 with half-dose shrinking, at layer 2, 612 with Pre-LN's fixed gains, at layer 12, and 97 with scalar mixing, at layer 10.",
+  "f50_gain_zh": "半剂量缩小是 359，在第 2 层。Pre-LN 配固定增益是 612，在第 12 层。标量混合是 97，在第 10 层。",
+  "f50_scalar_en": "Its evaluation loss is 3.565 nats, against 3.638 for Hyper-Connections. The separate-heads model reaches 3.075 nats, and the cost is 0.157 nats, close to the 0.169 of identity mixing.",
+  "f50_scalar_zh": "它的评估损失是 3.565 nats，而 Hyper-Connections 是 3.638。独立头模型达到 3.075 nats，代价是 0.157 nats，接近单位混合的 0.169。",
+  "f50_new_en": "With mixing that only shrinks the stream sum, the ordinary model reaches 3.030 nats, above half-dose shrinking. With mixing that keeps the stream sum and allows negative weights, the ordinary model reaches 2.928 nats, close to identity mixing. The separate-heads models of these two variants are still training.",
+  "f50_new_zh": "采用只缩小各流之和的混合时，普通模型达到 3.030 nats，高于半剂量缩小。采用保持各流之和不变且允许负权重的混合时，普通模型达到 2.928 nats，接近单位混合。这两个变体的独立头模型还在训练。"
+}
