@@ -1,0 +1,4 @@
+# owner popup 2026-11-05 ("补"): the fixed vocabularies and the no-shift mix have a regret; Qian Liu's two proposals themselves do not. The vocabulary cut as the epoch count doubles (vscut32k, w1065, w1077) on 8 times the text, no window twice; its 8-pass score minus this score is its regret.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vscut32ku+SEQ_LEN=4480+DATA_EPOCHS=8
+par vscut32ku 300m-della4xh100-rep8-vscut32ku-sl4480 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4480 DATA_EPOCHS=8 PASS_DATA=vscut32ku
+wait

@@ -1,0 +1,4 @@
+# owner popup 2026-11-05 ("补"): the fixed vocabularies and the no-shift mix have a regret; Qian Liu's two proposals themselves do not. The shifting shares (vsmix8, w1067, w1075) on 8 times the text, no window twice; its 8-pass score minus this score is its regret.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vsmix8u+SEQ_LEN=4992+DATA_EPOCHS=8
+par vsmix8u 300m-della4xh100-rep8-vsmix8u-sl4992 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4992 DATA_EPOCHS=8 PASS_DATA=vsmix8u
+wait
