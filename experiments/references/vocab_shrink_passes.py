@@ -105,9 +105,10 @@ ARMS = {
     # The regret of Qian Liu's two proposals themselves (owner popup 2026-11-05): each schedule on 8 times the text, no window twice.
     "vsmix8u": (_mix(8.0), 4992, 16000),    # vsmix8 on 8 times the text
     "vscut32ku": (_one([128000, 64000, 64000, 32000, 32000, 32000, 32000, 32000]), 4480, 32000),    # vscut32k on 8 times the text
+    "vsgrowu": (list(reversed(_mix(8.0))), 4992, 16000),    # vsgrow (the shift reversed, Path 1c) on 8 times the text (owner 2026-11-05: 「是不是可以加一个1c，就是反过来，先小词表再大词表」)
 }
 FROZEN = ("vsfrozen",)   # one draw of views, for all passes
-UNIQUE = ("vsuniq", "vs16kwu", "vs128k16ku", "vs16k8ku", "vsp50u", "vsp80u", "vsmix8u", "vscut32ku")   # each pass reads the next 183,040 windows of the plain unique-token run's order
+UNIQUE = ("vsuniq", "vs16kwu", "vs128k16ku", "vs16k8ku", "vsp50u", "vsp80u", "vsmix8u", "vscut32ku", "vsgrowu")   # each pass reads the next 183,040 windows of the plain unique-token run's order
 WIDE = ("vs16kw", "vs16kwu")   # one view, but every row stays in the softmax and the optimizer step (della_muonh_qwen3_scaling._vs_schedule)
 
 
