@@ -473,6 +473,12 @@ if PASS_DATA and not (PASS_DATA in ("rs", "repack") or (PASS_DATA.startswith("bp
 # PASS_DATA=vs<arm> (owner 2026-11-04, a friend's two ideas): a vocabulary that shrinks as data repeats. The cache holds the Marin
 # tokenizer's repeated eighth with each pass or window tokenized at some K (vocab_shrink_passes.py); the run's model and optimizer
 # take their K schedule from its meta.json (vocab_shrink_qwen3.py), and evaluation reads Paloma at the arm's K (paloma-v<K>m).
+# VS_HEAD_RATE, VS_HEAD_SCALE (owner popup 2026-11-04, the cause of the every-row run's gain at 16K): a run at one K only. The first multiplies the
+# kept head rows' AdamH step, the second the head at init. Tags -hr<rate>, -hs<scale> after -<PASS_DATA>.
+VS_HEAD_RATE = float(os.environ.get("VS_HEAD_RATE", "1"))
+VS_HEAD_SCALE = float(os.environ.get("VS_HEAD_SCALE", "1"))
+if (VS_HEAD_RATE != 1 or VS_HEAD_SCALE != 1) and not PASS_DATA.startswith("vs"):
+    raise ValueError("VS_HEAD_RATE, VS_HEAD_SCALE: only with PASS_DATA=vs*")
 if CV_SIDE not in ("in", "out", "both"):
     raise ValueError(f"CV_SIDE={CV_SIDE!r}: in, out or both")
 _PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/GROUP/USER/marin_store_big")
@@ -782,6 +788,10 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if DATA_EPOCHS != 8:
             raise ValueError("PASS_DATA builds the 8 passes of DATA_EPOCHS=8")
         variant_tags += f"-{PASS_DATA}"
+        if VS_HEAD_RATE != 1:
+            variant_tags += f"-hr{VS_HEAD_RATE:g}"
+        if VS_HEAD_SCALE != 1:
+            variant_tags += f"-hs{VS_HEAD_SCALE:g}"
         if PASS_DATA.startswith(("bpd", "rsplit", "vs")) and not SMOKE_STEPS:   # every pass of text: the cache's sequences in steps of batch
             s = dict(s, steps=_pass_data_meta(size)["sequences"] // s["batch"])
     if EMA_BETA > 0:
@@ -956,7 +966,9 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         if VARIANT != "baseline" or VOCAB_K or DATA_EPOCHS != 8 or (TIE and _vs_schedule(size, s["batch"])["vs_ks"] != "128000"):
             raise ValueError("PASS_DATA=vs*: the plain 128K model at 8 passes; tied tables only when every row stays in the softmax")
         from experiments.references.vocab_shrink_qwen3 import VocabShrinkQwen3Config
-        model_cls, model_extra = VocabShrinkQwen3Config, dict(model_extra, **_vs_schedule(size, s["batch"]))
+        if (VS_HEAD_RATE != 1 or VS_HEAD_SCALE != 1) and (TIE or "," in _vs_schedule(size, s["batch"])["vs_ks"] or _vs_schedule(size, s["batch"])["vs_ks"] == "128000"):
+            raise ValueError("VS_HEAD_RATE, VS_HEAD_SCALE: a run at one K below 128K, untied")
+        model_cls, model_extra = VocabShrinkQwen3Config, dict(model_extra, **_vs_schedule(size, s["batch"]), vs_head_scale=VS_HEAD_SCALE)
     if TIE:
         model_extra = dict(model_extra, tie_word_embeddings=True)
     # SCAN_LAYERS=0 (speed test, 2026-10-26): the layers unrolled (BlockSeq) instead of one scan (Stacked): no copies of
@@ -1059,7 +1071,7 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             raise ValueError("PASS_DATA=vs*: the plain MuonH optimizer")
         from experiments.references.vocab_shrink_qwen3 import VocabShrinkMuonHConfig
         _vs = _vs_schedule(size, s["batch"])
-        opt_cls, opt_extra = VocabShrinkMuonHConfig, dict(vs_ks=_vs["vs_ks"], vs_steps=_vs["vs_steps"])
+        opt_cls, opt_extra = VocabShrinkMuonHConfig, dict(vs_ks=_vs["vs_ks"], vs_steps=_vs["vs_steps"], vs_head_rate=VS_HEAD_RATE)
     if VARIANT == "rm" and RM_MODE != "loss":   # the rare rows stop at the step the mask starts
         opt_cls, opt_extra = FreezeRowsMuonHConfig, dict(freeze_lo=RM_K, freeze_from_step=_rm_from_step(s), freeze_block_norm=True)
     optimizer = opt_cls(

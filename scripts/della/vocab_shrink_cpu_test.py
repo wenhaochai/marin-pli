@@ -9,6 +9,8 @@ Run from the marin repo on a vis node: nice -n 19 .venv/bin/python scripts/della
    bit; after it the dead rows do not move, the kept rows keep their norm, and the kept rows turn at AdamH's rate
    (lr x norm(p_kept) before the renormalization), the same as an independent K-row model given the same gradient.
 5. The schedule parser refuses bad schedules.
+6. vs_head_rate: at one K the kept rows turn that many times as far, keep their norm, and the dead rows stay still. vs_head_scale: the head at init times
+   the scale, everything else equal, and the kept rows keep the scaled norm.
 """
 import os
 
@@ -139,6 +141,33 @@ for st in range(CUT, CUT + 3):
     nb, na = float(jnp.linalg.norm(before[keep])), float(jnp.linalg.norm(after[keep]))
     turn = float(jnp.linalg.norm(after[keep] - before[keep]) / nb)
     check(f"update {st}: dead rows still, kept norm kept, kept rows turn about lr", dead_moved == 0 and np.isclose(nb, na, rtol=1e-4) and 0.005 < turn < 0.02, f"moved {dead_moved}, norm {nb:.4f} -> {na:.4f}, turn {turn:.5f} (lr 0.01)")
+
+cfg_k = VocabShrinkQwen3Config(**common, vs_ks="8000", vs_steps="0", vs_eval_k=8000)
+m0 = VocabShrinkQwen3LMHeadModel.init(Vocab, cfg_k, key=jrandom.PRNGKey(0))
+only = lambda x: eqx.filter(x, eqx.is_inexact_array)
+keep = jnp.concatenate([jnp.arange(8000), jnp.arange(V - 256, V)])
+
+
+def one_step(model, rate):
+    o = VocabShrinkMuonHConfig(**kw, vs_ks="8000", vs_steps="0", vs_head_rate=rate).build(100)
+    st = o.init(only(model))
+    u, _ = o.update(only(jax.jit(lambda m: at_step(lambda: eqx.filter_grad(lambda mm: loss_of(mm))(m), jnp.int32(0)))(model)), st, only(model))
+    return eqx.apply_updates(model, u)
+
+
+m_1, m_2 = one_step(m0, 1.0), one_step(m0, 2.0)
+n0 = float(jnp.linalg.norm(head(m0)[keep]))
+t1, t2 = float(jnp.linalg.norm(head(m_1)[keep] - head(m0)[keep])) / n0, float(jnp.linalg.norm(head(m_2)[keep] - head(m0)[keep])) / n0
+check("vs_head_rate 2: the kept rows turn twice as far", np.isclose(t2 / t1, 2.0, rtol=0.01) and 0.005 < t1 < 0.02, f"turn {t1:.5f} -> {t2:.5f}")
+check("vs_head_rate 2: kept norm kept, dead rows still", np.isclose(float(jnp.linalg.norm(head(m_2)[keep])), n0, rtol=1e-4) and float(jnp.abs(head(m_2)[8000:V - 256] - head(m0)[8000:V - 256]).max()) == 0)
+m_s = VocabShrinkQwen3LMHeadModel.init(Vocab, VocabShrinkQwen3Config(**common, vs_ks="8000", vs_steps="0", vs_eval_k=8000, vs_head_scale=0.55), key=jrandom.PRNGKey(0))
+check("vs_head_scale 0.55: the head at init times 0.55", np.allclose(np.asarray(head(m_s)), 0.55 * np.asarray(head(m0)), rtol=1e-5))
+same = all(np.array_equal(np.asarray(a), np.asarray(b)) for a, b in zip(jax.tree_util.tree_leaves(eqx.filter(eqx.tree_at(lambda m: m.lm_head.weight, m_s, m0.lm_head.weight), eqx.is_inexact_array)), jax.tree_util.tree_leaves(eqx.filter(m0, eqx.is_inexact_array))))
+check("vs_head_scale 0.55: everything else equal", same)
+m_s1 = one_step(m_s, 1.0)
+ns = float(jnp.linalg.norm(head(m_s)[keep]))
+ts = float(jnp.linalg.norm(head(m_s1)[keep] - head(m_s)[keep])) / ns
+check("vs_head_scale 0.55: the kept rows keep the scaled norm and turn at the same rate", np.isclose(float(jnp.linalg.norm(head(m_s1)[keep])), ns, rtol=1e-4) and np.isclose(ns, 0.55 * n0, rtol=1e-4) and 0.005 < ts < 0.02, f"turn {ts:.5f}")
 
 for bad in (("128000,8000", "0"), ("8000,128000", "0,5"), ("128000,8000", "1,5"), ("128000,8000", "5,5")):
     try:
