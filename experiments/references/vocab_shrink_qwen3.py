@@ -19,10 +19,15 @@ Paloma tokenized at that K.
 rows alone (freeze_rows_muonh.kept_block_step), so the kept rows turn at the rate they would have in a K-row model (without it
 AdamH's global step moves them sqrt(V/K) times faster once the dead rows' moments fade). The dead rows keep their values. With
 vs_ks = "K" and vs_steps = "0" the model and the optimizer are a K-row model and its optimizer, the control of a cut.
+
+``vs_head_scale`` multiplies the head at init (the kept rows then keep that norm) and ``vs_head_rate`` multiplies the kept rows' step: a run
+with every row in its softmax and only 16K windows ends with the used rows at 0.55 of their norm, turning up to 2.1 times as fast
+(tmp_plots/vocab/hnet_diag/head_norms.py), and these two test which of them gives its lower score at 16K (owner popup 2026-11-04).
 """
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
@@ -56,6 +61,7 @@ class VocabShrinkQwen3Config(Qwen3Config):
     vs_ks: str = "128000"     # comma-separated K of each stretch of training
     vs_steps: str = "0"       # comma-separated first train step of each stretch
     vs_eval_k: int = 128000   # evaluation's softmax: the ids below this and the specials
+    vs_head_scale: float = 1.0   # the head at init times this
 
     def __post_init__(self):
         super().__post_init__()
@@ -71,7 +77,10 @@ class VocabShrinkQwen3LMHeadModel(Qwen3LMHeadModel):
     def init(cls, Vocab: Axis, config: VocabShrinkQwen3Config, *, key):  # type: ignore[override]
         # Qwen3LMHeadModel.init returns the base class, which would silently drop the schedule: rebuild as this class
         base = Qwen3LMHeadModel.init(Vocab, config, key=key)
-        return cls(base.transformer, base.embeddings, base.lm_head)
+        model = cls(base.transformer, base.embeddings, base.lm_head)
+        if config.vs_head_scale != 1.0:
+            model = eqx.tree_at(lambda m: m.lm_head.weight, model, model.lm_head.weight * config.vs_head_scale)
+        return model
 
     def compute_next_token_loss(self, example, *, key=None, reduction=hax.mean, reduction_axis=None, logsumexp_weight=None,  # type: ignore[override]
                                 loss_dtype=jnp.float32, logit_soft_cap=None):
@@ -115,18 +124,19 @@ class VocabShrinkQwen3LMHeadModel(Qwen3LMHeadModel):
 class VocabShrinkMuonHConfig(MuonHConfig):
     vs_ks: str = "128000"
     vs_steps: str = "0"
+    vs_head_rate: float = 1.0   # the kept rows' step times this
 
     def build(self, num_train_steps):
         inner = super().build(num_train_steps)
         ks, steps = (jnp.asarray(x) for x in parse_schedule(self.vs_ks, self.vs_steps))
-        eps, b1, b2 = self.epsilon, self.beta1, self.beta2
+        eps, b1, b2, rate = self.epsilon, self.beta1, self.beta2, self.vs_head_rate
 
         def update_fn(updates, state, params=None, **extra):
             lo = ks[jnp.searchsorted(steps, jnp.asarray(state.count), side="right") - 1]   # the index of this update
             updates, new_state = inner.update(updates, state, params, **extra)
             V = params.lm_head.weight.axes[[a.name for a in params.lm_head.weight.axes].index("vocab")].size
             cut = lo < V - N_SPECIAL
-            updates = jax.lax.cond(cut, lambda u: kept_block_step(u, new_state, params, lo, N_SPECIAL, eps, b1, b2), lambda u: u, updates)
+            updates = jax.lax.cond(cut, lambda u: kept_block_step(u, new_state, params, lo, N_SPECIAL, eps, b1, b2, kept_scale=rate), lambda u: u, updates)
             return updates, new_state
 
         return optax.GradientTransformationExtraArgs(inner.init, update_fn)

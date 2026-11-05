@@ -99,11 +99,12 @@ def block_delta(p, u, mask, lr):
     return jnp.where(mask, new - p, 0.0)
 
 
-def kept_block_step(updates, new_state, params, lo: int, keep_last: int, eps: float, b1: float, b2: float, rare_scale: float = 0.0):
+def kept_block_step(updates, new_state, params, lo: int, keep_last: int, eps: float, b1: float, b2: float, rare_scale: float = 0.0, kept_scale: float = 1.0):
     """``updates`` with lm_head's update replaced by AdamH's norm-preserving step on the kept rows alone (ids below
     ``lo`` and the last ``keep_last``): u = m_hat / (sqrt(v_hat) + eps) from the AdamH state just updated, zero on the
     frozen rows; p_new = p - lr * u * norm(p_kept) / norm(u), the kept rows rescaled to norm(p_kept). With
-    ``rare_scale`` > 0 the rare rows also take the same step on their own block, at lr * rare_scale."""
+    ``rare_scale`` > 0 the rare rows also take the same step on their own block, at lr * rare_scale. ``kept_scale`` multiplies the
+    kept rows' lr."""
     adamh = [s for s in jax.tree_util.tree_leaves(new_state, is_leaf=lambda x: isinstance(x, ScaleByAdamHState)) if isinstance(s, ScaleByAdamHState)]
     if len(adamh) != 1:
         raise ValueError(f"expected one AdamH state (the head's), found {len(adamh)}")
@@ -121,7 +122,7 @@ def kept_block_step(updates, new_state, params, lo: int, keep_last: int, eps: fl
     kept = kept[:, None] if vocab[0] == 0 else kept[None, :]
     c = st.count.astype(jnp.float32)   # updates so far, this one included
     u = (m / (1 - b1 ** c)) / (jnp.sqrt(v / (1 - b2 ** c)) + eps)
-    delta = block_delta(p, u, kept, lr)
+    delta = block_delta(p, u, kept, lr * kept_scale)
     if rare_scale > 0:
         delta = delta + block_delta(p, u, ~kept, lr * rare_scale)
     delta = delta.astype(updates.lm_head.weight.array.dtype)
