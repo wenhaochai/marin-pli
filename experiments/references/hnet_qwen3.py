@@ -41,6 +41,8 @@ Ablations (owner popup 2026-11-03; each off by default, so the default model is 
   loss trains q and k; the encoder still learns through the chunk vectors.
 - ``no_residual``: no R h_t term (R stays a zero matrix with a zero gradient).
 - ``no_ema``: dechunking without the EMA, z_j = c_j.
+- ``ema_stop_grad`` (owner popup 2026-11-05): the EMA still blends, with p through a stop_gradient, so the task gradient reaches
+  the routing through the STE factor alone. With ``no_ema`` the blend goes too; this flag separates the two.
 ``route_p`` (evaluation only) replaces the routing's output p, and so the boundaries p > 0.5 and the EMA weights, by a
 given one, while the chunk vectors stay the model's own encoder states: hnet_eval.py scores one model with another model's
 boundaries this way (``routing`` returns a model's p).
@@ -103,12 +105,15 @@ class HNetQwen3Config(Qwen3Config):
     no_route_grad: bool = False    # p enters the output through a stop_gradient: only the ratio loss trains q and k
     no_residual: bool = False      # drop R h_t
     no_ema: bool = False           # z_j = c_j
+    ema_stop_grad: bool = False    # the EMA blends as usual and passes no gradient to p
 
     def __post_init__(self):
         super().__post_init__()
         HNetRoute(self.route)   # fails fast on an unknown route
         if self.no_route_grad and self.route in DATA_ROUTES:
             raise ValueError(f"no_route_grad with route={self.route}: that route has no learned routing")
+        if self.ema_stop_grad and (self.no_ema or self.no_route_grad or self.route in DATA_ROUTES):
+            raise ValueError("ema_stop_grad: needs the EMA, a learned routing and its task gradient")
         if self.slot_margin <= 0:
             raise ValueError(f"slot_margin={self.slot_margin}: must be positive")
         if self.enc_layers < 1 or self.dec_layers < 1:
@@ -300,7 +305,8 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
         if cfg.no_ema:
             z = zc.astype(jnp.float32)
         else:
-            pc = jnp.clip(jnp.take_along_axis(p_out, order, axis=-1), 1e-4, 1 - 1e-4)
+            p_ema = jax.lax.stop_gradient(p_out) if cfg.ema_stop_grad else p_out
+            pc = jnp.clip(jnp.take_along_axis(p_ema, order, axis=-1), 1e-4, 1 - 1e-4)
             first = jnp.arange(cfg.slots) == 0
             if segc is not None:
                 first = first | jnp.concatenate([jnp.ones_like(segc[..., :1], dtype=bool), segc[..., 1:] != segc[..., :-1]], axis=-1)
