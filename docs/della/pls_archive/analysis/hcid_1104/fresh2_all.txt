@@ -1,0 +1,20 @@
+-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48 step-4958: features in 43 s, train tokens 786240
+  top 1024 next tokens cover 0.639 of the test targets; class prior CE 4.124
+  L12: |old| / |sum| median 0.746, |recent| / |sum| median 0.413; fresh probes: sum 2.848 (11)  recent 2.815 (10)  old 3.071 (10)  old|recent 2.756 (10)  streams 2.780 (10)
+time 136 s
+-sep-bbfrozen-ahc-fa4thd-vs-d48 step-4958: features in 40 s, train tokens 786240
+  top 1024 next tokens cover 0.639 of the test targets; class prior CE 4.124
+  L12: |old| / |sum| median 0.114, |recent| / |sum| median 0.972; fresh probes: sum 2.133 (11)  recent 2.161 (11)  old 3.087 (10)  old|recent 2.126 (11)  streams 2.062 (4)
+time 97 s
+-sep-bbfrozen-ahc-hcmove-fa4thd-vs-d48 step-4958: features in 41 s, train tokens 786240
+  top 1024 next tokens cover 0.639 of the test targets; class prior CE 4.124
+  L12: |old| / |sum| median 0.793, |recent| / |sum| median 0.324; fresh probes: sum 2.922 (11)  recent 2.875 (10)  old 3.055 (10)  old|recent 2.814 (10)  streams 2.720 (10)
+time 83 s
+-sep-bbfrozen-ahc-hcsum-hcf32-fa4thd-vs-d48 step-2001: features in 42 s, train tokens 786240
+  top 1024 next tokens cover 0.639 of the test targets; class prior CE 4.124
+  L12: |old| / |sum| median 0.367, |recent| / |sum| median 0.822; fresh probes: sum 2.506 (11)  recent 2.552 (11)  old 2.986 (10)  old|recent 2.474 (10)  streams 2.471 (10)
+time 85 s
+-sep-bbfrozen-ahc-hcshrink-fa4thd-vs-d48 step-2001: features in 41 s, train tokens 786240
+  top 1024 next tokens cover 0.639 of the test targets; class prior CE 4.124
+  L12: |old| / |sum| median 0.001, |recent| / |sum| median 1.000; fresh probes: sum 3.399 (11)  recent 3.399 (11)  old 3.159 (11)  old|recent 3.113 (10)  streams 3.102 (11)
+time 96 s

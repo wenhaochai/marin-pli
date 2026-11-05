@@ -1,0 +1,20 @@
+-sep-ahc-fa4thd-vs-d48 step-4958 streams 4 res learned static False
+ L5: reconstruction error median 4.4e-03; probe CE all 3.439, without the embedding part 3.781, embedding part alone 9.358; last 1 5.782, last 2 4.678, last 4 4.625, last 8 3.899
+   median |T F| / |S|: embedding 0.247; by sublayer back from the last: 0.398 0.192 0.014 0.049 0.140 0.333 0.108 0.044 0.091 0.245
+   median |T|: embedding 2.33e+00; by sublayer back from the last: 5.12 1.82 0.16 0.55 1.53 3.81 1.19 0.29 0.63 2.93
+ L12: reconstruction error median 5.3e-03; probe CE all 3.004, without the embedding part 3.156, embedding part alone 10.402; last 1 7.037, last 2 6.295, last 4 4.951, last 8 3.842, last 16 3.198
+   median |T F| / |S|: embedding 0.150; by sublayer back from the last: 0.105 0.057 0.112 0.104 0.159 0.107 0.041 0.019 0.124 0.005 0.261 0.186 0.119 0.138 0.072 0.037 0.009 0.014 0.034 0.064 0.033 0.009 0.038 0.059
+   median |T|: embedding 3.54e+00; by sublayer back from the last: 2.95 2.82 3.60 4.03 4.06 5.94 1.30 0.32 3.34 0.12 7.73 6.78 3.97 5.14 2.35 0.90 0.29 0.39 0.94 1.87 0.91 0.16 0.66 1.77
+ L24: reconstruction error median 8.0e-03; probe CE all 2.845, without the embedding part 2.941, embedding part alone 10.377; last 1 9.943, last 2 8.463, last 4 7.823, last 8 7.478, last 16 4.089, last 32 3.100
+   median |T F| / |S|: embedding 0.099; by sublayer back from the last: 0.044 0.023 0.071 0.028 0.014 0.033 0.090 0.041 0.050 0.029 0.081 0.050 0.054 0.043 0.078 0.044 0.057 0.036 0.102 0.067 0.060 0.051 0.075 0.020
+   median |T|: embedding 5.44e+00; by sublayer back from the last: 3.42 2.49 5.27 3.17 1.05 2.79 7.81 6.09 3.87 1.81 5.97 3.67 3.75 4.93 5.55 2.91 3.97 4.15 7.23 3.39 3.62 6.44 5.98 0.82
+-sep-ahc-hcid-fa4thd-vs-d48 step-4958 streams 4 res identity static False
+ L5: reconstruction error median 1.9e-03; probe CE all 3.586, without the embedding part 3.600, embedding part alone 13.556; last 1 6.111, last 2 6.089, last 4 4.004, last 8 3.687
+   median |T F| / |S|: embedding 0.068; by sublayer back from the last: 0.424 0.006 0.071 0.551 0.161 0.120 0.089 0.103 0.120 0.104
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 9.21 0.24 2.09 16.70 4.41 5.09 3.84 3.75 1.35 4.84
+ L12: reconstruction error median 2.3e-03; probe CE all 3.168, without the embedding part 3.169, embedding part alone 13.217; last 1 9.306, last 2 8.226, last 4 7.351, last 8 3.826, last 16 3.331
+   median |T F| / |S|: embedding 0.028; by sublayer back from the last: 0.105 0.097 0.253 0.134 0.256 0.181 0.071 0.022 0.059 0.032 0.047 0.026 0.027 0.051 0.179 0.002 0.030 0.229 0.067 0.049 0.038 0.041 0.049 0.042
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 7.25 14.17 18.64 21.47 7.30 17.48 7.50 2.61 5.06 4.77 3.43 3.68 3.25 8.50 9.21 0.24 2.09 16.70 4.41 5.09 3.84 3.75 1.35 4.84
+ L24: reconstruction error median 3.8e-03; probe CE all 2.997, without the embedding part 2.998, embedding part alone 12.969; last 1 10.990, last 2 9.795, last 4 8.277, last 8 6.550, last 16 4.563, last 32 3.341
+   median |T F| / |S|: embedding 0.018; by sublayer back from the last: 0.022 0.043 0.086 0.039 0.097 0.025 0.069 0.040 0.086 0.037 0.111 0.057 0.070 0.051 0.063 0.032 0.042 0.005 0.072 0.060 0.098 0.060 0.057 0.005
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 4.46 9.93 15.58 8.74 15.41 11.00 11.48 13.54 12.40 11.44 16.36 7.92 10.30 11.79 9.23 9.02 5.95 1.09 10.50 16.34 7.47 12.92 7.05 0.79

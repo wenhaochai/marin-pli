@@ -1,0 +1,24 @@
+-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48 step-4958: features in 48 s, train tokens 524160
+  top 4096 next tokens cover 0.789 of the test targets
+  bigram prior alone: test CE 5.024
+  L12: sum 4.099 (epoch 4)  sum-res 4.488 (epoch 3)  sum+prior 4.562 (epoch 13)  streams 4.322 (epoch 0)  streams+prior 4.741 (epoch 15)
+  L24: sum 3.778 (epoch 4)  sum-res 4.208 (epoch 3)  sum+prior 4.284 (epoch 13)  streams 3.894 (epoch 0)  streams+prior 4.432 (epoch 0)
+time 389 s
+-sep-bbfrozen-ahc-fa4thd-vs-d48 step-4958: features in 50 s, train tokens 524160
+  top 4096 next tokens cover 0.789 of the test targets
+  bigram prior alone: test CE 5.024
+  L12: sum 3.147 (epoch 3)  sum-res 3.649 (epoch 5)  sum+prior 3.680 (epoch 3)  streams 3.198 (epoch 0)  streams+prior 3.753 (epoch 0)
+  L24: sum 2.815 (epoch 2)  sum-res 3.357 (epoch 2)  sum+prior 3.384 (epoch 2)  streams 2.892 (epoch 0)  streams+prior 3.480 (epoch 0)
+time 360 s
+-sep-bbfrozen-ahc-hcs1-vs-d48 step-4958: features in 45 s, train tokens 524160
+  top 4096 next tokens cover 0.789 of the test targets
+  bigram prior alone: test CE 5.024
+  L12: sum 3.500 (epoch 3)  sum-res 3.991 (epoch 2)  sum+prior 4.035 (epoch 4)
+  L24: sum 3.031 (epoch 3)  sum-res 3.560 (epoch 3)  sum+prior 3.603 (epoch 4)
+time 188 s
+-sep-bbfrozen-apreln-fa4thd-vs-d48 step-4958: features in 35 s, train tokens 524160
+  top 4096 next tokens cover 0.789 of the test targets
+  bigram prior alone: test CE 5.024
+  L12: sum 3.903 (epoch 3)  sum-res 4.344 (epoch 2)  sum+prior 4.396 (epoch 4)
+  L24: sum 3.548 (epoch 3)  sum-res 4.025 (epoch 2)  sum+prior 4.071 (epoch 3)
+time 186 s

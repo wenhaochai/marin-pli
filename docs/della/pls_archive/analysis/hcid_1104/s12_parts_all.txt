@@ -1,0 +1,35 @@
+-sep-bbfrozen-ahc-fa4thd-vs-d48 step-4958 streams 4 res learned static False
+ layer | CE: all, no write, no surfaced, no kept, write alone, surfaced alone, kept alone | median norm / |new|: kept, surfaced, write | write into the sum
+  L4    4.933  5.490  4.997  7.068  7.020 14.590  5.522 |  0.691  0.157  0.539 |  0.973
+  L8    4.672  4.914  4.656  7.635  7.288 18.191  4.849 |  0.737  0.066  0.449 |  0.944
+  L12   3.682  3.949  5.198  4.166  6.862  4.397  9.316 |  0.212  0.639  0.497 |  0.957
+  L24   3.227  3.278  3.346  3.893  8.896  3.423  3.391 |  0.717  0.225  0.240 |  0.954
+  L36   2.968  2.976  2.976  3.455 14.918  3.225  2.980 |  0.907  0.090  0.047 |  0.968
+-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48 step-4958 streams 4 res identity static False
+ layer | CE: all, no write, no surfaced, no kept, write alone, surfaced alone, kept alone | median norm / |new|: kept, surfaced, write | write into the sum
+  L4    5.352  5.372  5.352  9.562  9.562 11.759  5.372 |  0.988  0.000  0.040 |  0.931
+  L8    5.092  5.103  5.092 10.363 10.363 11.759  5.103 |  0.994  0.000  0.021 |  0.283
+  L12   4.823  4.824  4.823  9.850  9.850 11.759  4.824 |  0.993  0.000  0.017 |  0.050
+  L24   4.400  4.432  4.400  8.836  8.836 11.759  4.432 |  0.964  0.000  0.107 |  0.453
+  L36   3.541  3.598  3.541  9.458  9.458 11.759  3.598 |  0.963  0.000  0.112 |  0.328
+-sep-bbfrozen-ahc-hcs1-vs-d48 step-4958 streams 1 res learned static False
+ layer | CE: all, no write, no surfaced, no kept, write alone, surfaced alone, kept alone | median norm / |new|: kept, surfaced, write | write into the sum
+  L4    4.695  4.759  4.695  8.995  8.988 15.058  4.759 |  0.942  0.002  0.166 |  1.000
+  L8    4.367  4.411  4.367  9.033  9.030 14.619  4.411 |  0.924  0.002  0.193 |  1.000
+  L12   4.089  4.130  4.089  8.565  8.565 14.492  4.130 |  0.939  0.002  0.156 |  1.000
+  L24   3.492  3.518  3.491  8.951  8.930 16.688  3.518 |  0.977  0.002  0.088 |  1.000
+  L36   3.124  3.148  3.124 11.300 11.297 16.090  3.148 |  0.982  0.001  0.080 |  1.000
+-sep-bbfrozen-ahc-rstatic-vs-d48 step-4958 streams 4 res learned static True
+ layer | CE: all, no write, no surfaced, no kept, write alone, surfaced alone, kept alone | median norm / |new|: kept, surfaced, write | write into the sum
+  L4    4.758  4.895  4.754  5.870  7.615  6.326  4.871 |  0.777  0.145  0.223 |  0.991
+  L8    4.426  4.515  4.433  5.682  8.653  5.356  4.497 |  0.806  0.129  0.208 |  0.885
+  L12   3.899  4.133  3.914 14.338  9.632 44.922  4.159 |  0.952  0.078  0.320 |  0.913
+  L24   3.266  3.309  3.263 15.322  8.773 43.003  3.303 |  1.010  0.051  0.112 |  0.898
+  L36   3.012  3.025  3.013  8.919 11.676  4.934  3.026 |  0.978  0.013  0.069 |  0.756
+-sep-bbfrozen-ahc-hcs2-vs-d48 step-4958 streams 2 res learned static False
+ layer | CE: all, no write, no surfaced, no kept, write alone, surfaced alone, kept alone | median norm / |new|: kept, surfaced, write | write into the sum
+  L4    4.679  4.831  4.668  6.058  7.061  7.021  4.808 |  0.766  0.097  0.271 |  0.974
+  L8    4.340  4.412  4.340  6.894  8.396  5.635  4.405 |  0.869  0.052  0.211 |  0.959
+  L12   3.914  4.036  3.910  6.040  8.208  5.473  4.014 |  0.887  0.051  0.173 |  0.960
+  L24   3.154  3.180  3.154 15.417 13.254 42.665  3.180 |  0.990  0.007  0.070 |  0.968
+  L36   2.966  2.980  2.966 30.498 27.422 36.986  2.980 |  0.995  0.004  0.058 |  0.984

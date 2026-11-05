@@ -1,0 +1,14 @@
+-sep-bbfrozen-ahc-fa4thd-vs-d48 step-4958 streams 4 res learned static False
+ L12: reconstruction error median 4.3e-03; probe CE all 3.589, without the embedding part 3.764, embedding part alone 12.755; last 1 6.850, last 2 5.962, last 4 4.301, last 8 3.918, last 16 3.817
+   median |T F| / |S|: embedding 0.103; by sublayer back from the last: 0.496 0.046 0.182 0.158 0.094 0.132 0.112 0.110 0.061 0.040 0.038 0.050 0.022 0.012 0.029 0.009 0.027 0.013 0.032 0.028 0.012 0.039 0.019 0.004
+   median |T|: embedding 8.11e-01; by sublayer back from the last: 4.69 0.76 1.74 1.22 0.91 1.06 1.32 0.80 0.62 0.38 0.39 0.30 0.22 0.10 0.27 0.06 0.20 0.10 0.20 0.15 0.12 0.17 0.07 0.04
+ L24: reconstruction error median 7.4e-03; probe CE all 3.080, without the embedding part 3.174, embedding part alone 11.576; last 1 8.847, last 2 9.193, last 4 7.211, last 8 6.438, last 16 5.227, last 32 3.185
+   median |T F| / |S|: embedding 0.035; by sublayer back from the last: 0.252 0.146 0.174 0.163 0.152 0.033 0.079 0.068 0.064 0.052 0.069 0.115 0.080 0.016 0.061 0.072 0.058 0.091 0.041 0.076 0.036 0.042 0.017 0.034
+   median |T|: embedding 5.43e-01; by sublayer back from the last: 5.24 2.36 3.26 2.16 2.91 0.94 1.72 2.00 1.53 0.61 1.52 2.03 1.67 0.21 1.30 2.33 1.13 1.77 0.98 2.20 0.70 0.47 0.42 0.58
+-sep-bbfrozen-ahc-hcid-fa4thd-vs-d48 step-4958 streams 4 res identity static False
+ L12: reconstruction error median 3.9e-03; probe CE all 4.811, without the embedding part 4.954, embedding part alone 14.751; last 1 9.916, last 2 19.607, last 4 16.415, last 8 11.547, last 16 8.564
+   median |T F| / |S|: embedding 0.267; by sublayer back from the last: 0.017 0.115 0.042 0.012 0.023 0.034 0.051 0.029 0.020 0.051 0.069 0.030 0.031 0.008 0.053 0.020 0.035 0.018 0.077 0.033 0.065 0.044 0.662 0.145
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 0.17 1.30 1.03 0.18 0.57 0.62 0.90 0.32 0.23 1.00 1.39 0.59 0.56 0.18 1.40 0.31 0.61 0.17 1.86 0.42 1.59 0.51 1.15 2.27
+ L24: reconstruction error median 4.9e-03; probe CE all 4.361, without the embedding part 4.437, embedding part alone 14.131; last 1 8.821, last 2 9.029, last 4 8.499, last 8 7.556, last 16 6.626, last 32 5.808
+   median |T F| / |S|: embedding 0.209; by sublayer back from the last: 0.109 0.014 0.025 0.113 0.040 0.009 0.017 0.010 0.046 0.002 0.047 0.014 0.018 0.002 0.009 0.005 0.097 0.005 0.019 0.010 0.040 0.005 0.045 0.012
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 2.82 0.19 0.82 2.57 1.24 0.19 0.58 0.22 1.35 0.04 1.60 0.40 0.29 0.05 0.32 0.10 1.82 0.09 0.44 0.19 1.25 0.25 1.47 0.36

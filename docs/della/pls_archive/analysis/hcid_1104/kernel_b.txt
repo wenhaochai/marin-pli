@@ -1,0 +1,16 @@
+-sep-bbfrozen-ahc-hcs1-vs-d48 step-4958 streams 1 res learned static False
+ L12: reconstruction error median 7.6e-03; probe CE all 3.982, without the embedding part 4.221, embedding part alone 10.911; last 1 8.538, last 2 6.687, last 4 5.727, last 8 4.834, last 16 4.392
+   median |T F| / |S|: embedding 0.133; by sublayer back from the last: 0.154 0.131 0.139 0.038 0.130 0.171 0.125 0.102 0.099 0.083 0.078 0.074 0.079 0.029 0.062 0.066 0.045 0.075 0.051 0.051 0.035 0.072 0.029 0.076
+   median |T|: embedding 1.38e+00; by sublayer back from the last: 1.05 1.10 0.93 0.23 0.86 0.96 0.82 0.75 0.70 0.52 0.55 0.52 0.56 0.18 0.45 0.32 0.35 0.35 0.32 0.23 0.23 0.22 0.13 0.25
+-sep-bbfrozen-ahc-hcshrink-fa4thd-vs-d48 step-1898 streams 4 res sumshrink static False
+ L12: reconstruction error median 5.8e-03; probe CE all 6.307, without the embedding part 6.307, embedding part alone 11.805; last 1 6.670, last 2 6.434, last 4 6.358, last 8 6.316, last 16 6.309
+   median |T F| / |S|: embedding 0.000; by sublayer back from the last: 0.923 0.207 0.104 0.043 0.050 0.046 0.061 0.022 0.018 0.011 0.005 0.007 0.006 0.003 0.002 0.002 0.001 0.001 0.000 0.000 0.000 0.000 0.001 0.000
+   median |T|: embedding 2.68e-04; by sublayer back from the last: 4.11 1.28 0.41 0.30 0.21 0.23 0.12 0.10 0.06 0.05 0.03 0.02 0.02 0.02 0.01 0.01 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00
+-sep-bbfrozen-ahc-hcsum-hcf32-fa4thd-vs-d48 step-2001 streams 4 res sum static False
+ L12: reconstruction error median 6.8e-04; probe CE all 4.641, without the embedding part 4.812, embedding part alone 10.011; last 1 8.796, last 2 9.368, last 4 9.464, last 8 6.998, last 16 5.588
+   median |T F| / |S|: embedding 0.224; by sublayer back from the last: 0.087 0.047 0.044 0.139 0.131 0.128 0.061 0.102 0.132 0.070 0.070 0.062 0.111 0.052 0.079 0.058 0.084 0.085 0.142 0.079 0.035 0.007 0.219 0.093
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 2.01 0.75 0.95 1.64 2.36 1.24 0.61 1.22 2.31 0.87 1.28 0.76 1.88 0.73 1.56 0.53 1.33 0.92 1.03 0.87 0.72 0.09 0.78 1.61
+-sep-bbfrozen-ahc-hcmove-fa4thd-vs-d48 step-4958 streams 4 res move static False
+ L12: reconstruction error median 7.0e-03; probe CE all 5.067, without the embedding part 5.372, embedding part alone 12.122; last 1 10.030, last 2 12.608, last 4 14.049, last 8 10.065, last 16 7.400
+   median |T F| / |S|: embedding 0.374; by sublayer back from the last: 0.020 0.025 0.001 0.014 0.023 0.009 0.012 0.018 0.036 0.052 0.010 0.025 0.065 0.054 0.108 0.000 0.021 0.009 0.062 0.009 0.057 0.018 0.623 0.244
+   median |T|: embedding 4.00e+00; by sublayer back from the last: 0.31 0.33 0.02 0.17 0.24 0.13 0.16 0.15 0.32 0.44 0.08 0.28 0.68 0.47 0.62 0.01 0.19 0.08 0.69 0.09 0.67 0.15 0.80 2.53
