@@ -1,0 +1,4 @@
+# owner 2026-11-05 (「是不是可以加一个1c，就是反过来，先小词表再大词表」): Path 1c, the reversed shift (vsgrow, w1082), on 8 times the text, no window twice; its 8-pass score minus this score is its regret.
+smoke smoke - other 4 30m scripts/della/over_vocab_smoke.sbatch SIZES=300m VARIANTS=baseline SMOKE_ENVS=PASS_DATA=vsgrowu+SEQ_LEN=4992+DATA_EPOCHS=8
+par vsgrowu 300m-della4xh100-rep8-vsgrowu-sl4992 main 4 480m scripts/della/muonh_qwen3_h100x4.sbatch SIZE=300m SEQ_LEN=4992 DATA_EPOCHS=8 PASS_DATA=vsgrowu
+wait
