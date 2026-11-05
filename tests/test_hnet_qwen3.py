@@ -315,6 +315,30 @@ sg = eqx.filter_grad(lambda m: jnp.mean(jnp.square(train_fwd(m, sp_ids)[0].array
 check("space: q and k get no gradient, all gradients finite", fnorm(sg.q_proj) == 0 and fnorm(sg.k_proj) == 0
       and all(bool(jnp.all(jnp.isfinite(g))) for g in leaves(sg)))
 
+# route="word" (owner popup 2026-11-05 "跑"): as space, but whitespace never opens a chunk, so a run of it joins the chunk before
+want_wd = np.zeros((B, L), bool)
+for r in range(B):
+    for t in range(L):
+        want_wd[r, t] = (t == 0 or seg_np[r, t] != seg_np[r, t - 1] or sp_np[r, t - 1] >= 256 or sp_np[r, t] >= 256
+                         or (sp_np[r, t - 1] in WHITESPACE_IDS and sp_np[r, t] not in WHITESPACE_IDS))
+for slots in (128, 24):
+    wcfg, wmodel_ = make(slots, HNetRoute.WORD)
+    got = np.asarray(wmodel_.activations(sp_ids, mask, key=None).rearrange((Batch, Pos, wcfg.Embed)).array)
+    want, info = reference(wmodel_, wcfg, sp_ids, mask, opens=want_wd)
+    err = float(np.max(np.abs(got - want)))
+    check(f"word: forward equals reference, {slots} slots", err < 2e-4, f"max err {err:.2e}, boundaries per row {[int(i[1].sum()) for i in info]}")
+_, wmodel_ = make(128, HNetRoute.WORD)
+h_wd = wmodel_.encoder(wmodel_.embeddings.embed(sp_ids), attn_mask=mask, key=None)
+p_wd, b_wd, *_ = wmodel_.chunked(h_wd, mask, ids=sp_ids)
+check("word: boundaries at a non-whitespace byte after whitespace, at and after specials, at document starts; p is 0 or 1",
+      np.array_equal(np.asarray(b_wd), want_wd) and set(np.unique(np.asarray(p_wd))) <= {0.0, 1.0},
+      f"{1 / want_wd.mean():.2f} bytes per chunk, space {1 / want_sp.mean():.2f}")
+check("word: its boundaries are space's minus those on whitespace after whitespace", bool(np.all(want_wd <= want_sp)) and int((want_sp & ~want_wd).sum()) > 0
+      and all(sp_np[r, t] in WHITESPACE_IDS for r, t in zip(*np.nonzero(want_sp & ~want_wd))), f"{int((want_sp & ~want_wd).sum())} fewer")
+wg = eqx.filter_grad(lambda m: jnp.mean(jnp.square(train_fwd(m, sp_ids)[0].array)) + train_fwd(m, sp_ids)[1])(wmodel_)
+check("word: q and k get no gradient, all gradients finite", fnorm(wg.q_proj) == 0 and fnorm(wg.k_proj) == 0
+      and all(bool(jnp.all(jnp.isfinite(g))) for g in leaves(wg)))
+
 # route="bpe": token starts flagged as id + 512; the model must equal the byte model given those boundaries by hand
 bp_np = sp_np.copy()
 starts_bp = want_sp.copy()                     # any set of starts works; use a random one that differs from space

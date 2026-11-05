@@ -33,6 +33,9 @@ Ablations (owner popup 2026-11-03; each off by default, so the default model is 
 - ``route="space"``: a chunk opens at a document's first byte and at every byte whose previous byte is whitespace (space,
   newline, tab, carriage return); a special token (BOS, EOS) is a chunk of its own, as it is a token of the Marin
   tokenizer. p = 1 there and 0 elsewhere, as with ``route="fixed"``.
+- ``route="word"`` (owner popup 2026-11-05 "跑"): as ``route="space"``, but a whitespace byte never opens a chunk, so a run of
+  whitespace (code indentation, blank lines) joins the chunk before it; a special token is still a chunk of its own. On space
+  boundaries one-byte chunks hold 56% of the pooled regret, nearly all whitespace in code; this route tests that exception.
 - ``route="bpe"``: the chunks are the tokens of the 128K Marin tokenizer. The byte cache marks every text byte that opens
   a Marin token by adding ``BPE_FLAG`` (the byte vocabulary's size, 512) to its id (convert_token_start_cache.py; special
   tokens are never flagged, so the data pipeline still finds EOS, and each is a chunk of its own); the model strips the
@@ -80,10 +83,11 @@ class HNetRoute(StrEnum):
     CAUSAL = "causal"   # (h_{t-2}, h_{t-1}): bytes before t only
     FIXED = "fixed"     # every round(chunk_ratio) bytes from a document's first byte: nothing learned
     SPACE = "space"     # after whitespace, a special token or a document start: nothing learned
+    WORD = "word"       # as space, but a whitespace byte never opens a chunk: a run of whitespace joins the chunk before it
     BPE = "bpe"         # the 128K Marin tokenizer's token starts, flagged in the data: nothing learned
 
 
-DATA_ROUTES = (HNetRoute.FIXED, HNetRoute.SPACE, HNetRoute.BPE)   # p is 0 or 1, fixed by the bytes and documents alone
+DATA_ROUTES = (HNetRoute.FIXED, HNetRoute.SPACE, HNetRoute.WORD, HNetRoute.BPE)   # p is 0 or 1, fixed by the bytes and documents alone
 # v256 ids of the whitespace bytes (the byte-level alphabet of the Marin tokenizer: Ġ space, Ċ newline, ĉ tab, č CR)
 WHITESPACE_IDS = (220, 198, 197, 201)
 N_BYTES = 256     # v256 ids below this are bytes; 256.. are the special tokens
@@ -225,7 +229,7 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
                 token_start: Optional[NamedArray] = None, route_p: Optional[jax.Array] = None):
         """Routing and chunking of the encoder states h: (boundary probabilities p, boundaries b, chunk order, number
         of valid chunks, chunk states, chunk mask), the arrays raw, batch axes first, then position. ``ids`` (the byte
-        ids) is needed by route="space" and "bpe", ``token_start`` by route="bpe"; ``route_p`` (batch axes first, then
+        ids) is needed by route="space", "word" and "bpe", ``token_start`` by route="bpe"; ``route_p`` (batch axes first, then
         position) replaces the routing's p."""
         cfg: HNetQwen3Config = self.config  # type: ignore[assignment]
         Pos = h.resolve_axis(cfg.max_Pos.name)
@@ -255,14 +259,18 @@ class HNetQwen3LMHeadModel(Qwen3LMHeadModel):
             t = jnp.arange(L)
             opened = jax.lax.cummax(jnp.where(start, t, 0), axis=start.ndim - 1) if seg is not None else 0
             p = jnp.broadcast_to(((t - opened) % round(cfg.chunk_ratio) == 0).astype(p.dtype), p.shape)
-        elif cfg.route in (HNetRoute.SPACE, HNetRoute.BPE):
+        elif cfg.route in (HNetRoute.SPACE, HNetRoute.WORD, HNetRoute.BPE):
             if ids is None:
                 raise ValueError(f"route={cfg.route} needs the byte ids")
             x = ids.rearrange((*batch_axes, Pos)).array
             special = x >= N_BYTES   # a special token (BOS, EOS) is a chunk of its own, as it is a token of the Marin tokenizer
-            if cfg.route == HNetRoute.SPACE:
-                after = jnp.isin(x, jnp.asarray(WHITESPACE_IDS)) | special
-                opens = jnp.concatenate([jnp.ones_like(after[..., :1]), after[..., :-1]], axis=-1) | special
+            if cfg.route in (HNetRoute.SPACE, HNetRoute.WORD):
+                ws = jnp.isin(x, jnp.asarray(WHITESPACE_IDS))
+                prev = lambda a: jnp.concatenate([jnp.ones_like(a[..., :1]), a[..., :-1]], axis=-1)  # noqa: E731
+                if cfg.route == HNetRoute.SPACE:
+                    opens = prev(ws | special) | special
+                else:   # a whitespace byte opens nothing; the byte after a special token still opens, so the token stays alone
+                    opens = (prev(ws) & ~ws) | prev(special) | special
             else:
                 if token_start is None:
                     raise ValueError("route=bpe needs the token starts (ids flagged in the data)")
