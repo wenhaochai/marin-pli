@@ -1,0 +1,16 @@
+{
+ "q_title_en": "Does learned routing between residual paths pay?",
+ "q_title_zh": "残差通路之间学到的路由有收益吗？",
+ "q_answer_en": "Not in deep models. Extra residual paths lower the held-out loss at 12, 24 and 48 layers, while learned mixing between them pays a little at 12 layers and costs at 48. Its cost follows how far it changes the scale of the stream sum, and that change grows with depth.",
+ "q_answer_zh": "在深层模型里没有。增加残差通路在 12、24 和 48 层都能降低留出损失，但是通路之间学到的混合在 12 层只有一点收益，到了 48 层反而带来代价。它的代价随它对流之和尺度的改变而变，而这种改变随深度增大。",
+ "q_intro_en": "Every model in this question is an ordinary model, and every number is the held-out loss of the last layer on Paloma C4. At 48 layers, mHC, which is Hyper-Connections with a constraint on its mixing, beats Hyper-Connections. We expected the constraint to be the reason, so we trained Hyper-Connections with its mixing fixed to the identity. It reached mHC's loss. The papers that introduced these designs report the opposite at 16 layers, so we trained the same pair at 12 and 24 layers.",
+ "q_intro_zh": "这一节的每个模型都是普通模型，每个数值都是最后一层在 Paloma C4 上的留出损失。在 48 层，mHC 优于 Hyper-Connections，而 mHC 就是给 Hyper-Connections 的混合加了约束。我们原本以为原因是这个约束，所以把 Hyper-Connections 的混合固定为单位矩阵来训练。结果它达到了 mHC 的留出损失。提出这些设计的论文在 16 层报告了相反的结果，所以我们也在 12 层和 24 层训练了这一对模型。",
+ "cap_removal_en": "To see whether learned routing pays in ordinary models, we remove it before training. Without it, Hyper-Connections and AttnRes reach a lower held-out loss, and mHC stays about the same.",
+ "cap_removal_zh": "为了看学到的路由在普通模型里有没有收益，我们在训练前去掉它。去掉之后，Hyper-Connections 和 AttnRes 的留出损失更低，mHC 则基本不变。",
+ "cap_scale_en": "To see what depth changes in the learned mixing, we multiply the gains it applies to the stream sum, layer by layer. The deeper the model, the wider the product swings.",
+ "cap_scale_zh": "为了看深度如何影响学到的混合，我们逐层累乘它作用在流之和上的增益。模型越深，乘积的摆动范围越大。",
+ "cap_cost_en": "To find what the cost of mixing follows, we plot its gain over no mixing against how far it changes the scale of the stream sum. The larger the change, the lower the gain.",
+ "cap_cost_zh": "为了找出混合的代价随什么变化，我们画出它相对没有混合的收益，以及它让流之和的尺度变化了多少。尺度变化越大，收益越低。",
+ "cap_paths_en": "To see where the gain comes from, we compare designs with one path against designs with several paths and no mixing. Every design with several paths reaches a lower held-out loss.",
+ "cap_paths_zh": "为了看收益来自哪里，我们对比单条残差通路的设计与多条残差通路但没有混合的设计。所有多条残差通路的设计都达到了更低的留出损失。"
+}
