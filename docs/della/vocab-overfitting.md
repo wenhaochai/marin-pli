@@ -1,5 +1,7 @@
 # How Vocabulary Size Shapes Overfitting (page exps/vocab-overfitting.html)
 
+**The post's two new sections, one sentence each (2026-11-05, owner: 「你要把新加两个section的结论都用一句话概括出来」):** (1) Mixing tokenizers during training cuts 128K's regret to about a third because each window's rare tokens come back in only about 2 of 8 epochs, whatever the schedule, while cutting the vocabulary as epochs double does not help. (2) H-Net has about a third of 128K's regret because its chunks have no lookup rows, not because it learns them, and the regret it keeps comes from the moving average that blends chunks before decoding. X thread draft: https://claude.ai/artifact/5AkrysDpysX99RJphaCFKx (tmp_plots/vocab/blog/build_x_thread.py).
+
 **Status (2026-10-08):** at 300m and 8 passes, each halving of the vocabulary lowers the cost of repetition (128K +0.083 to
 8K +0.026 bits per byte, one seed). The rare tokens' own input rows carry more than half of that gap: with every input
 row the mean of its 8K pieces' rows (-cvin8k) the cost is +0.047, the full-data model is worse (1.4127 vs 1.3867) and
