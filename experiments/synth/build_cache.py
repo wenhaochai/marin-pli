@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--name", required=True)
     ap.add_argument("--max-tokens", type=float, default=0)
     ap.add_argument("--min-chars", type=int, default=50)
+    ap.add_argument("--nl-collapse", action="store_true", help="runs of blank lines become one newline (fineweb-edu has no blank lines)")
     a = ap.parse_args()
     MIN_CHARS = a.min_chars
     out = os.path.join(PREFIX, "synth", a.name)
@@ -96,6 +97,8 @@ def main():
 
     with SerialCacheWriter(os.path.join(out, "train"), EX, metadata=CacheMetadata.empty()) as w:
         for call, x in pieces(a.raw):
+            if a.nl_collapse:   # owner popup 2026-11-15: the format control arm; fineweb-edu has 0 blank lines, scratch 25 per 10k characters
+                x = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)*", "\n", x)
             batch_texts.append(x)
             batch_calls.append(call)
             if len(batch_texts) >= 2048:
@@ -105,7 +108,7 @@ def main():
         if batch_texts and not (a.max_tokens and total >= a.max_tokens):
             flush(w)
     q = np.quantile(lens, [0.1, 0.5, 0.9, 0.99]).tolist() if lens else []
-    stats = {"name": a.name, "raw": a.raw, "calls": len(calls), "documents": n_docs, "tokens": total,
+    stats = {"name": a.name, "raw": a.raw, "nl_collapse": a.nl_collapse, "calls": len(calls), "documents": n_docs, "tokens": total,
              "doc_tokens_mean": total / max(1, n_docs), "doc_tokens_q10_50_90_99": q, "drops": DROPS}
     json.dump(stats, open(os.path.join(out, "stats.json"), "w"), indent=1)
     print(json.dumps(stats))
