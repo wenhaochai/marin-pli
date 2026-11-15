@@ -27,7 +27,7 @@ from tokenizers import Tokenizer
 PREFIX = os.environ.get("MARIN_PREFIX", "/scratch/gpfs/KARTHIKN/wc9403/marin_store_big")
 TOKENIZER = glob.glob("/scratch/gpfs/KARTHIKN/wc9403/cache/huggingface/hub/models--marin-community--marin-tokenizer/snapshots/*/tokenizer.json")[0]
 BOS, EOS = 128000, 128001
-SEP = re.compile(r"^\s*<\|endofdocument\|>\s*$", re.M)
+SEP = re.compile(r"^\s*(?:<\|endofdocument\|>|§§§)\s*$", re.M)   # cont, reph: <|endofdocument|>; scratch since 2026-11-14: §§§
 REFUSAL = re.compile(r"^(I can't|I cannot|I can not|I'm sorry|I am sorry|Sorry,|As an AI|I'm unable|I am unable)", re.I)
 EX = {"input_ids": np.zeros((0,), dtype=np.int32)}
 
