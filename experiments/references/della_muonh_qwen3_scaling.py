@@ -339,6 +339,54 @@ OV_VARIANTS = ("ov", "ovss", "ovfocal", "ovgram", "ovgram3", "ovgramss")
 # restarts at its end. 1.2B makes 2.4 passes over the full 10.0B tokens; DATA_EPOCHS=2.4 reproduces that repetition at
 # a smaller size, every other setting unchanged. Run tag -rep{epochs}.
 DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
+# SYNTH_MIX (synth-pretrain, owner 2026-11-14: the training recipe is fixed, only the data changes): the training stream
+# as a mixture of tokenized caches; model, optimizer, steps, batch, data seed and evaluation stay the baseline's.
+# Entries "name:weight[:passes]" separated by commas. name fwe is the fineweb-edu-10B prebuilt cache (the baseline's
+# component, kept first so it gets the baseline's shuffle key); any other name is the cache MARIN_PREFIX/synth/<name>/train
+# (Marin tokenizer, BOS + text + EOS per document, as fineweb-edu). passes > 1 keeps the first weight x steps / passes
+# batches of that component's shuffled sequences (max_train_batches; the mixture restarts it at its end), so the run reads
+# it that many times. Weights are relative. SYNTH_LABEL names the mixture in the run id (tag -sd<label>).
+SYNTH_MIX = os.environ.get("SYNTH_MIX", "")
+SYNTH_LABEL = os.environ.get("SYNTH_LABEL", "")
+
+
+def _synth_mix_entries() -> list[tuple[str, str, float, float]]:
+    """(component name, cache path or None for fwe, weight, passes) for each SYNTH_MIX entry."""
+    out = []
+    for entry in SYNTH_MIX.split(","):
+        parts = entry.strip().split(":")
+        if len(parts) not in (2, 3) or not parts[0]:
+            raise ValueError(f"SYNTH_MIX entry {entry!r}: name:weight[:passes]")
+        name, w, p = parts[0], float(parts[1]), float(parts[2]) if len(parts) == 3 else 1.0
+        if w < 0 or p < 1:
+            raise ValueError(f"SYNTH_MIX entry {entry!r}: weight >= 0, passes >= 1")
+        out.append(("fineweb-edu-10B", None, w, p) if name == "fwe" else (f"synth/{name}", f"{_PREFIX}/synth/{name}/train", w, p))
+    names = [e[0] for e in out]
+    if len(set(names)) != len(names) or sum(e[2] for e in out) <= 0:
+        raise ValueError(f"SYNTH_MIX={SYNTH_MIX!r}: distinct names and a positive total weight")
+    return out
+
+
+def _synth_mix_data(data, steps: int):
+    """The baseline's data config with the training components and weights of SYNTH_MIX; the Paloma components are kept."""
+    entries = _synth_mix_entries()
+    total = sum(e[2] for e in entries)
+    components = {"fineweb-edu-10B": data.components["fineweb-edu-10B"]}   # first: the baseline's shuffle key
+    weights = {"fineweb-edu-10B": 0.0}
+    caps = {}
+    for name, path, w, p in entries:
+        if path is not None:
+            components[name] = _cache_component(path)
+        weights[name] = w
+        if p > 1:
+            caps[name] = max(1, round(w / total * steps / p))
+    for name, comp in data.components.items():   # the Paloma validation components, weight 0
+        if name not in components:
+            components[name] = comp
+            weights[name] = 0.0
+    return dataclasses.replace(data, components=components, train_weights=weights, max_train_batches=caps or None)
+
+
 # VOCAB_K > 0: the Marin tokenizer truncated to its K lowest-ranked tokens (experiments/references/small_vocab_tokenizer.py;
 # specials at K..K+255), on fineweb-edu-10B and the Paloma sets converted to it (convert_small_vocab_cache.py). Fixed
 # text: the step count grows by the token ratio of the converted training data, so a run reads the same text the same
@@ -787,6 +835,13 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-tpp{TPP:g}"
     if DATA_EPOCHS > 0:
         variant_tags += f"-rep{DATA_EPOCHS:g}"
+    if SYNTH_MIX or SYNTH_LABEL:
+        if not (SYNTH_MIX and SYNTH_LABEL and SYNTH_LABEL.replace("_", "").isalnum()):
+            raise ValueError("SYNTH_MIX and SYNTH_LABEL go together; the label is letters, digits and _")
+        if VARIANT != "baseline" or DATA_EPOCHS or PASS_DATA or VOCAB_K or VOCAB_SET or INIT_FROM or TPP != 20 or BATCH or SEQ_LEN != 4096:
+            raise ValueError("SYNTH_MIX changes only the data: VARIANT=baseline, no DATA_EPOCHS, PASS_DATA, VOCAB_K, VOCAB_SET, INIT_FROM, TPP, BATCH or SEQ_LEN")
+        _synth_mix_entries()   # fail at the dry run, not at the data load
+        variant_tags += f"-sd{SYNTH_LABEL}"
     if PASS_DATA:
         if DATA_EPOCHS != 8:
             raise ValueError("PASS_DATA builds the 8 passes of DATA_EPOCHS=8")
@@ -1130,6 +1185,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             data = _small_vocab_data(VOCAB_K, [d.name for d in train], [d.name for d in validation])
         else:
             data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
+        if SYNTH_MIX:
+            data = _synth_mix_data(data, SMOKE_STEPS or TOTAL_STEPS or s["steps"])
         if DATA_EPOCHS > 0 and PASS_DATA:   # the 8 passes come pre-built: read the cache in order
             names = [d.name for d in train]   # train maps each dataset to its weight
             assert names == ["fineweb-edu-10B"], names
