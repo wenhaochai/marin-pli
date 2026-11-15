@@ -18,6 +18,10 @@ export WANDB_PROJECT=marin-della
 export SIZE=${SIZE:-130m}
 export XLA_PYTHON_CLIENT_MEM_FRACTION=${JOB_XLA_MEM_FRACTION:-0.9}
 source scripts/della/speed_env.sh
+# fa4thd (the 130m default) sizes its THD batch at LEVANTER_FA4_THD_DOCS_PER_ROW x 32 rows per device (default 10) and
+# returns NaN past it (w2821, 2026-11-15: the rephrase cache, median 9 documents per 4096-token row, max 17, NaN at step 0).
+# 20 covers any 32 rows of these caches (<= 17 each); the attention is the same, only the padding grows.
+export LEVANTER_FA4_THD_DOCS_PER_ROW=${LEVANTER_FA4_THD_DOCS_PER_ROW:-20}
 echo "code $(git -C $WT log --oneline -1 | cut -c1-80)"
 nvidia-smi -L
 $PY -c 'import jax; print("jax", jax.__version__, "devices", jax.devices())'
