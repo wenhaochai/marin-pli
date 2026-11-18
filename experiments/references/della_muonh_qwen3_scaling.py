@@ -350,9 +350,11 @@ SYNTH_MIX = os.environ.get("SYNTH_MIX", "")
 SYNTH_LABEL = os.environ.get("SYNTH_LABEL", "")
 # SYNTH_STAGES (synth-pretrain, owner popup 2026-11-18 ~12:4x ET, the data-order test): in place of SYNTH_MIX, a mixture
 # whose weights change at given training steps. Stages separated by ";", each "STEP:name:weight,name:weight,..." with the
-# first at step 0; names as in SYNTH_MIX; a component missing from a stage has weight 0 there. Levanter's MixtureDataset
-# takes the stages by sequence index (STEP x batch), which must be a multiple of its block (2048 sequences: 16 steps at
-# batch 128). No passes: a component read past its end restarts (the mixture's restart strategy).
+# first at step 0; names as in SYNTH_MIX; a component missing from a stage has weight 0 there. LmDataConfig takes the
+# stages by training step and turns them into sequence indices itself (train_set: rescale_mixture_schedule_for_batch_schedule;
+# w3005 passed sequence indices, which it multiplied by the batch again, so the second stage never started); STEP x batch
+# must be a multiple of the mixture block (2048 sequences: 16 steps at batch 128). No passes: a component read past its
+# end restarts (the mixture's restart strategy).
 SYNTH_STAGES = os.environ.get("SYNTH_STAGES", "")
 
 
@@ -410,7 +412,7 @@ def _synth_stage_data(data, batch: int):
         seq = step * batch
         if seq % data.mixture_block_size:
             raise ValueError(f"SYNTH_STAGES step {step}: {seq} sequences is not a multiple of the mixture block {data.mixture_block_size}")
-        weight_stages.append((seq, {name: ws.get(name, (None, 0.0))[1] for name in components}))
+        weight_stages.append((step, {name: ws.get(name, (None, 0.0))[1] for name in components}))   # by step: see above
     return dataclasses.replace(data, components=components, train_weights=weight_stages, max_train_batches=None)
 
 
