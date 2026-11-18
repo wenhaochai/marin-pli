@@ -348,6 +348,12 @@ DATA_EPOCHS = float(os.environ.get("DATA_EPOCHS", "0"))
 # it that many times. Weights are relative. SYNTH_LABEL names the mixture in the run id (tag -sd<label>).
 SYNTH_MIX = os.environ.get("SYNTH_MIX", "")
 SYNTH_LABEL = os.environ.get("SYNTH_LABEL", "")
+# SYNTH_STAGES (synth-pretrain, owner popup 2026-11-18 ~12:4x ET, the data-order test): in place of SYNTH_MIX, a mixture
+# whose weights change at given training steps. Stages separated by ";", each "STEP:name:weight,name:weight,..." with the
+# first at step 0; names as in SYNTH_MIX; a component missing from a stage has weight 0 there. Levanter's MixtureDataset
+# takes the stages by sequence index (STEP x batch), which must be a multiple of its block (2048 sequences: 16 steps at
+# batch 128). No passes: a component read past its end restarts (the mixture's restart strategy).
+SYNTH_STAGES = os.environ.get("SYNTH_STAGES", "")
 
 
 def _synth_mix_entries() -> list[tuple[str, str, float, float]]:
@@ -365,6 +371,47 @@ def _synth_mix_entries() -> list[tuple[str, str, float, float]]:
     if len(set(names)) != len(names) or sum(e[2] for e in out) <= 0:
         raise ValueError(f"SYNTH_MIX={SYNTH_MIX!r}: distinct names and a positive total weight")
     return out
+
+
+def _synth_stage_entries() -> list[tuple[int, dict[str, tuple[str | None, float]]]]:
+    """[(step, {component name: (cache path or None for fwe, weight)})] for each SYNTH_STAGES stage."""
+    stages = []
+    for part in SYNTH_STAGES.split(";"):
+        step, _, spec = part.strip().partition(":")
+        if not step.strip().isdigit() or not spec:
+            raise ValueError(f"SYNTH_STAGES stage {part!r}: STEP:name:weight,...")
+        ws = {}
+        for entry in spec.split(","):
+            bits = entry.strip().split(":")
+            if len(bits) != 2 or not bits[0] or float(bits[1]) < 0:
+                raise ValueError(f"SYNTH_STAGES entry {entry!r}: name:weight with weight >= 0")
+            name = bits[0]
+            ws["fineweb-edu-10B" if name == "fwe" else f"synth/{name}"] = (None if name == "fwe" else f"{_PREFIX}/synth/{name}/train", float(bits[1]))
+        stages.append((int(step), ws))
+    if stages[0][0] != 0 or any(b[0] <= a[0] for a, b in zip(stages, stages[1:])):
+        raise ValueError(f"SYNTH_STAGES={SYNTH_STAGES!r}: the first stage starts at step 0 and the steps increase")
+    if any(sum(w for _, w in ws.values()) <= 0 for _, ws in stages):
+        raise ValueError(f"SYNTH_STAGES={SYNTH_STAGES!r}: every stage needs a positive total weight")
+    return stages
+
+
+def _synth_stage_data(data, batch: int):
+    """The baseline's data config with the staged training weights of SYNTH_STAGES; the Paloma components are kept."""
+    stages = _synth_stage_entries()
+    components = {"fineweb-edu-10B": data.components["fineweb-edu-10B"]}   # first: the baseline's shuffle key
+    for _, ws in stages:
+        for name, (path, _) in ws.items():
+            if name not in components:
+                components[name] = _cache_component(path)
+    for name, comp in data.components.items():   # the Paloma validation components, weight 0
+        components.setdefault(name, comp)
+    weight_stages = []
+    for step, ws in stages:
+        seq = step * batch
+        if seq % data.mixture_block_size:
+            raise ValueError(f"SYNTH_STAGES step {step}: {seq} sequences is not a multiple of the mixture block {data.mixture_block_size}")
+        weight_stages.append((seq, {name: ws.get(name, (None, 0.0))[1] for name in components}))
+    return dataclasses.replace(data, components=components, train_weights=weight_stages, max_train_batches=None)
 
 
 def _synth_mix_data(data, steps: int):
@@ -835,12 +882,12 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
         variant_tags += f"-tpp{TPP:g}"
     if DATA_EPOCHS > 0:
         variant_tags += f"-rep{DATA_EPOCHS:g}"
-    if SYNTH_MIX or SYNTH_LABEL:
-        if not (SYNTH_MIX and SYNTH_LABEL and SYNTH_LABEL.replace("_", "").isalnum()):
-            raise ValueError("SYNTH_MIX and SYNTH_LABEL go together; the label is letters, digits and _")
+    if SYNTH_MIX or SYNTH_STAGES or SYNTH_LABEL:
+        if not (bool(SYNTH_MIX) != bool(SYNTH_STAGES) and SYNTH_LABEL and SYNTH_LABEL.replace("_", "").isalnum()):
+            raise ValueError("SYNTH_LABEL goes with exactly one of SYNTH_MIX and SYNTH_STAGES; the label is letters, digits and _")
         if VARIANT != "baseline" or DATA_EPOCHS or PASS_DATA or VOCAB_K or VOCAB_SET or INIT_FROM or TPP != 20 or BATCH or SEQ_LEN != 4096:
             raise ValueError("SYNTH_MIX changes only the data: VARIANT=baseline, no DATA_EPOCHS, PASS_DATA, VOCAB_K, VOCAB_SET, INIT_FROM, TPP, BATCH or SEQ_LEN")
-        _synth_mix_entries()   # fail at the dry run, not at the data load
+        _synth_mix_entries() if SYNTH_MIX else _synth_stage_entries()   # fail at the dry run, not at the data load
         variant_tags += f"-sd{SYNTH_LABEL}"
     if PASS_DATA:
         if DATA_EPOCHS != 8:
@@ -1187,6 +1234,8 @@ def muonh_qwen3_run(size: str) -> ArtifactStep[LevanterCheckpoint]:
             data = dataclasses.replace(mixture(ctx, train, validation=validation, shuffle=True), permutation_type="linear")
         if SYNTH_MIX:
             data = _synth_mix_data(data, SMOKE_STEPS or TOTAL_STEPS or s["steps"])
+        elif SYNTH_STAGES:
+            data = _synth_stage_data(data, s["batch"])
         if DATA_EPOCHS > 0 and PASS_DATA:   # the 8 passes come pre-built: read the cache in order
             names = [d.name for d in train]   # train maps each dataset to its weight
             assert names == ["fineweb-edu-10B"], names
