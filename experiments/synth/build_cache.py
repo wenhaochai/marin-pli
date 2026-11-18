@@ -8,8 +8,11 @@
 RAW_DIR holds the generator's calls: call-<i>.txt (texts separated by lines holding only <|endofdocument|>),
 call-<i>.done.json (finish reason) and call-<i>.meta.json. A call that did not end normally (no done.json, or a finish
 other than stop) loses its last piece, which may be cut mid-text. Pieces under --min-chars, pieces that open like a
-refusal and exact duplicates are dropped. Each kept text is one document in the Marin tokenizer: BOS + text + EOS, as in
-the fineweb-edu-10B cache. Documents are written in call order until --max-tokens tokens (0: all).
+refusal and exact duplicates are dropped. Each kept text is one document in the Marin tokenizer: BOS + text + " " + EOS,
+as levanter's BatchTokenizer writes every text it tokenizes (lib/levanter/src/levanter/data/text/_batch_tokenizer.py:
+text + " " + eos_str), so as in the fineweb-edu-10B cache (owner popup 2026-11-18: 「现在就改」). --plain-eos writes
+BOS + text + EOS, the format of every cache built before 2026-11-18. Documents are written in call order until
+--max-tokens tokens (0: all).
 Writes MARIN_PREFIX/synth/NAME/train (the cache) and MARIN_PREFIX/synth/NAME/stats.json (calls, texts, drops, tokens,
 document-length quantiles). Run on a vis node with the marin venv and this worktree on PYTHONPATH.
 """
@@ -70,6 +73,7 @@ def main():
     ap.add_argument("--max-tokens", type=float, default=0)
     ap.add_argument("--min-chars", type=int, default=50)
     ap.add_argument("--nl-collapse", action="store_true", help="runs of blank lines become one newline (fineweb-edu has no blank lines)")
+    ap.add_argument("--plain-eos", action="store_true", help="BOS + text + EOS (caches before 2026-11-18), not BOS + text + ' ' + EOS")
     a = ap.parse_args()
     MIN_CHARS = a.min_chars
     out = os.path.join(PREFIX, "synth", a.name)
@@ -82,7 +86,8 @@ def main():
 
     def flush(w):
         nonlocal total, n_docs
-        enc = tok.encode_batch(batch_texts, add_special_tokens=False)
+        # levanter encodes text + " " + eos_str; the special token splits off first, so this is text + " ", then EOS
+        enc = tok.encode_batch(batch_texts if a.plain_eos else [t + " " for t in batch_texts], add_special_tokens=False)
         rows = []
         for e in enc:
             ids = np.asarray([BOS] + e.ids + [EOS], dtype=np.int32)
@@ -108,7 +113,7 @@ def main():
         if batch_texts and not (a.max_tokens and total >= a.max_tokens):
             flush(w)
     q = np.quantile(lens, [0.1, 0.5, 0.9, 0.99]).tolist() if lens else []
-    stats = {"name": a.name, "raw": a.raw, "nl_collapse": a.nl_collapse, "calls": len(calls), "documents": n_docs, "tokens": total,
+    stats = {"name": a.name, "raw": a.raw, "nl_collapse": a.nl_collapse, "ending": "eos" if a.plain_eos else "space+eos", "calls": len(calls), "documents": n_docs, "tokens": total,
              "doc_tokens_mean": total / max(1, n_docs), "doc_tokens_q10_50_90_99": q, "drops": DROPS}
     json.dump(stats, open(os.path.join(out, "stats.json"), "w"), indent=1)
     print(json.dumps(stats))
